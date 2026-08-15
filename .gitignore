@@ -1,0 +1,45 @@
+# env / secrets
+.env
+.env.local
+*.pem
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# node
+node_modules/
+apps/api/dist/
+apps/web/dist/
+*.tsbuildinfo
+
+data/memory/
+postgres_data/
+redis_data/
+*.sqlite
+.langgraph_checkpoint/
+
+# ide / os
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.cursor/settings.json
+
+# local tooling clones / UA scratch
+Understand-Anything/
+.ua/tmp/
+.ua/intermediate/
+.ua/.trash-*/
+
+# logs
+*.log
+logs/

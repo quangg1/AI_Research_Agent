@@ -1,0 +1,106 @@
+from app.domain.credibility import credibility_score, tier_for
+from app.domain.decompose import derive_slots
+from app.domain.research_intent import (
+    claim_confidence,
+    decision_rule_for,
+    decompose_subquestions,
+    is_comparison_query,
+    is_mechanism_query,
+    is_secondary_host,
+    named_systems,
+    user_goal,
+)
+from app.domain.routing_policy import heuristic_plan
+from app.domain.schema import AgentName, SourceTier
+
+MECHANISM_Q = "How does Punica/LoRAX batch multiple LoRA adapters in one forward pass?"
+BIOLOGY_Q = "How does CRISPR-Cas9 cut a target DNA sequence inside a living cell?"
+POLICY_Q = "Compare the GDPR and the CCPA on how they define a data subject request."
+
+
+def test_user_goal_strips_brief_metadata():
+    blob = (
+        f"{MECHANISM_Q}\n"
+        "Sector: LLM systems\n"
+        "Constraints: Stay inside applied AI / LLM systems (serving, RAG, agents, eval)"
+    )
+    goal = user_goal(blob)
+    assert "Punica" in goal
+    assert "Constraints" not in goal
+    assert is_mechanism_query(blob)
+
+
+def test_mechanism_detection_ignores_effect_questions():
+    assert is_mechanism_query(BIOLOGY_Q)
+    assert not is_mechanism_query(
+        "What is continuous batching in vLLM and how does it affect time-to-first-token?"
+    )
+
+
+def test_named_subjects_come_from_the_question_not_a_builtin_list():
+    assert "Punica" in named_systems(MECHANISM_Q)
+    assert "CRISPR-Cas9" in named_systems(BIOLOGY_Q)
+    assert {"GDPR", "CCPA"} <= set(named_systems(POLICY_Q))
+    assert is_comparison_query(POLICY_Q)
+
+
+def test_slots_track_the_subject_of_any_question():
+    for query in (MECHANISM_Q, BIOLOGY_Q, POLICY_Q):
+        slots = derive_slots(query, use_llm=False)
+        assert slots, query
+        assert any(s["critical"] for s in slots)
+        followups = " ".join(s["followup"] for s in slots).lower()
+        assert not any(token in followups for token in ("sgmv", "punica ai", "bm25")) or "punica" in query.lower()
+
+
+def test_slots_for_a_non_technical_question_carry_no_technical_vocabulary():
+    slots = derive_slots(POLICY_Q, use_llm=False)
+    blob = " ".join(f"{s['label']} {s['followup']}" for s in slots).lower()
+    for leaked in ("sgmv", "cuda", "lora", "kernel", "bm25", "vector database"):
+        assert leaked not in blob
+
+
+def test_decision_rule_reflects_coverage_not_a_template():
+    critic = {
+        "status": "insufficient",
+        "coverage": {
+            "slots": [
+                {"id": "direct_answer", "label": "Direct answer to the question", "status": "covered"},
+                {"id": "mechanism", "label": "How CRISPR-Cas9 cleaves DNA", "status": "weak"},
+                {"id": "constraints", "label": "Off-target effects", "status": "open"},
+            ]
+        },
+    }
+    rule = decision_rule_for(BIOLOGY_Q, [], critic)
+    assert "How CRISPR-Cas9 cleaves DNA" in rule
+    assert "Off-target effects" in rule
+    assert "BM25" not in rule
+    assert "vector database" not in rule.lower()
+
+
+def test_decision_rule_falls_back_without_coverage():
+    rule = decision_rule_for(POLICY_Q, [], {"status": "insufficient"})
+    assert "GDPR" in rule or "gdpr" in rule.lower()
+    assert "BM25" not in rule
+
+
+def test_secondary_host_demoted():
+    assert is_secondary_host("https://pub.towardsai.net/foo")
+    tier, score = credibility_score("https://medium.com/@x/serving-lora")
+    assert tier == SourceTier.NEWS_ANALYSIS
+    assert score <= 0.40
+    assert tier_for("https://github.com/predibase/lorax") == SourceTier.SPECIALIST_RESEARCH
+    assert (
+        claim_confidence({"url": "https://medium.com/x", "tier": "news_analysis", "credibility": 0.4, "quote": "lora"})
+        < 0.7
+    )
+
+
+def test_plan_decomposes_any_mechanism_question():
+    plan = heuristic_plan(BIOLOGY_Q, 12, live_first=True)
+    assert AgentName.DOCS not in plan.agents_to_run
+    assert len(plan.sub_queries) >= 2
+    questions = " ".join(s.question for s in plan.sub_queries).lower()
+    assert "crispr" in questions
+    assert "sgmv" not in questions
+    assert decompose_subquestions(POLICY_Q)

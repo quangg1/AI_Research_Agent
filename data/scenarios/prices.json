@@ -1,0 +1,32 @@
+{
+  "currency": "USD",
+  "models": {
+    "api_70b": {
+      "label": "70B-class API",
+      "input_per_m": 0.80,
+      "output_per_m": 2.40
+    },
+    "api_8b": {
+      "label": "8B-class API",
+      "input_per_m": 0.10,
+      "output_per_m": 0.30
+    },
+    "selfhost_8b_fp8": {
+      "label": "Self-host 8B FP8 (1x H100)",
+      "gpu_hourly": 3.50,
+      "tokens_per_sec": 1800
+    },
+    "selfhost_70b_int4": {
+      "label": "Self-host 70B INT4 (2x H100)",
+      "gpu_hourly": 7.00,
+      "tokens_per_sec": 420
+    }
+  },
+  "rag": {
+    "vector_db_monthly": 180,
+    "bm25_monthly": 40,
+    "rerank_per_1k_queries": 0.08,
+    "finetune_job": 420,
+    "long_context_input_per_m": 0.80
+  }
+}

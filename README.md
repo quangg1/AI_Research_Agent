@@ -11,7 +11,12 @@ Not a general chatbot. Domain is broad enough to be hard (vendor hype, conflicti
 | **Research** | LangGraph agent loop with brief gate, critic loop-back, HITL, cited memo |
 | **Scenarios** | Deterministic serving-cost and RAG vs fine-tune calculator |
 | **Corpus** | Curated LLM-systems docs indexed for the docs agent |
-| **Workspace** | Run history + Postgres event timeline |
+| **Workspace** | Org-scoped run history + Postgres event timeline |
+| **Settings** | Plan/usage (Stripe), API keys, org data export |
+
+Multi-tenant SaaS: Clerk Organizations for identity/RBAC, Stripe for billing, org-scoped runs.
+
+See [docs/ops.md](docs/ops.md) for backups and auth modes. Agent loop, files, and data flow: [docs/agent-research-system.md](docs/agent-research-system.md). Oracle Always Free (dev auth): [docs/deploy-oracle.md](docs/deploy-oracle.md).
 
 ## Graph
 

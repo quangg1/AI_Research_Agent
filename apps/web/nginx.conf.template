@@ -11,7 +11,13 @@ server {
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-API-Key "${API_SHARED_KEY}";
+    proxy_set_header Authorization $http_authorization;
+    proxy_set_header X-Org-Id $http_x_org_id;
+    proxy_set_header X-API-Key $http_x_api_key;
+    proxy_set_header X-Correlation-Id $http_x_correlation_id;
+    proxy_set_header X-Dev-User-Id $http_x_dev_user_id;
+    proxy_set_header X-Dev-Org-Id $http_x_dev_org_id;
+    proxy_set_header X-Dev-Role $http_x_dev_role;
     proxy_buffering off;
     proxy_read_timeout 3600s;
     proxy_pass http://api:3000;

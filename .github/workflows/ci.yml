@@ -18,6 +18,8 @@ jobs:
           node-version: "22"
       - name: Install
         run: npm ci
+      - name: Test
+        run: npm test
       - name: Build and typecheck
         run: npm run build
 
@@ -35,6 +37,8 @@ jobs:
         run: npm ci
       - name: Typecheck
         run: npm run typecheck
+      - name: Unit tests
+        run: npm test
       - name: Build
         run: npm run build
 

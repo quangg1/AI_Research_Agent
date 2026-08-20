@@ -35,7 +35,13 @@ export class ResearchRepository {
     }
   }
 
-  async createRunWithOutbox(query: string, fresh: boolean) {
+  async createRunWithOutbox(
+    query: string,
+    fresh: boolean,
+    orgId: string,
+    userId: string,
+    title?: string,
+  ) {
     const runId = randomUUID();
     const executionId = randomUUID();
     const payload: ExecuteJobPayload = {
@@ -49,9 +55,9 @@ export class ResearchRepository {
     return this.transaction(async (client) => {
       await client.query(
         `INSERT INTO research_runs
-           (id, query, status, thread_id, execution_version, execution_id)
-         VALUES ($1, $2, 'queued', $1, 1, $3)`,
-        [runId, query, executionId],
+           (id, query, status, thread_id, execution_version, execution_id, org_id, created_by, title)
+         VALUES ($1, $2, 'queued', $1, 1, $3, $4, $5, $6)`,
+        [runId, query, executionId, orgId, userId, title || query.slice(0, 120)],
       );
       await client.query(
         `INSERT INTO run_events
@@ -69,11 +75,89 @@ export class ResearchRepository {
     });
   }
 
-  async createResumeWithOutbox(runId: string, decision: Record<string, unknown>) {
+  async getRunForOrg(runId: string, orgId: string) {
+    const result = await this.pool.query(
+      `SELECT * FROM research_runs
+       WHERE id=$1 AND org_id=$2 AND deleted_at IS NULL`,
+      [runId, orgId],
+    );
+    return result.rows[0] || null;
+  }
+
+  async softDeleteRun(runId: string, orgId: string) {
+    const result = await this.pool.query(
+      `UPDATE research_runs
+       SET deleted_at=NOW(), archived=TRUE, updated_at=NOW()
+       WHERE id=$1 AND org_id=$2 AND deleted_at IS NULL`,
+      [runId, orgId],
+    );
+    return Boolean(result.rowCount);
+  }
+
+  async cancelRun(runId: string, orgId: string) {
+    return this.transaction(async (client) => {
+      const selected = await client.query<{
+        status: string;
+        execution_id: string | null;
+        execution_version: number;
+      }>(
+        `SELECT status, execution_id, execution_version FROM research_runs
+         WHERE id=$1 AND org_id=$2 AND deleted_at IS NULL FOR UPDATE`,
+        [runId, orgId],
+      );
+      if (!selected.rowCount) return null;
+      const row = selected.rows[0];
+      if (["completed", "failed", "cancelled", "out_of_scope"].includes(row.status)) {
+        return { id: runId, status: row.status };
+      }
+      await client.query(
+        `UPDATE research_runs
+         SET status='cancelled', completed_at=NOW(), updated_at=NOW(),
+             current_job_id=NULL, error='Cancelled by user'
+         WHERE id=$1`,
+        [runId],
+      );
+      await client.query(
+        `INSERT INTO run_events (run_id, execution_id, attempt, sequence, event_type, payload)
+         VALUES ($1, $2, 0, 999998, 'status:cancelled', $3::jsonb)
+         ON CONFLICT DO NOTHING`,
+        [
+          runId,
+          row.execution_id,
+          JSON.stringify({ status: "cancelled", reason: "user_cancel" }),
+        ],
+      );
+      return { id: runId, status: "cancelled" as const };
+    });
+  }
+
+  async notify(
+    orgId: string,
+    userId: string | null,
+    runId: string | null,
+    kind: string,
+    title: string,
+    body?: string,
+  ) {
+    await this.pool.query(
+      `INSERT INTO notifications (id, org_id, user_id, run_id, kind, title, body)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [randomUUID(), orgId, userId, runId, kind, title, body || null],
+    );
+  }
+
+  async createResumeWithOutbox(
+    runId: string,
+    decision: Record<string, unknown>,
+    orgId?: string,
+  ) {
     return this.transaction(async (client) => {
       const selected = await client.query<{ status: string; execution_version: number }>(
-        `SELECT status, execution_version FROM research_runs WHERE id=$1 FOR UPDATE`,
-        [runId],
+        orgId
+          ? `SELECT status, execution_version FROM research_runs
+             WHERE id=$1 AND org_id=$2 AND deleted_at IS NULL FOR UPDATE`
+          : `SELECT status, execution_version FROM research_runs WHERE id=$1 FOR UPDATE`,
+        orgId ? [runId, orgId] : [runId],
       );
       if (!selected.rowCount) throw new NotFoundException("run not found");
       const status = selected.rows[0].status;
@@ -142,6 +226,14 @@ export class ResearchRepository {
         status = null;
       }
 
+      const locked = await client.query<{ status: string; org_id: string; created_by: string | null }>(
+        `SELECT status, org_id, created_by FROM research_runs
+         WHERE id=$1 AND execution_version=$2 AND execution_id=$3 FOR UPDATE`,
+        [payload.runId, payload.executionVersion, payload.executionId],
+      );
+      if (!locked.rowCount) return false;
+      if (locked.rows[0].status === "cancelled") return false;
+
       const snapshot = frame.snapshot || null;
       const metrics =
         frame.metrics ||
@@ -173,7 +265,7 @@ export class ResearchRepository {
           terminal,
           snapshot ? JSON.stringify(snapshot) : null,
           frame.type === "interrupt"
-            ? JSON.stringify(frame.interrupt ?? frame.data ?? null)
+            ? JSON.stringify((frame as { interrupt?: unknown; data?: unknown }).interrupt ?? (frame as { data?: unknown }).data ?? null)
             : null,
           metrics ? JSON.stringify(metrics) : null,
           frame.type === "error" ? String(frame.error || "execution error").slice(0, 4000) : null,
@@ -195,6 +287,39 @@ export class ResearchRepository {
           JSON.stringify(frame),
         ],
       );
+
+      const orgId = locked.rows[0].org_id;
+      const createdBy = locked.rows[0].created_by;
+      if (frame.type === "interrupt" && orgId) {
+        await client.query(
+          `INSERT INTO notifications (id, org_id, user_id, run_id, kind, title, body)
+           VALUES ($1, $2, $3, $4, 'awaiting_human', $5, $6)`,
+          [
+            randomUUID(),
+            orgId,
+            createdBy,
+            payload.runId,
+            "Review needed",
+            "A research run is waiting for your decision.",
+          ],
+        );
+      }
+      if (frame.type === "terminal" && orgId) {
+        const kind = status === "completed" ? "completed" : "failed";
+        await client.query(
+          `INSERT INTO notifications (id, org_id, user_id, run_id, kind, title, body)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            randomUUID(),
+            orgId,
+            createdBy,
+            payload.runId,
+            kind,
+            status === "completed" ? "Research completed" : `Research ${status}`,
+            `Run finished with status ${status}.`,
+          ],
+        );
+      }
       return true;
     });
   }

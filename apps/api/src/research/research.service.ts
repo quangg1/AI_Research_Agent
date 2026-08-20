@@ -1,4 +1,5 @@
 import {
+  ForbiddenException,
   HttpException,
   Injectable,
   NotFoundException,
@@ -6,18 +7,24 @@ import {
 } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
-import { randomUUID } from "crypto";
+import { randomBytes, randomUUID } from "crypto";
 import type { Response } from "express";
 import { AgentExecutionClient } from "./agent-execution.client";
 import { ResumeResearchDto } from "./dto/resume-research.dto";
 import { ResearchRepository } from "./research.repository";
 import { TERMINAL_STATUSES } from "./research.types";
+import type { AuthContext } from "../auth/auth.types";
+import { isOrgAdmin } from "../auth/auth.types";
+import { AuthService } from "../auth/auth.service";
+import { BillingService } from "../billing/billing.service";
 
 @Injectable()
 export class ResearchService {
   constructor(
     private readonly repository: ResearchRepository,
     private readonly agent: AgentExecutionClient,
+    private readonly auth: AuthService,
+    private readonly billing: BillingService,
     @InjectQueue("research") private readonly queue: Queue,
   ) {}
 
@@ -34,39 +41,72 @@ export class ResearchService {
     };
   }
 
-  async enqueue(query: string, fresh = false) {
+  async enqueue(query: string, fresh = false, auth: AuthContext) {
     const recent = await this.repository.query<{ n: number }>(
       `SELECT count(*)::int AS n FROM research_runs
-       WHERE created_at > NOW() - INTERVAL '60 seconds'`,
+       WHERE org_id=$1 AND created_at > NOW() - INTERVAL '60 seconds'
+         AND deleted_at IS NULL`,
+      [auth.orgId],
     );
     if ((recent.rows[0]?.n || 0) >= 8) {
       throw new HttpException("Rate limited: too many research runs in the last minute.", 429);
     }
-    return this.repository.createRunWithOutbox(query, fresh);
+    try {
+      await this.billing.assertWithinQuota(auth.orgId);
+    } catch (err) {
+      const status = (err as { status?: number }).status || 402;
+      throw new HttpException((err as Error).message, status);
+    }
+    const created = await this.repository.createRunWithOutbox(
+      query,
+      fresh,
+      auth.orgId,
+      auth.userId,
+    );
+    await this.billing.recordUsage(auth.orgId, auth.userId, created.id);
+    this.auth.trackEvent(auth.orgId, auth.userId, "run_started", { runId: created.id });
+    return created;
   }
 
-  async resume(id: string, body: ResumeResearchDto) {
+  async resume(id: string, body: ResumeResearchDto, auth: AuthContext) {
+    await this.requireRun(id, auth.orgId);
     const decision = {
       action: body.action || "approve",
       notes: body.notes || "",
       extra_questions: body.extra_questions || [],
       brief: body.brief || {},
     };
-    return this.repository.createResumeWithOutbox(id, decision);
+    if (body.action === "approve" || body.action === "start") {
+      this.auth.trackEvent(auth.orgId, auth.userId, "brief_approved", { runId: id });
+    }
+    return this.repository.createResumeWithOutbox(id, decision, auth.orgId);
   }
 
-  async get(id: string) {
-    const local = await this.repository.query(
-      `SELECT * FROM research_runs WHERE id=$1`,
-      [id],
-    );
-    if (!local.rowCount) throw new NotFoundException("run not found");
-    const row = local.rows[0];
+  async get(id: string, auth: AuthContext) {
+    const row = await this.requireRun(id, auth.orgId);
     return { ...row, agent: row.result_json || undefined };
   }
 
-  async events(id: string, res: Response, lastEventId?: string) {
-    await this.get(id);
+  async cancel(id: string, auth: AuthContext) {
+    const result = await this.repository.cancelRun(id, auth.orgId);
+    if (!result) throw new NotFoundException("run not found");
+    this.auth.trackEvent(auth.orgId, auth.userId, "run_cancelled", { runId: id });
+    return result;
+  }
+
+  async softDelete(id: string, auth: AuthContext) {
+    const ok = await this.repository.softDeleteRun(id, auth.orgId);
+    if (!ok) throw new NotFoundException("run not found");
+    return { id, deleted: true };
+  }
+
+  async duplicate(id: string, auth: AuthContext) {
+    const row = await this.requireRun(id, auth.orgId);
+    return this.enqueue(String(row.query), true, auth);
+  }
+
+  async events(id: string, res: Response, lastEventId: string | undefined, auth: AuthContext) {
+    await this.requireRun(id, auth.orgId);
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
@@ -90,8 +130,8 @@ export class ResearchService {
           res.write(`data: ${JSON.stringify({ type: event.event_type, data: event.payload })}\n\n`);
         }
         const run = await this.repository.query<{ status: string }>(
-          `SELECT status FROM research_runs WHERE id=$1`,
-          [id],
+          `SELECT status FROM research_runs WHERE id=$1 AND org_id=$2`,
+          [id, auth.orgId],
         );
         const status = run.rows[0]?.status;
         if (
@@ -140,33 +180,93 @@ export class ResearchService {
     return this.agent.health();
   }
 
-  async checkpoints(id: string) {
+  async checkpoints(id: string, auth: AuthContext) {
+    await this.requireRun(id, auth.orgId);
     const response = await this.agent.fetch(`/v1/runs/${id}/checkpoints`);
     if (!response.ok) throw new NotFoundException("run not found");
     return response.json();
   }
 
-  async listRuns(limit = 30) {
+  async listRuns(
+    auth: AuthContext,
+    opts: {
+      limit?: number;
+      cursor?: string;
+      q?: string;
+      status?: string;
+      archived?: boolean;
+    } = {},
+  ) {
+    const limit = Math.min(Math.max(opts.limit || 30, 1), 100);
+    const values: unknown[] = [auth.orgId];
+    const clauses = [`org_id=$1`, `deleted_at IS NULL`];
+    if (!opts.archived) clauses.push(`archived=FALSE`);
+    if (opts.status) {
+      values.push(opts.status);
+      clauses.push(`status=$${values.length}`);
+    }
+    if (opts.q) {
+      values.push(`%${opts.q}%`);
+      clauses.push(`(query ILIKE $${values.length} OR COALESCE(title,'') ILIKE $${values.length})`);
+    }
+    if (opts.cursor) {
+      values.push(opts.cursor);
+      clauses.push(`created_at < $${values.length}`);
+    }
+    values.push(limit);
     const rows = await this.repository.query(
-      `SELECT id, query, status, pinned, created_at, updated_at
-       FROM research_runs ORDER BY created_at DESC LIMIT $1`,
-      [limit],
+      `SELECT id, query, title, status, pinned, archived, created_at, updated_at, created_by
+       FROM research_runs
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY created_at DESC
+       LIMIT $${values.length}`,
+      values,
     );
-    return { runs: rows.rows };
+    const nextCursor =
+      rows.rows.length === limit
+        ? String(rows.rows[rows.rows.length - 1].created_at)
+        : null;
+    return { runs: rows.rows, next_cursor: nextCursor };
   }
 
-  async timeline(id: string) {
+  async timeline(id: string, auth: AuthContext) {
+    await this.requireRun(id, auth.orgId);
     const events = await this.repository.listEvents(id, 0, 200);
-    return { id, events: events.rows };
+    const readable = events.rows.map((ev) => ({
+      ...ev,
+      summary: this.summarizeEvent(String(ev.event_type), ev.payload),
+    }));
+    return { id, events: readable };
   }
 
-  async pin(id: string, pinned = true) {
+  async pin(id: string, pinned = true, auth: AuthContext) {
     const result = await this.repository.query(
-      `UPDATE research_runs SET pinned=$2, updated_at=NOW() WHERE id=$1`,
-      [id, pinned],
+      `UPDATE research_runs SET pinned=$3, updated_at=NOW()
+       WHERE id=$1 AND org_id=$2 AND deleted_at IS NULL`,
+      [id, auth.orgId, pinned],
     );
     if (!result.rowCount) throw new NotFoundException("run not found");
     return { id, pinned };
+  }
+
+  async rename(id: string, title: string, auth: AuthContext) {
+    const result = await this.repository.query(
+      `UPDATE research_runs SET title=$3, updated_at=NOW()
+       WHERE id=$1 AND org_id=$2 AND deleted_at IS NULL`,
+      [id, auth.orgId, title.slice(0, 200)],
+    );
+    if (!result.rowCount) throw new NotFoundException("run not found");
+    return { id, title: title.slice(0, 200) };
+  }
+
+  async archive(id: string, archived = true, auth: AuthContext) {
+    const result = await this.repository.query(
+      `UPDATE research_runs SET archived=$3, updated_at=NOW()
+       WHERE id=$1 AND org_id=$2 AND deleted_at IS NULL`,
+      [id, auth.orgId, archived],
+    );
+    if (!result.rowCount) throw new NotFoundException("run not found");
+    return { id, archived };
   }
 
   async corpus() {
@@ -183,7 +283,10 @@ export class ResearchService {
     return { documents: result.rows.length, items: result.rows, hosts, tiers };
   }
 
-  async refreshCorpus() {
+  async refreshCorpus(auth: AuthContext) {
+    if (!isOrgAdmin(auth.role)) {
+      throw new ForbiddenException("Organization admin role required to refresh corpus");
+    }
     const response = await this.agent.fetch("/v1/corpus/refresh", { method: "POST" });
     if (!response.ok) throw new Error(await response.text());
     const refresh = (await response.json()) as Record<string, unknown>;
@@ -198,20 +301,124 @@ export class ResearchService {
   }
 
   async knowledgeMatch(query: string) {
-    const response = await this.agent.fetch(`/v1/knowledge/match?query=${encodeURIComponent(query)}`);
+    const response = await this.agent.fetch(
+      `/v1/knowledge/match?query=${encodeURIComponent(query)}`,
+    );
     if (!response.ok) throw new Error(await response.text());
     return response.json();
   }
 
-  async servingScenario(body: Record<string, unknown>) {
-    return this.runScenario("serving", body);
+  async servingScenario(body: Record<string, unknown>, auth: AuthContext) {
+    return this.runScenario("serving", body, auth);
   }
 
-  async ragScenario(body: Record<string, unknown>) {
-    return this.runScenario("rag", body);
+  async ragScenario(body: Record<string, unknown>, auth: AuthContext) {
+    return this.runScenario("rag", body, auth);
   }
 
-  private async runScenario(kind: "serving" | "rag", body: Record<string, unknown>) {
+  async createShare(runId: string, auth: AuthContext, expiresInDays = 14) {
+    await this.requireRun(runId, auth.orgId);
+    const token = randomBytes(24).toString("base64url");
+    const id = randomUUID();
+    const expiresAt = new Date(Date.now() + expiresInDays * 86400_000);
+    await this.repository.query(
+      `INSERT INTO run_shares (id, run_id, org_id, token, permission, expires_at, created_by)
+       VALUES ($1, $2, $3, $4, 'read', $5, $6)`,
+      [id, runId, auth.orgId, token, expiresAt.toISOString(), auth.userId],
+    );
+    return {
+      id,
+      token,
+      url_path: `/share/${token}`,
+      expires_at: expiresAt.toISOString(),
+      permission: "read",
+    };
+  }
+
+  async revokeShare(shareId: string, auth: AuthContext) {
+    const result = await this.repository.query(
+      `UPDATE run_shares SET revoked_at=NOW()
+       WHERE id=$1 AND org_id=$2 AND revoked_at IS NULL`,
+      [shareId, auth.orgId],
+    );
+    if (!result.rowCount) throw new NotFoundException("share not found");
+    return { id: shareId, revoked: true };
+  }
+
+  async getSharedRun(token: string) {
+    const share = await this.repository.query<{
+      run_id: string;
+      org_id: string;
+      expires_at: Date | null;
+      revoked_at: Date | null;
+    }>(
+      `SELECT run_id, org_id, expires_at, revoked_at FROM run_shares WHERE token=$1`,
+      [token],
+    );
+    if (!share.rowCount) throw new NotFoundException("share not found");
+    const row = share.rows[0];
+    if (row.revoked_at) throw new ForbiddenException("share revoked");
+    if (row.expires_at && new Date(row.expires_at).getTime() < Date.now()) {
+      throw new ForbiddenException("share expired");
+    }
+    const run = await this.repository.query(
+      `SELECT id, query, title, status, result_json, metrics_json, created_at
+       FROM research_runs WHERE id=$1 AND org_id=$2 AND deleted_at IS NULL`,
+      [row.run_id, row.org_id],
+    );
+    if (!run.rowCount) throw new NotFoundException("run not found");
+    return { ...run.rows[0], agent: run.rows[0].result_json || undefined, share: { permission: "read" } };
+  }
+
+  async exportOrg(auth: AuthContext) {
+    if (!isOrgAdmin(auth.role)) {
+      throw new ForbiddenException("Organization admin role required");
+    }
+    const runs = await this.repository.query(
+      `SELECT id, query, title, status, metrics_json, result_json, created_at, updated_at
+       FROM research_runs WHERE org_id=$1 AND deleted_at IS NULL
+       ORDER BY created_at DESC LIMIT 1000`,
+      [auth.orgId],
+    );
+    return {
+      org_id: auth.orgId,
+      exported_at: new Date().toISOString(),
+      runs: runs.rows.map((r) => ({
+        id: r.id,
+        query: r.query,
+        title: r.title,
+        status: r.status,
+        created_at: r.created_at,
+        report: (r.result_json as { values?: { report?: unknown } } | null)?.values?.report,
+      })),
+    };
+  }
+
+  async listNotifications(auth: AuthContext) {
+    const rows = await this.repository.query(
+      `SELECT id, run_id, kind, title, body, read_at, created_at
+       FROM notifications
+       WHERE org_id=$1 AND (user_id IS NULL OR user_id=$2)
+       ORDER BY created_at DESC LIMIT 50`,
+      [auth.orgId, auth.userId],
+    );
+    return { notifications: rows.rows };
+  }
+
+  async markNotificationRead(id: string, auth: AuthContext) {
+    await this.repository.query(
+      `UPDATE notifications SET read_at=NOW()
+       WHERE id=$1 AND org_id=$2 AND (user_id IS NULL OR user_id=$3)`,
+      [id, auth.orgId, auth.userId],
+    );
+    return { id, read: true };
+  }
+
+  private async runScenario(
+    kind: "serving" | "rag",
+    body: Record<string, unknown>,
+    auth: AuthContext,
+  ) {
     const response = await this.agent.fetch(`/v1/scenarios/${kind}`, {
       method: "POST",
       body: JSON.stringify(body),
@@ -219,16 +426,38 @@ export class ResearchService {
     if (!response.ok) throw new Error(await response.text());
     const result = (await response.json()) as Record<string, unknown>;
     await this.repository.query(
-      `INSERT INTO scenarios (id, kind, name, inputs_json, outputs_json)
-       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)`,
+      `INSERT INTO scenarios (id, kind, name, inputs_json, outputs_json, org_id, created_by)
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7)`,
       [
         randomUUID(),
         kind,
         typeof body.name === "string" ? body.name : `${kind} scenario`,
         JSON.stringify(body),
         JSON.stringify(result),
+        auth.orgId,
+        auth.userId,
       ],
     );
     return result;
+  }
+
+  private async requireRun(id: string, orgId: string) {
+    const row = await this.repository.getRunForOrg(id, orgId);
+    if (!row) throw new NotFoundException("run not found");
+    return row;
+  }
+
+  private summarizeEvent(eventType: string, payload: unknown): string {
+    if (eventType.startsWith("status:")) return `Status → ${eventType.slice(7)}`;
+    if (eventType === "interrupt") return "Waiting for human review";
+    if (eventType === "update") {
+      const node = (payload as { current_node?: string; snapshot?: { current_node?: string } })
+        ?.current_node ||
+        (payload as { snapshot?: { current_node?: string } })?.snapshot?.current_node;
+      return node ? `Progress: ${node}` : "Run updated";
+    }
+    if (eventType === "heartbeat") return "Heartbeat";
+    if (eventType === "error") return "Execution error";
+    return eventType;
   }
 }

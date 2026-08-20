@@ -142,12 +142,15 @@ export const WorkspaceRunsSchema = z.object({
     z.object({
       id: z.string(),
       query: z.string(),
+      title: z.string().nullable().optional(),
       status: z.string(),
       pinned: z.boolean().optional(),
+      archived: z.boolean().optional(),
       created_at: z.union([z.string(), z.date()]).optional(),
       updated_at: z.union([z.string(), z.date()]).optional(),
     }),
   ),
+  next_cursor: z.string().nullable().optional(),
 });
 export type WorkspaceRuns = z.infer<typeof WorkspaceRunsSchema>;
 

@@ -1,7 +1,8 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { endpoints } from "../lib/api";
+import { openAuthedEventStream } from "../lib/sse";
 
 const PIPELINE = ["briefing", "planner", "docs", "scholar", "search", "collector", "enrich", "retrieve", "extract", "critic", "hitl", "report"];
 
@@ -88,6 +89,8 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
   const [followup, setFollowup] = useState("");
   const [briefDraft, setBriefDraft] = useState<Record<string, any>>({});
   const [tick, setTick] = useState(Date.now());
+  const [shareMsg, setShareMsg] = useState("");
+  const drawerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -108,12 +111,13 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
   useEffect(() => {
     if (!runId) return;
     let stop = false;
-    let es: EventSource | null = null;
+    let closeStream: (() => void) | null = null;
     const poll = async () => {
       try {
         const data = await endpoints.getRun(runId);
         if (stop) return;
         setRun(data as Run);
+        setError("");
         const st = data.agent?.status || data.status;
         const intr = data.agent?.interrupt;
         if (intr?.type === "research_brief" && intr.brief) {
@@ -121,30 +125,29 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
         }
         if (st === "completed" || st === "awaiting_human") setSearchOpen(false);
         if (st === "completed" || st === "failed" || st === "cancelled" || st === "out_of_scope") {
-          es?.close();
+          closeStream?.();
         }
-      } catch {
-        /* keep polling */
+      } catch (err: any) {
+        if (!stop) setError(err.message || "Failed to load run");
       }
     };
     poll();
-    es = new EventSource(endpoints.eventsUrl(runId));
-    es.onmessage = (ev) => {
-      poll();
-      try {
-        const msg = JSON.parse(ev.data);
-        const st = msg?.data?.status || msg?.type;
-        if (msg?.type === "completed" || msg?.type === "error" || st === "completed" || st === "failed") {
-          es?.close();
-        }
-      } catch {
-        /* ignore malformed chunks */
-      }
-    };
-    const t = setInterval(poll, 1500);
+    void (async () => {
+      const { getAuthHeaders } = await import("../lib/api");
+      const headers = await getAuthHeaders();
+      if (stop) return;
+      closeStream = await openAuthedEventStream(
+        `${endpoints.api}/v1/research/${runId}/events`,
+        headers,
+        () => {
+          poll();
+        },
+      );
+    })();
+    const t = setInterval(poll, 2000);
     return () => {
       stop = true;
-      es?.close();
+      closeStream?.();
       clearInterval(t);
     };
   }, [runId]);
@@ -256,6 +259,7 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
   async function resume(action: string, extra?: { brief?: Record<string, any> }) {
     if (!runId) return;
     setBusy(true);
+    setError("");
     try {
       await endpoints.resume(runId, {
         action,
@@ -263,6 +267,36 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
         extra_questions: notes ? [notes] : [],
         brief: extra?.brief || briefDraft,
       });
+    } catch (err: any) {
+      setError(err.message || "Resume failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancelRun() {
+    if (!runId) return;
+    setBusy(true);
+    try {
+      await endpoints.cancel(runId);
+      const data = await endpoints.getRun(runId);
+      setRun(data as Run);
+    } catch (err: any) {
+      setError(err.message || "Cancel failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function retryRun() {
+    if (!runId) return;
+    setBusy(true);
+    try {
+      const data = await endpoints.duplicate(runId);
+      setRunId(data.id);
+      window.history.replaceState({}, "", `/?run=${data.id}`);
+    } catch (err: any) {
+      setError(err.message || "Retry failed");
     } finally {
       setBusy(false);
     }
@@ -305,8 +339,17 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
   }
 
   async function shareLink() {
-    const url = `${window.location.origin}/?run=${runId}`;
-    await navigator.clipboard.writeText(url);
+    if (!runId) return;
+    try {
+      const share = await endpoints.createShare(runId);
+      const url = `${window.location.origin}${share.url_path || `/share/${share.token}`}`;
+      await navigator.clipboard.writeText(String(url));
+      setShareMsg("Secure share link copied");
+      await endpoints.track("report_exported", { kind: "share", runId });
+      setTimeout(() => setShareMsg(""), 2500);
+    } catch (err: any) {
+      setError(err.message || "Share failed");
+    }
   }
 
   async function askFollowup() {
@@ -367,9 +410,21 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
             </section>
           )}
           <form className="search-card" onSubmit={onSubmit}>
-            <textarea value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Ask a serving, RAG, agent, or eval question" />
+            <label className="sr-only" htmlFor="research-query">
+              Research question
+            </label>
+            <textarea
+              id="research-query"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Ask a serving, RAG, agent, or eval question"
+            />
             <div className="search-actions">
-              {runId && <button className="btn" type="button" onClick={() => setSearchOpen(false)}>Collapse</button>}
+              {runId && (
+                <button className="btn" type="button" onClick={() => setSearchOpen(false)}>
+                  Collapse
+                </button>
+              )}
               <button className="btn primary" type="submit" disabled={busy || query.trim().length < 8}>
                 {busy ? "Starting…" : "Research"}
               </button>
@@ -386,7 +441,16 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
           )}
         </>
       )}
-      {error && <p className="err">{error}</p>}
+      {error && (
+        <p className="err" role="alert">
+          {error}
+        </p>
+      )}
+      {shareMsg && (
+        <p className="idle" aria-live="polite">
+          {shareMsg}
+        </p>
+      )}
 
       {runId && (
         <div className="workspace">
@@ -466,11 +530,22 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                     <h2>{report?.title || "Executive summary"}</h2>
                   </div>
                   {done && (
-                    <div className="btn-row">
-                      <button className="btn" type="button" onClick={copyReport}>Copy</button>
-                      <button className="btn" type="button" onClick={exportMd}>Export MD</button>
-                      <button className="btn" type="button" onClick={() => window.print()}>Export PDF</button>
-                      <button className="btn" type="button" onClick={shareLink}>Share</button>
+                    <div className="btn-row report-actions">
+                      <button className="btn" type="button" onClick={copyReport}>
+                        Copy
+                      </button>
+                      <button className="btn" type="button" onClick={exportMd}>
+                        Export MD
+                      </button>
+                      <button className="btn" type="button" onClick={() => window.print()}>
+                        Export PDF
+                      </button>
+                      <button className="btn" type="button" onClick={shareLink}>
+                        Share link
+                      </button>
+                      <button className="btn" type="button" onClick={retryRun} disabled={busy}>
+                        Duplicate
+                      </button>
                     </div>
                   )}
                 </div>
@@ -631,13 +706,28 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                   whole run is often several minutes after you confirm the brief
                 </div>
                 {status === "failed" ? (
-                  <p className="err">{run?.agent?.error || "This run failed. Start a new question."}</p>
+                  <div>
+                    <p className="err">{run?.agent?.error || "This run failed."}</p>
+                    <button className="btn primary" type="button" onClick={retryRun} disabled={busy}>
+                      Retry from scratch
+                    </button>
+                  </div>
                 ) : elapsed > 50 ? (
                   <p className="progress-note">
-                    Still on this step after {formatElapsed(elapsed)}. Gemini has no cutoff here — planner and report can sit for a few minutes while the model writes.
+                    Still on this step after {formatElapsed(elapsed)}. We will notify you when review is needed — you can
+                    leave this tab open.
                   </p>
                 ) : (
-                  <p className="progress-note">You can leave this tab open — the pipeline keeps running on the agent.</p>
+                  <p className="progress-note">
+                    You can leave this tab open — the pipeline keeps running. Alerts appear when human review is needed.
+                  </p>
+                )}
+                {running && (
+                  <div className="btn-row" style={{ marginTop: 12 }}>
+                    <button className="btn" type="button" onClick={cancelRun} disabled={busy}>
+                      Cancel run
+                    </button>
+                  </div>
                 )}
               </section>
             )}
@@ -680,14 +770,29 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
       )}
 
       {inspect && (
-        <div className="drawer-bg" onClick={() => setInspect(null)}>
-          <aside className="drawer" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="drawer-bg"
+          onClick={() => setInspect(null)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setInspect(null);
+          }}
+        >
+          <aside
+            className="drawer"
+            ref={drawerRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label={inspect.title}
+            onClick={(e) => e.stopPropagation()}
+          >
             <h3>{inspect.title}</h3>
             <p>{inspectText(inspect)}</p>
             {inspect.id === "critic" && (critic.followup_queries || []).length > 0 && (
               <p>Next queries: {(critic.followup_queries || []).map((q: any) => q.question || q).join(" · ")}</p>
             )}
-            <button className="btn" type="button" onClick={() => setInspect(null)}>Close</button>
+            <button className="btn" type="button" onClick={() => setInspect(null)}>
+              Close
+            </button>
           </aside>
         </div>
       )}

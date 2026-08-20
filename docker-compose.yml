@@ -83,10 +83,15 @@ services:
       DATABASE_URL: postgresql://kiln:kiln_dev_password@postgres:5432/kiln
       REDIS_URL: redis://redis:6379/0
       AGENT_BASE_URL: http://agent:8000
-      AUTH_MODE: ${AUTH_MODE:-key}
+      AUTH_MODE: ${AUTH_MODE:-dev}
+      ALLOW_DEV_AUTH: ${ALLOW_DEV_AUTH:-true}
       API_SHARED_KEY: ${API_SHARED_KEY:-}
       API_TO_AGENT_KEY: ${API_TO_AGENT_KEY:-}
       AGENT_SHARED_KEY: ${AGENT_SHARED_KEY:-}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_PRO: ${STRIPE_PRICE_PRO:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -97,8 +102,12 @@ services:
 
   web:
     build:
-      context: ./apps/web
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_AUTH_MODE: ${VITE_AUTH_MODE:-dev}
+        VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:-}
+        VITE_API_URL: ${VITE_API_URL:-}
     env_file: .env
     ports:
       - "${WEB_PORT:-5173}:80"

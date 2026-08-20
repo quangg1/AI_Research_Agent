@@ -1,0 +1,64 @@
+# Overlay for a public Oracle Cloud VM: HTTPS via Caddy, AUTH_MODE=dev.
+# Usage (on the VM):
+#   docker compose -f docker-compose.yml -f docker-compose.oracle.yml up -d --build
+#
+# Requires Docker Compose v2.24+ (`ports: !override`).
+# Only 80/443 are published. Postgres, Redis, Qdrant, and the agent stay private.
+
+services:
+  postgres:
+    restart: unless-stopped
+
+  redis:
+    restart: unless-stopped
+
+  qdrant:
+    restart: unless-stopped
+
+  agent:
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      AGENT_SHARED_KEY: ${AGENT_SHARED_KEY}
+
+  api:
+    restart: unless-stopped
+    environment:
+      AUTH_MODE: dev
+      ALLOW_DEV_AUTH: "true"
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      AGENT_SHARED_KEY: ${AGENT_SHARED_KEY}
+      API_TO_AGENT_KEY: ${AGENT_SHARED_KEY}
+
+  web:
+    restart: unless-stopped
+    ports: !override []
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_AUTH_MODE: dev
+        VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:-}
+        VITE_API_URL: ${VITE_API_URL:-}
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+
+volumes:
+  caddy_data:
+  caddy_config:

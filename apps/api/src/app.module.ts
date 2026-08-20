@@ -1,8 +1,7 @@
-import { MiddlewareConsumer, Module, NestModule, RequestMethod } from "@nestjs/common";
+import { MiddlewareConsumer, Module, NestModule } from "@nestjs/common";
 import { BullModule } from "@nestjs/bullmq";
 import { ResearchModule } from "./research/research.module";
-import { ApiKeyMiddleware } from "./api-key.middleware";
-import { ResearchController } from "./research/research.controller";
+import { CorrelationMiddleware } from "./auth/correlation.middleware";
 
 @Module({
   imports: [
@@ -16,9 +15,6 @@ import { ResearchController } from "./research/research.controller";
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer
-      .apply(ApiKeyMiddleware)
-      .exclude({ path: "health", method: RequestMethod.GET })
-      .forRoutes(ResearchController);
+    consumer.apply(CorrelationMiddleware).forRoutes("*");
   }
 }

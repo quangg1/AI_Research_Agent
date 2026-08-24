@@ -2,6 +2,9 @@
 # Free tier: web services sleep after idle; free Postgres expires ~30 days.
 # Qdrant omitted (agent falls back to Postgres). Upgrade plans for production.
 #
+# Redis: workspace free tier allows only ONE Key Value. Do not create another in this
+# Blueprint — paste the existing instance's Internal Redis URL into REDIS_URL (api + agent).
+#
 # After Apply: set sync:false secrets, run SQL migrations (see docs/deploy-render.md),
 # then set VITE_API_URL + CORS_ORIGINS + AGENT_BASE_URL to the public service URLs and redeploy web/api.
 
@@ -13,14 +16,6 @@ databases:
     postgresMajorVersion: "16"
 
 services:
-  # Redis-compatible Key Value (must be under services, not databases)
-  - type: keyvalue
-    name: kiln-redis
-    plan: free
-    region: oregon
-    maxmemoryPolicy: noeviction
-    ipAllowList: []
-
   - type: web
     name: kiln-agent
     runtime: docker
@@ -37,10 +32,7 @@ services:
           name: kiln-postgres
           property: connectionString
       - key: REDIS_URL
-        fromService:
-          name: kiln-redis
-          type: keyvalue
-          property: connectionString
+        sync: false
       - key: QDRANT_URL
         value: ""
       - key: LLM_BYOK_REQUIRED
@@ -80,10 +72,7 @@ services:
           name: kiln-postgres
           property: connectionString
       - key: REDIS_URL
-        fromService:
-          name: kiln-redis
-          type: keyvalue
-          property: connectionString
+        sync: false
       - key: AGENT_BASE_URL
         sync: false
       - key: AUTH_MODE

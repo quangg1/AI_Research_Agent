@@ -12,6 +12,7 @@ Render **auto-deploys** services when `main` updates (Blueprint `autoDeploy: tru
 
 3. Connect the GitHub repo if prompted → **Apply**.
 4. Fill secrets marked `sync: false` in the Blueprint UI (same values for shared keys on api + agent):
+   - `REDIS_URL` — **reuse** your existing free Key Value (Render only allows one free). Dashboard → Key Value → **Internal Redis URL** (paste the same value into both kiln-api and kiln-agent). Do **not** create a second free Redis.
    - `AGENT_SHARED_KEY` (and optional `API_TO_AGENT_KEY`) — long random string
    - LLM / Tavily keys (or leave empty and rely on BYOK in the UI)
 5. After first deploy, copy public URLs from the dashboard:
@@ -46,6 +47,7 @@ No deploy token required for CD if the Blueprint is linked to the GitHub repo.
 
 - Free web services **spin down** after ~15 minutes idle (cold start ~30–60s).
 - Free Postgres **expires after ~30 days**.
+- Free Key Value: **max 1 per workspace** — Blueprint does not create Redis; wire `REDIS_URL` to the existing instance.
 - No Qdrant service — agent uses Postgres fallback for retrieval.
 - For always-on / commercial use, upgrade instance plans and Postgres.
 

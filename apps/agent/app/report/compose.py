@@ -2,6 +2,14 @@ from __future__ import annotations
 
 import re
 
+from app.domain.adversarial import (
+    claim_register_markdown,
+    competing_hypotheses,
+    extract_quantitative_rows,
+    quantitative_table_markdown,
+    research_subquestions,
+    source_quality_rows,
+)
 from app.domain.citations import Citation, build_ledger, format_reference_list, pick_quote
 from app.domain.coverage import (
     GENERIC_CLAIM_RE,
@@ -10,19 +18,20 @@ from app.domain.coverage import (
 )
 from app.domain.research_intent import (
     decision_rule_for,
+    field_unknowns_for,
     is_secondary_host,
     user_goal,
 )
 from app.domain.schema import Claim, CitationRef, Report
 from app.domain.textutil import distinctive_terms, entity_pattern, first_sentence_about
 
-GRAPH_VERSION = "kiln-deep-research-2.0"
+GRAPH_VERSION = "kiln-deep-research-2.4"
 
 TIER_LABEL = {
     "official_regulation": "Primary docs",
     "intergovernmental": "Eval lab",
     "standard_body": "Framework",
-    "peer_reviewed": "Peer-reviewed",
+    "peer_reviewed": "Research paper",
     "specialist_research": "Specialist / repo",
     "vendor_or_consultancy": "Vendor",
     "news_analysis": "Secondary",
@@ -81,6 +90,9 @@ def compose_report(
         terminal_followups=terminal_followups,
         llm_mode=llm_mode,
     )
+    from app.domain.report_audit import append_research_critic
+
+    body, critic_notes = append_research_critic(body, query=user_goal(query))
     summary = _user_exec_summary(query, ledger, brief, dossier)
     diag = compose_diagnostics_payload(
         query=query,
@@ -114,7 +126,7 @@ def compose_report(
         citations=[CitationRef.model_validate(c.model_dump()) for c in ledger],
         open_questions=_user_open_questions(critic, terminal_followups),
         method_notes=diag.get("method_notes") or [],
-        limitations=_limitations(ledger, critic, llm_mode, terminal_followups),
+        limitations=_limitations(ledger, critic, llm_mode, terminal_followups) + critic_notes,
         decision_rule=decision_rule_for(query, ledger, critic),
         metrics=merged_metrics,
     )
@@ -375,7 +387,7 @@ def _analysis_sections(query: str, dossier: list[dict], ledger: list[Citation], 
         blocks.append(f"### {dim.get('label')}{marker}\n\n" + "\n\n".join(lines) + synthesis)
     if not blocks:
         return ""
-    return "## Analysis\n\n" + "\n\n".join(blocks) + "\n"
+    return "## Detailed analysis\n\n" + "\n\n".join(blocks) + "\n"
 
 
 def _dimension_synthesis(dim: dict, lines: list[str], cites: list[str]) -> str:
@@ -530,12 +542,8 @@ def _user_memo_markdown(
     terminal_followups: list | None,
     llm_mode: str,
 ) -> str:
-    goal = user_goal(query)
     cov = critic.get("coverage") or {}
     slots = cov.get("slots") or brief.get("must_answer") or []
-    must = [d.get("label") for d in _dimensions(dossier, with_items_only=False) if d.get("label")]
-    must = must or (brief.get("must_cover") or [])
-    must_md = "\n".join(f"- {m}" for m in must) or "- Answer the question with cited evidence."
     analysis = _analysis_sections(query, dossier, ledger, slots)
     comparison = _comparison_table(query, evidence, dossier, ledger, slots)
     findings = _findings_narrative(query, ledger, dossier, claims, critic)
@@ -548,21 +556,48 @@ def _user_memo_markdown(
                 "under Limitations.\n"
             )
     limitations = "\n".join(f"- {x}" for x in _limitations(ledger, critic, llm_mode, terminal_followups))
+    hyps = brief.get("hypotheses") or competing_hypotheses(query)
+    cite_dicts = [c.model_dump() if hasattr(c, "model_dump") else dict(c) for c in ledger]
+    numbers = extract_quantitative_rows(evidence, cite_dicts)
+    quality = source_quality_rows(evidence, cite_dicts)
+    quality_md = "\n".join(
+        f"- [{row['n']}] {row['band']} / {row.get('publication_status') or 'unknown'} — {row['title']}"
+        + (f" ({row['year']})" if row.get("year") else "")
+        for row in quality[:16]
+    ) or "- No sources to band."
+    # Numbered key findings for ODR-style memos.
+    key_findings = "\n".join(
+        f"{i}. {line.lstrip('- ').strip()}"
+        for i, line in enumerate(
+            (findings.replace("**", "").split("\n\n") if findings else []),
+            start=1,
+        )
+        if line.strip() and not line.strip().startswith("_")
+    ) or findings
     parts = [
         f"# {title}",
         "## Executive summary",
         _user_exec_summary(query, ledger, brief, dossier),
         gap_note,
-        "## Scope",
-        f"Research goal: **{goal}**\n\nDimensions an answer must cover:\n\n{must_md}",
-        analysis,
+        "## Key findings",
+        key_findings,
+        analysis or "## Detailed analysis\n\n_No dimension-level evidence available._",
+        "## Quantitative findings",
+        quantitative_table_markdown(numbers)
+        if numbers
+        else "_No measured values extracted from collected excerpts._\n\n### Metric gaps\n\n"
+        "- Asked quantitative metrics were not present as numbers in the collected excerpts.",
+        "## Contradictions & debates",
+        "\n".join(f"- {h}" for h in hyps[:2]),
         comparison,
-        "## Findings",
-        findings,
         "## Decision rule",
         decision_rule_for(query, ledger, critic),
+        "## Uncertainties & gaps",
+        "\n".join(f"- {u}" for u in field_unknowns_for(query, critic)),
         "## Limitations",
         limitations,
+        "## Source quality",
+        quality_md,
         "## References",
         format_reference_list(ledger),
     ]
@@ -619,8 +654,8 @@ Synthesis: **{synthesis_status}** · Generator: **{llm_mode}** · Graph: `{GRAPH
 | Query class | {qtype} |
 | Agents | {agents} |
 | Depth | {brief.get("depth") or "standard"} |
-| Iterations | {budget.get("iterations") or 1} / {budget.get("max_iterations") or 3} |
-| Tool calls | {budget.get("used_tool_calls") or 0} / {budget.get("max_tool_calls") or 12} |
+| Iterations | {budget.get("iterations") or 1} / {budget.get("max_iterations") or 4} |
+| Tool calls | {budget.get("used_tool_calls") or 0} / {budget.get("max_tool_calls") or 18} |
 | Tokens (est.) | {budget.get("used_tokens") or 0} |
 
 ## Evidence dossier (by must-answer dimension)

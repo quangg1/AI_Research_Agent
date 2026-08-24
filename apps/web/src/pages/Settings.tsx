@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { endpoints } from "../lib/api";
+import { loadByok, type ByokState } from "../lib/byok";
+import { ByokPanel } from "../components/ByokPanel";
 
 export function SettingsPage() {
   const [billing, setBilling] = useState<any>(null);
@@ -8,6 +10,7 @@ export function SettingsPage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [me, setMe] = useState<any>(null);
+  const [byok, setByok] = useState<ByokState>(() => loadByok());
 
   async function load() {
     try {
@@ -90,7 +93,7 @@ export function SettingsPage() {
       <section className="hero">
         <div className="hero-kicker">Organization</div>
         <h1>Settings</h1>
-        <p>Plan, usage, API keys, and data export for your workspace.</p>
+        <p>Hosted Gemini / OpenAI / Grok keys, plus an optional visitor key that is never stored.</p>
       </section>
       {error && <p className="err">{error}</p>}
       {me && (
@@ -149,7 +152,17 @@ export function SettingsPage() {
         </section>
       )}
       <section className="panel">
-        <h3>API keys</h3>
+        <h3>Model provider</h3>
+        <p className="idle">
+          Research uses a key pool: your pasted Gemini / OpenAI / Grok keys, then host keys in env.
+          Separate several keys for the same provider with <code>;</code>. If a key is down or out
+          of credits, Kiln continues with the next key, then the other providers.
+          Visitor keys are never written to Postgres or logs.
+        </p>
+        <ByokPanel value={byok} onChange={setByok} />
+      </section>
+      <section className="panel">
+        <h3>Workspace API keys</h3>
         <p className="idle">Scoped keys for programmatic access. Shown once at creation.</p>
         {newKey && (
           <p className="reuse-note">

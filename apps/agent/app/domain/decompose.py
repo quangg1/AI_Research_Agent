@@ -85,11 +85,11 @@ ASPECTS: list[dict[str, Any]] = [
     },
     {
         "id": "quantitative",
-        "label": "Measured numbers, benchmarks, or costs",
+        "label": "Measured numbers, benchmarks, latency, or cost",
         "trigger": r"benchmark|performance|throughput|latency|speed|cost|price|accuracy|efficien|"
-        r"how much|how many|how fast|scal|memory|overhead|utilization",
+        r"how much|how many|how fast|memory|overhead|utilization|flop|token",
         "keywords": [
-            r"\d+\s*(?:%|x\b|ms\b|gb\b|tb\b|tokens?|requests?|hours?|seconds?)",
+            r"\d+\s*(?:%|x\b|ms\b|gb\b|tb\b|tokens?|requests?|hours?|seconds?|flops?)",
             r"benchmark",
             r"throughput",
             r"latency",
@@ -100,7 +100,27 @@ ASPECTS: list[dict[str, Any]] = [
             r"evaluat",
             r"results? show",
         ],
-        "hint": "benchmark measured results numbers evaluation",
+        "hint": "benchmark measured latency cost FLOP numbers evaluation",
+    },
+    {
+        "id": "scalability",
+        "label": "Scalability: KV-cache, GPU memory bandwidth, multi-node / cluster behavior",
+        "trigger": r"scalab|scale[- ]?(?:out|up)|multi[- ]?node|cluster|kv[- ]?cache|hbm|"
+        r"memory\s+bandwidth|distributed|horizontal\s+scal|batch\s+size",
+        "keywords": [
+            r"scalab",
+            r"scale[- ]?(?:out|up)",
+            r"multi[- ]?node",
+            r"cluster",
+            r"kv[- ]?cache",
+            r"hbm",
+            r"memory\s+bandwidth",
+            r"distributed",
+            r"batch\s+size",
+            r"concurrent",
+            r"qps",
+        ],
+        "hint": "scalability KV-cache GPU memory bandwidth multi-node cluster MCTS batch",
     },
     {
         "id": "constraints",
@@ -121,6 +141,22 @@ ASPECTS: list[dict[str, Any]] = [
             r"cannot",
         ],
         "hint": "limitations bottlenecks failure modes trade-offs",
+    },
+    {
+        "id": "worked_example",
+        "label": "Concrete worked example or system walkthrough",
+        "trigger": r"example|case\s+study|walkthrough|trace|token\s+flow|end[- ]to[- ]end|"
+        r"deepseek|o1|o3|r1\b|vs\.?\b|versus",
+        "keywords": [
+            r"for example",
+            r"case study",
+            r"walkthrough",
+            r"trace",
+            r"token",
+            r"step[- ]by[- ]step",
+            r"concrete",
+        ],
+        "hint": "concrete example case study token-flow walkthrough named systems",
     },
     {
         "id": "procedure",
@@ -179,7 +215,7 @@ ASPECTS: list[dict[str, Any]] = [
     },
 ]
 
-_FILLER_ASPECTS = ("mechanism", "quantitative", "constraints")
+_FILLER_ASPECTS = ("mechanism", "quantitative", "constraints", "scalability")
 
 _slot_cache: dict[str, list[dict[str, Any]]] = {}
 
@@ -265,6 +301,10 @@ def _llm_slots(goal: str) -> list[dict[str, Any]] | None:
             "Rules:\n"
             "- 4 to 8 dimensions, ordered from most to least central.\n"
             "- Each dimension is something evidence could confirm or fail to confirm.\n"
+            "- If the question names Scalability separately from Latency/Cost, keep them as "
+            "distinct dimensions (KV-cache, GPU memory bandwidth, multi-node/cluster) — "
+            "do not fold scalability into latency.\n"
+            "- Prefer concrete / operational dimensions over abstract survey headings.\n"
             "- 'critical' is true only when the question cannot be considered answered without it.\n"
             "- 'keywords' are 4-8 lowercase phrases that would literally appear in a source "
             "covering that dimension.\n"
@@ -274,7 +314,8 @@ def _llm_slots(goal: str) -> list[dict[str, Any]] | None:
         ),
         system=(
             "You decompose research questions into verifiable coverage dimensions. "
-            "Never assume the subject area. Return JSON only."
+            "Never assume the subject area. Keep scalability distinct from latency/cost when asked. "
+            "Return JSON only."
         ),
         max_tokens=1600,
     )

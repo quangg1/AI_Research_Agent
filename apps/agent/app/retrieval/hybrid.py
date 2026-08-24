@@ -147,7 +147,7 @@ def rerank_candidates(query: str, candidates: list[dict], k: int = 8, *, use_llm
 
 def _gemini_rerank(query: str, candidates: list[dict]) -> dict[str, tuple[float, float]]:
     try:
-        from app.llm.client import llm
+        from app.llm.client import CreditsExhaustedError, llm
 
         if not llm.available:
             return {}
@@ -183,6 +183,8 @@ def _gemini_rerank(query: str, candidates: list[dict]) -> dict[str, tuple[float,
             directness = max(0.0, min(1.0, float(item.get("directness") or 0)))
             out[key] = (relevance, directness)
         return out
+    except CreditsExhaustedError:
+        raise
     except Exception:
         return {}
 

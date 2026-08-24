@@ -5,6 +5,7 @@ import re
 
 from langgraph.types import interrupt
 
+from app.domain.adversarial import competing_hypotheses, research_subquestions
 from app.domain.routing_policy import classify_query, out_of_scope
 from app.domain.coverage import must_answer_for
 from app.domain.research_intent import is_comparison_query, is_mechanism_query, must_cover_for
@@ -114,9 +115,7 @@ def _heuristic_brief(query: str) -> ResearchBrief:
     stack = stack_m.group(0) if stack_m else ""
     mechanism = is_mechanism_query(query)
     comparison = is_comparison_query(query)
-    depth = "deep" if (qtype == QueryType.OPEN_RESEARCH or mechanism) else (
-        "standard" if comparison else "quick"
-    )
+    depth = "deep" if (qtype == QueryType.OPEN_RESEARCH or mechanism) else "standard"
     must = must_cover_for(query)
     if mechanism:
         decision = "Explain how it works and where the explanation stops being sourced"
@@ -124,6 +123,7 @@ def _heuristic_brief(query: str) -> ResearchBrief:
         decision = "Compare the named subjects on the dimensions the question implies"
     else:
         decision = _decision_type(qtype)
+    hyps = competing_hypotheses(query)
     return ResearchBrief(
         goal=goal,
         query_type=qtype.value,
@@ -158,7 +158,10 @@ def _heuristic_brief(query: str) -> ResearchBrief:
         assumptions=[
             "The reader wants an evidence-grade answer, not a summary of opinions",
             "Numbers are estimates unless a cited source states them",
+            "Both hypotheses stay open until primary evidence forces a qualified lean",
         ],
+        hypotheses=hyps,
+        subquestions=research_subquestions(query, hyps),
     )
 
 
@@ -175,18 +178,26 @@ def _llm_brief(query: str) -> ResearchBrief | None:
             "Build a research brief the user can edit before searching.\n"
             "Infer the subject area from the question itself; do not assume a domain.\n"
             "'sector' is the topic of this question. 'must_cover' lists what an answer must establish.\n"
+            "Always emit two competing hypotheses (H1 conservative/orchestration, H2 capability/model) "
+            "and 6-8 falsifiable subquestions, including one that seeks counter-evidence.\n"
             "JSON keys: goal, query_type (factual|comparison|open_research), sector, geography, "
             "time_horizon, decision_type, constraints (list), must_cover (list), sources_priority (list), "
-            "out_of_scope (list), deliverable, depth (quick|standard|deep), assumptions (list)."
+            "out_of_scope (list), deliverable, depth (quick|standard|deep), assumptions (list), "
+            "hypotheses (list of 2 strings), subquestions (list)."
         ),
         system="You prepare editable research briefs for Kiln, a general research agent.",
     )
     if not isinstance(payload, dict):
         return None
     try:
-        return ResearchBrief.model_validate(payload)
+        brief = ResearchBrief.model_validate(payload)
     except Exception:
         return None
+    if len(brief.hypotheses) < 2:
+        brief.hypotheses = competing_hypotheses(query)
+    if not brief.subquestions:
+        brief.subquestions = research_subquestions(query, brief.hypotheses)
+    return brief
 
 
 def _decision_type(qtype: QueryType) -> str:
@@ -213,6 +224,8 @@ def _brief_rows(brief: ResearchBrief) -> list[dict]:
         {"key": "out_of_scope", "label": "Out of scope", "value": brief.out_of_scope, "editable": True, "kind": "list"},
         {"key": "deliverable", "label": "Deliverable", "value": brief.deliverable, "editable": True, "kind": "text"},
         {"key": "assumptions", "label": "Assumptions", "value": brief.assumptions, "editable": True, "kind": "list"},
+        {"key": "hypotheses", "label": "Competing hypotheses", "value": brief.hypotheses, "editable": True, "kind": "list"},
+        {"key": "subquestions", "label": "Research subquestions", "value": brief.subquestions, "editable": True, "kind": "list"},
     ]
 
 
@@ -238,6 +251,7 @@ def _compose_query(original: str, brief: ResearchBrief) -> str:
         f"Horizon: {brief.time_horizon}" if brief.time_horizon else "",
         f"Decision: {brief.decision_type}" if brief.decision_type else "",
         f"Must cover: {'; '.join(brief.must_cover)}" if brief.must_cover else "",
+        f"Hypotheses: {'; '.join(brief.hypotheses)}" if brief.hypotheses else "",
         f"Constraints: {'; '.join(brief.constraints)}" if brief.constraints else "",
     ]
     return "\n".join(p for p in parts if p).strip()

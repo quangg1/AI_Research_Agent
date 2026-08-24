@@ -12,4 +12,6 @@ logger = logging.getLogger("kiln")
 
 
 def event(name: str, **payload: Any) -> None:
-    logger.info("event=%s %s", name, json.dumps(payload, default=str)[:4000])
+    from app.llm.redact import scrub_obj
+
+    logger.info("event=%s %s", name, json.dumps(scrub_obj(payload), default=str)[:4000])

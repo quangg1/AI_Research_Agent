@@ -1,4 +1,6 @@
-import { IsArray, IsObject, IsOptional, IsString } from "class-validator";
+import { Type } from "class-transformer";
+import { IsArray, IsObject, IsOptional, IsString, ValidateNested } from "class-validator";
+import { LlmCredentialDto } from "./llm-credential.dto";
 
 export class ResumeResearchDto {
   @IsOptional()
@@ -17,4 +19,9 @@ export class ResumeResearchDto {
   @IsOptional()
   @IsObject()
   brief?: Record<string, unknown>;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => LlmCredentialDto)
+  llm?: LlmCredentialDto;
 }

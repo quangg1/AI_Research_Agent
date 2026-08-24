@@ -41,6 +41,8 @@ export class ResearchRepository {
     orgId: string,
     userId: string,
     title?: string,
+    llmProvider?: ExecuteJobPayload["llmProvider"],
+    llmModel?: string,
   ) {
     const runId = randomUUID();
     const executionId = randomUUID();
@@ -51,12 +53,14 @@ export class ResearchRepository {
       executionVersion: 1,
       query,
       fresh,
+      ...(llmProvider ? { llmProvider } : {}),
+      ...(llmModel ? { llmModel } : {}),
     };
     return this.transaction(async (client) => {
       await client.query(
         `INSERT INTO research_runs
            (id, query, status, thread_id, execution_version, execution_id, org_id, created_by, title)
-         VALUES ($1, $2, 'queued', $1, 1, $3, $4, $5, $6)`,
+         VALUES ($1::uuid, $2, 'queued', $1::text, 1, $3::uuid, $4, $5, $6)`,
         [runId, query, executionId, orgId, userId, title || query.slice(0, 120)],
       );
       await client.query(
@@ -71,8 +75,42 @@ export class ResearchRepository {
          VALUES ($1, $2, 1, 'execute', $3::jsonb)`,
         [runId, executionId, JSON.stringify(payload)],
       );
-      return { id: runId, status: "queued" as const, executionVersion: 1 };
+      return { id: runId, status: "queued" as const, executionVersion: 1, executionId };
     });
+  }
+
+  async loadEvidenceGraph(runId: string, orgId: string) {
+    const run = await this.getRunForOrg(runId, orgId);
+    if (!run) return null;
+    try {
+      const claims = await this.pool.query(
+        `SELECT claim_key AS id, text, kind, confidence, quality_band,
+                verification_status, verification_note, locator_label AS locator,
+                quote, url
+         FROM research_claims WHERE run_id=$1 ORDER BY created_at`,
+        [runId],
+      );
+      if (!claims.rowCount) return null;
+      const sources = await this.pool.query(
+        `SELECT id, url, title, host, tier, quality_band, published,
+                length(content_text) AS content_chars
+         FROM research_sources WHERE run_id=$1`,
+        [runId],
+      );
+      const edges = await this.pool.query(
+        `SELECT e.relation, c.claim_key AS claim_id, s.url AS source_url,
+                sp.locator_label, sp.locator_kind, sp.page, left(sp.quote, 280) AS quote
+         FROM research_claim_edges e
+         JOIN research_claims c ON c.id = e.claim_id
+         LEFT JOIN research_sources s ON s.id = e.source_id
+         LEFT JOIN research_spans sp ON sp.id = e.span_id
+         WHERE c.run_id=$1`,
+        [runId],
+      );
+      return { claims: claims.rows, sources: sources.rows, edges: edges.rows };
+    } catch {
+      return null;
+    }
   }
 
   async getRunForOrg(runId: string, orgId: string) {
@@ -150,18 +188,28 @@ export class ResearchRepository {
     runId: string,
     decision: Record<string, unknown>,
     orgId?: string,
+    llmProvider?: ExecuteJobPayload["llmProvider"],
+    llmModel?: string,
   ) {
     return this.transaction(async (client) => {
-      const selected = await client.query<{ status: string; execution_version: number }>(
+      const selected = await client.query<{ status: string; execution_version: number; error: string | null }>(
         orgId
-          ? `SELECT status, execution_version FROM research_runs
+          ? `SELECT status, execution_version, error FROM research_runs
              WHERE id=$1 AND org_id=$2 AND deleted_at IS NULL FOR UPDATE`
-          : `SELECT status, execution_version FROM research_runs WHERE id=$1 FOR UPDATE`,
+          : `SELECT status, execution_version, error FROM research_runs WHERE id=$1 FOR UPDATE`,
         orgId ? [runId, orgId] : [runId],
       );
       if (!selected.rowCount) throw new NotFoundException("run not found");
       const status = selected.rows[0].status;
-      if (status !== "awaiting_human" && status !== "awaiting_brief") {
+      const action = String((decision as { action?: string } | undefined)?.action || "");
+      const errText = String(selected.rows[0].error || "");
+      const creditsContinue =
+        action === "continue" &&
+        status === "failed" &&
+        /out of credits|credits are exhausted|insufficient_quota|quota exceeded|resource_exhausted/i.test(
+          errText,
+        );
+      if (status !== "awaiting_human" && status !== "awaiting_brief" && !creditsContinue) {
         throw new NotFoundException(`run is not awaiting human input (status=${status})`);
       }
       const executionVersion = selected.rows[0].execution_version + 1;
@@ -172,11 +220,14 @@ export class ResearchRepository {
         executionId,
         executionVersion,
         decision,
+        ...(llmProvider ? { llmProvider } : {}),
+        ...(llmModel ? { llmModel } : {}),
       };
       await client.query(
         `UPDATE research_runs
          SET status='queued', execution_version=$2, execution_id=$3,
-             current_job_id=NULL, completed_at=NULL, error=NULL, updated_at=NOW()
+             current_job_id=NULL, completed_at=NULL, error=NULL,
+             interrupt_payload=NULL, updated_at=NOW()
          WHERE id=$1`,
         [runId, executionVersion, executionId],
       );
@@ -192,7 +243,7 @@ export class ResearchRepository {
          VALUES ($1, $2, $3, 'execute', $4::jsonb)`,
         [runId, executionId, executionVersion, JSON.stringify(payload)],
       );
-      return { id: runId, status: "queued" as const, executionVersion };
+      return { id: runId, status: "queued" as const, executionVersion, executionId };
     });
   }
 
@@ -215,6 +266,10 @@ export class ResearchRepository {
     return this.transaction(async (client) => {
       let status: string | null = "running";
       let terminal = false;
+      // Heartbeats during resume still see the old LangGraph interrupt until the
+      // node finishes. Never flip back to awaiting_human from progress frames —
+      // only an explicit interrupt frame parks the run again.
+      const snapshot = progressSnapshot(frame);
       if (frame.type === "heartbeat" || frame.type === "update") {
         status = "running";
       } else if (frame.type === "interrupt") {
@@ -234,7 +289,6 @@ export class ResearchRepository {
       if (!locked.rowCount) return false;
       if (locked.rows[0].status === "cancelled") return false;
 
-      const snapshot = frame.snapshot || null;
       const metrics =
         frame.metrics ||
         (snapshot && typeof snapshot === "object"
@@ -264,9 +318,7 @@ export class ResearchRepository {
           status,
           terminal,
           snapshot ? JSON.stringify(snapshot) : null,
-          frame.type === "interrupt"
-            ? JSON.stringify((frame as { interrupt?: unknown; data?: unknown }).interrupt ?? (frame as { data?: unknown }).data ?? null)
-            : null,
+          persistInterruptPayload(frame, snapshot),
           metrics ? JSON.stringify(metrics) : null,
           frame.type === "error" ? String(frame.error || "execution error").slice(0, 4000) : null,
         ],
@@ -385,4 +437,28 @@ export class ResearchRepository {
       return true;
     });
   }
+}
+
+function progressSnapshot(frame: ExecutionFrame): Record<string, unknown> | null {
+  const raw = frame.snapshot;
+  if (!raw || typeof raw !== "object") return null;
+  if (frame.type !== "heartbeat" && frame.type !== "update") {
+    return raw as Record<string, unknown>;
+  }
+  const snapshot = { ...(raw as Record<string, unknown>) };
+  delete snapshot.interrupt;
+  if (snapshot.status === "awaiting_human" || snapshot.status === "awaiting_brief") {
+    snapshot.status = "running";
+  }
+  return snapshot;
+}
+
+function persistInterruptPayload(
+  frame: ExecutionFrame,
+  _snapshot: Record<string, unknown> | null,
+): string | null {
+  if (frame.type === "interrupt") {
+    return JSON.stringify(frame.interrupt ?? frame.data ?? null);
+  }
+  return null;
 }

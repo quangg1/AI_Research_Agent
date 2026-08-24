@@ -15,7 +15,7 @@ def extract_node(state: ResearchState) -> dict:
     brief = state.get("brief") or {}
     slots = brief.get("must_answer") or must_answer_for(query)
     coverage = score_must_answer(query, working, slots)
-    ledger = build_ledger(working, k=14)
+    ledger = build_ledger(working, k=20)
     claims = claims_from_must_answer(coverage, working)
     event(
         "extract",

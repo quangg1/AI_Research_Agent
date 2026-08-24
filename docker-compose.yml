@@ -43,6 +43,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
       AGENT_SHARED_KEY: ${AGENT_SHARED_KEY:-}
+      LLM_BYOK_REQUIRED: ${LLM_BYOK_REQUIRED:-false}
     volumes:
       - ./data/corpus:/app/data/corpus:ro
       - kiln_memory:/app/data/memory
@@ -92,6 +93,7 @@ services:
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       STRIPE_PRICE_PRO: ${STRIPE_PRICE_PRO:-}
+      LLM_BYOK_REQUIRED: ${LLM_BYOK_REQUIRED:-false}
     depends_on:
       migrate:
         condition: service_completed_successfully

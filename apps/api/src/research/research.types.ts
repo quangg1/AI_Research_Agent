@@ -37,6 +37,8 @@ export interface ExecuteJobPayload {
   query?: string;
   fresh?: boolean;
   decision?: Record<string, unknown>;
+  llmProvider?: "gemini" | "openai" | "grok";
+  llmModel?: string;
 }
 
 export interface OutboxRecord {

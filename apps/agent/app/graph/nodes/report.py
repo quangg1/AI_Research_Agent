@@ -11,13 +11,29 @@ from app.domain.schema import Claim, CitationRef, Report
 from app.domain.textutil import distinctive_terms
 from app.graph.serde import dump
 from app.graph.state import ResearchState, budget_from
-from app.llm.client import llm
+from app.llm.client import CreditsExhaustedError, llm
 from app.observability.logging import event
 from app.report.compose import (
     GRAPH_VERSION,
     compose_report,
     compose_terminal_synthesis,
     memo_is_user_clean,
+)
+from app.domain.adversarial import method_notes_for_writer
+from app.report.deep_write import (
+    claims_prompt,
+    compress_max_tokens,
+    compress_prompt,
+    compress_system,
+    format_research_notes,
+    notes_max_chars,
+    parse_report_markdown,
+    report_max_tokens,
+    should_skip_llm_compress,
+    word_count,
+    word_target,
+    writer_prompt,
+    writer_system,
 )
 
 
@@ -94,6 +110,7 @@ def _report_sync(state: ResearchState) -> dict:
         allowed = {c.get("url") for c in citations}
         if claim.url and claim.url not in allowed:
             claim.url = next((c.get("url") or "" for c in citations if c.get("evidence_id") in (claim.support_ids or [])), "")
+    _attach_evidence_graph(state, report, retrieved, citations, refetch=True)
     grounded = bool(citations) and any(claim.grounded for claim in report.claims)
     stored = (
         save_answer(
@@ -199,6 +216,7 @@ def _reuse_stored_answer(state: ResearchState) -> dict:
         },
     )
     mark_reused(record.get("id") or "")
+    _attach_evidence_graph(state, report, [], citations, refetch=False)
     event("report_knowledge_reuse", knowledge_id=record.get("id"), similarity=state.get("reuse_similarity"))
     return {
         "report": dump(report),
@@ -310,8 +328,9 @@ def _llm_report(
     )
 
     depth = (state.get("brief") or {}).get("depth") or "standard"
-    min_words = 900 if depth == "deep" else 500
-    dossier_text = _format_dossier_for_prompt(dossier, citations)
+    min_words = word_target(depth)
+    notes, notes_prep = _compress_notes(state, dossier, citations)
+    metrics = {**metrics, "notes_prep": notes_prep}
     dimension_list = "\n".join(
         f"- {d.get('label')} (status: {d.get('status')})" for d in dossier if d.get("label")
     ) or "- Answer the question directly"
@@ -332,37 +351,41 @@ def _llm_report(
             "restarting; keep anything it established that the new evidence still supports.\n"
             f"Previous executive summary:\n{(prior.get('executive_summary') or '')[:1200]}\n\n"
         )
-    prompt = (
-        f"User question:\n{user_goal(state.get('query') or '')}\n\n"
-        f"Research brief:\n{state.get('brief')}\n\n"
-        f"{prior_note}"
-        f"Dimensions this answer must cover:\n{dimension_list}\n\n"
-        f"Evidence dossier (grouped by dimension):\n{dossier_text}\n\n"
-        f"Citation ledger (ONLY these [n] are legal):\n{citations}\n\n"
-        "Write a complete, reader-facing research memo that ANSWERS the question.\n"
-        f"Minimum length: ~{min_words} words of substantive prose in body_markdown.\n"
-        "Rules:\n"
-        "- One '###' subsection per dimension above, in that order, inside '## Analysis'.\n"
-        "- Explain the substance: what the source establishes, why it follows, and what it implies. "
-        "Do not paste a quote and move on, and do not restate a dimension label as if it were a finding.\n"
-        "- Every factual sentence carries an inline [n] citation from the ledger. Invent nothing.\n"
-        "- When evidence for a dimension is missing, say so plainly in one sentence instead of speculating.\n"
-        "- Keep disagreements between sources visible; never average them into a false consensus.\n"
-        f"- {comparison_rule}"
-        "- Exclude all internal telemetry: critic status, claim ledger, tool-call counts, iteration stats, "
-        "working-set tables, or research-quality metrics.\n"
-        "Required body_markdown sections:\n"
-        "## Executive summary\n## Scope\n## Analysis\n## Comparison (only if applicable)\n"
-        "## Findings\n## Decision rule\n## Limitations\n## References\n\n"
-        "JSON keys: title, executive_summary, body_markdown, decision_rule, limitations (list), "
-        "open_questions (list), claims (id,text,quote,url,tier,support_ids,contradict_ids,confidence,caveats)."
+    method_block = method_notes_for_writer(
+        user_goal(state.get("query") or ""),
+        state.get("brief") or {},
+        evidence,
+        citations,
     )
+    prompt = writer_prompt(
+        query=user_goal(state.get("query") or ""),
+        brief=state.get("brief") or {},
+        notes=notes,
+        citations=citations,
+        min_words=min_words,
+        comparison_rule=comparison_rule,
+        prior_note=prior_note,
+        dimension_list=dimension_list,
+        method_block=method_block,
+    )
+    markdown = _generate_report_markdown(prompt, max_tokens=report_max_tokens(depth))
+    if word_count(markdown) < max(200, int(min_words * 0.28)):
+        shorter = writer_prompt(
+            query=user_goal(state.get("query") or ""),
+            brief=state.get("brief") or {},
+            notes=notes[:12_000],
+            citations=citations,
+            min_words=max(700, int(min_words * 0.6)),
+            comparison_rule=comparison_rule,
+            prior_note=prior_note,
+            dimension_list=dimension_list,
+            method_block=method_block,
+        )
+        retry = _generate_report_markdown(shorter, max_tokens=report_max_tokens("standard"))
+        if word_count(retry) > word_count(markdown):
+            markdown = retry
 
-    payload = _generate_report_json(prompt, max_tokens=8192)
-    if not isinstance(payload, dict):
-        payload = _generate_report_json(_compact_report_prompt(state, dossier_text, citations, min_words), max_tokens=4096)
-
-    if not isinstance(payload, dict):
+    if not markdown.strip() or not memo_is_user_clean(markdown):
         failed = compose_terminal_synthesis(
             query=state.get("query") or "",
             evidence=evidence,
@@ -380,64 +403,96 @@ def _llm_report(
         failed.metrics["llm_error"] = llm.last_error
         return failed
 
+    from app.domain.report_audit import append_research_critic
+
+    markdown, critic_notes = append_research_critic(
+        markdown, query=user_goal(state.get("query") or "")
+    )
+    parsed = parse_report_markdown(markdown)
+    sidecar = _extract_report_sidecar(markdown, citations) or {}
+    claims = seed_claims or base.claims
+    if isinstance(sidecar.get("claims"), list) and sidecar["claims"]:
+        try:
+            claims = [Claim.model_validate(c) for c in sidecar["claims"]]
+        except Exception:
+            claims = seed_claims or base.claims
+    limitations = sidecar.get("limitations") or parsed.get("limitations") or base.limitations
+    if not isinstance(limitations, list):
+        limitations = base.limitations
+    limitations = [str(x) for x in limitations if str(x).strip()] + critic_notes
+    open_questions = sidecar.get("open_questions") or base.open_questions
+    if not isinstance(open_questions, list):
+        open_questions = base.open_questions
+    report = base.model_copy(
+        update={
+            "title": sidecar.get("title") or parsed.get("title") or base.title,
+            "executive_summary": sidecar.get("executive_summary")
+            or parsed.get("executive_summary")
+            or base.executive_summary,
+            "body_markdown": markdown,
+            "decision_rule": sidecar.get("decision_rule") or parsed.get("decision_rule") or base.decision_rule,
+            "limitations": limitations,
+            "open_questions": [str(x) for x in open_questions if str(x).strip()],
+            "claims": claims,
+            "metrics": {
+                **base.metrics,
+                "synthesis_status": "gemini_success",
+                "writer": "markdown",
+                "word_count": word_count(markdown),
+                "compressed_notes": notes_prep != "raw_dossier",
+                "notes_prep": notes_prep,
+                **({"llm_error": llm.last_error} if llm.last_error else {}),
+            },
+        }
+    )
+    return report
+
+
+def _compress_notes(state: ResearchState, dossier: list[dict], citations: list[dict]) -> tuple[str, str]:
+    """Return (notes, prep_mode). prep_mode: raw_dossier | cleaned | cleaned_fallback."""
+    depth = (state.get("brief") or {}).get("depth") or "standard"
+    raw = format_research_notes(dossier, citations, depth=depth)
+    # Deep: keep raw dossier notes — LLM "compress" historically dropped mechanisms/metrics.
+    if should_skip_llm_compress(depth) or not llm.available:
+        return raw, "raw_dossier"
     try:
-        payload["citations"] = citations
-        payload["evidence"] = evidence
-        payload.setdefault("method_notes", base.method_notes)
-        payload.setdefault("metrics", dict(base.metrics))
-        body = payload.get("body_markdown") or base.body_markdown
-        if not memo_is_user_clean(body):
-            body = base.body_markdown
-        payload["body_markdown"] = body
-        payload.setdefault("executive_summary", payload.get("executive_summary") or base.executive_summary)
-        payload.setdefault("title", payload.get("title") or base.title)
-        payload.setdefault("decision_rule", payload.get("decision_rule") or base.decision_rule)
-        payload.setdefault("limitations", payload.get("limitations") or base.limitations)
-        report = Report.model_validate(payload)
-        report.metrics = {**base.metrics, **(report.metrics or {}), "synthesis_status": "gemini_success"}
-        if llm.last_error:
-            report.metrics["llm_error"] = llm.last_error
-        return report
-    except Exception:
-        failed = compose_terminal_synthesis(
-            query=state.get("query") or "",
-            evidence=evidence,
-            critic=critic,
-            plan=state.get("plan") or {},
-            brief=state.get("brief") or {},
-            budget=state.get("budget") or {},
-            llm_mode="gemini_failed_fallback",
-            citations=citations,
-            claims=seed_claims,
-            metrics={**metrics, "llm_error": llm.last_error},
-            terminal_followups=terminal_followups,
+        cleaned = llm.generate(
+            compress_prompt(raw, user_goal(state.get("query") or ""), depth=depth),
+            system=compress_system(),
+            max_tokens=compress_max_tokens(depth),
         )
-        failed.metrics["synthesis_status"] = "gemini_failed_fallback"
-        return failed
+    except CreditsExhaustedError:
+        raise
+    except Exception:
+        return raw, "cleaned_fallback"
+    text = (cleaned or "").strip()
+    # If the clean pass collapsed notes too aggressively, fall back to raw.
+    if not text or len(text) < max(400, int(len(raw) * 0.35)):
+        return raw, "cleaned_fallback"
+    return text[: notes_max_chars(depth)], "cleaned"
 
 
-def _generate_report_json(prompt: str, max_tokens: int) -> dict | None:
-    payload = llm.generate_json(
-        prompt=prompt,
-        system=(
-            "You are Kiln's research writer. Write a complete reader-facing memo grounded strictly in the "
-            "supplied evidence dossier, for whatever subject the question is about. "
-            "No internal agent telemetry in body_markdown."
-        ),
-        max_tokens=max_tokens,
-    )
-    return payload if isinstance(payload, dict) else None
-
-
-def _compact_report_prompt(state: ResearchState, dossier_text: str, citations: list[dict], min_words: int) -> str:
+def _generate_report_markdown(prompt: str, max_tokens: int) -> str:
     return (
-        f"User question:\n{user_goal(state.get('query') or '')}\n\n"
-        f"Evidence dossier:\n{dossier_text}\n\n"
-        f"Citations:\n{citations[:10]}\n\n"
-        f"Write a COMPACT but complete memo (~{min_words} words). "
-        "Sections: Executive summary, Scope, Analysis, Findings, Decision rule, Limitations, References. "
-        "Explain substance with inline [n] citations. No critic/ledger/tool stats. JSON only."
-    )
+        llm.generate(
+            prompt=prompt,
+            system=writer_system(),
+            max_tokens=max_tokens,
+        )
+        or ""
+    ).strip()
+
+
+def _extract_report_sidecar(markdown: str, citations: list[dict]) -> dict | None:
+    try:
+        payload = llm.generate_json(
+            prompt=claims_prompt(markdown, citations),
+            system="Extract structured fields from a Kiln memo. JSON only. Do not rewrite the memo.",
+            max_tokens=2048,
+        )
+    except CreditsExhaustedError:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _comparison_subjects(query: str, evidence: list[dict]) -> list[str]:
@@ -447,19 +502,7 @@ def _comparison_subjects(query: str, evidence: list[dict]) -> list[str]:
 
 
 def _format_dossier_for_prompt(dossier: list[dict], citations: list[dict]) -> str:
-    url_to_n = {c.get("url", "").rstrip("/").lower(): c.get("n") for c in citations if c.get("url")}
-    lines: list[str] = []
-    for dim in dossier:
-        items = dim.get("items") or []
-        if not items:
-            continue
-        lines.append(f"### {dim.get('id')}: {dim.get('label')} (status: {dim.get('status')})")
-        for ev in items[:2]:
-            url = (ev.get("url") or "").rstrip("/").lower()
-            n = url_to_n.get(url, "?")
-            quote = (ev.get("quote") or ev.get("snippet") or "")[:320]
-            lines.append(f"- [{n}] {ev.get('title') or url}: {quote}")
-    return "\n".join(lines) if lines else "(no dimension-grouped evidence)"
+    return format_research_notes(dossier, citations, depth="standard")
 
 
 def _sanitize_decision_rule(query: str, rule: str, citations: list[dict], critic: dict) -> str:
@@ -493,3 +536,26 @@ def _template_report(state: ResearchState, evidence: list[dict], critic: dict) -
         budget=state.get("budget") or {},
         llm_mode=state.get("llm_mode") or llm.mode,
     )
+
+
+def _attach_evidence_graph(
+    state: ResearchState,
+    report: Report,
+    evidence: list[dict],
+    citations: list[dict],
+    *,
+    refetch: bool,
+) -> None:
+    from app.domain.verify_citations import verify_against_sources
+    from app.persistence.evidence_graph import compact_graph, persist_evidence_graph
+    from app.tools.fetch import fetch_url
+
+    graph = verify_against_sources(
+        report.claims,
+        evidence,
+        citations,
+        refetch=refetch,
+        fetch_fn=fetch_url if refetch else None,
+    )
+    report.metrics["evidence_graph"] = compact_graph(graph)
+    persist_evidence_graph(str(state.get("thread_id") or ""), graph)

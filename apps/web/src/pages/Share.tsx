@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { endpoints } from "../lib/api";
+import { MemoMarkdown } from "../components/MemoMarkdown";
 
 export function SharePage({ token }: { token: string }) {
   const [run, setRun] = useState<any>(null);
@@ -15,12 +14,14 @@ export function SharePage({ token }: { token: string }) {
   }, [token]);
 
   const body = run?.agent?.values?.report?.body_markdown || "";
+  const citations = run?.agent?.values?.report?.citations || run?.agent?.values?.citations || [];
+  const title = run?.title || run?.agent?.values?.report?.title || "";
 
   return (
     <>
       <section className="hero">
         <div className="hero-kicker">Shared research</div>
-        <h1>{run?.title || run?.query || "Shared memo"}</h1>
+        <h1>{title || run?.query || "Shared memo"}</h1>
         <p>Read-only link. Sign in to start your own research.</p>
       </section>
       {error && <p className="err">{error}</p>}
@@ -28,7 +29,9 @@ export function SharePage({ token }: { token: string }) {
         <section className="panel memo-panel">
           <article className="memo md">
             {body ? (
-              <Markdown remarkPlugins={[remarkGfm]}>{body}</Markdown>
+              <MemoMarkdown citations={citations} stripTitle={title || undefined}>
+                {body}
+              </MemoMarkdown>
             ) : (
               <p className="idle">Status: {run.status}. Full memo not available yet.</p>
             )}

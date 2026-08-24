@@ -33,7 +33,7 @@ describe("ResearchDispatcher", () => {
     expect(queue.add).toHaveBeenCalledWith(
       "execute",
       expect.objectContaining({ runId: "run-1", executionVersion: 3 }),
-      expect.objectContaining({ jobId: "research:run-1:execution:3" }),
+      expect.objectContaining({ jobId: "research-run-1-v3" }),
     );
   });
 });

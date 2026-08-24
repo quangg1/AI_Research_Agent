@@ -51,9 +51,9 @@ def extract_content(raw: bytes, content_type: str = "") -> str:
             reader = PdfReader(io.BytesIO(raw))
             pages: list[str] = []
             chars = 0
-            for page in reader.pages[:MAX_PDF_PAGES]:
+            for index, page in enumerate(reader.pages[:MAX_PDF_PAGES], start=1):
                 text = page.extract_text() or ""
-                pages.append(text)
+                pages.append(f"[[page {index}]] {text}")
                 chars += len(text)
                 if chars >= MAX_EXTRACTED_CHARS:
                     break

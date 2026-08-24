@@ -14,6 +14,7 @@ from app.config import settings
 from app.contracts import ExecutionRequest
 from app.domain import knowledge
 from app.llm.client import llm
+from app.llm.providers import PROVIDERS
 from app.retrieval.store import corpus_stats, ingest_corpus
 from app.scenarios.llm_cost import compare_serving, rag_tradeoff
 
@@ -49,7 +50,10 @@ async def health():
     body = {
         **state,
         "service": "kiln-agent",
-        "llm_mode": llm.mode,
+        "llm_mode": "platform" if not settings.require_byok() else "byok",
+        "byok_required": settings.require_byok(),
+        "providers": list(PROVIDERS),
+        "platform_providers": settings.platform_configured(),
         "tracing": runtime.tracing_on(),
     }
     return JSONResponse(body, status_code=200 if state["ok"] else 503)

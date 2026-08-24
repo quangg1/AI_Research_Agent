@@ -38,7 +38,7 @@ async function bootstrap() {
       "Last-Event-Id",
     ],
   });
-  await app.listen(Number(process.env.API_PORT || 3000), "0.0.0.0");
+  await app.listen(Number(process.env.PORT || process.env.API_PORT || 3000), "0.0.0.0");
 }
 
 bootstrap();

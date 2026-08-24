@@ -1,0 +1,130 @@
+# Kiln on Render — Blueprint (IaC). Auto-deploys from `main` after GitHub connect.
+# Free tier: web services sleep after idle; free Postgres expires ~30 days.
+# Qdrant omitted (agent falls back to Postgres). Upgrade plans for production.
+#
+# After Apply: set sync:false secrets, run SQL migrations (see docs/deploy-render.md),
+# then set VITE_API_URL + CORS_ORIGINS + AGENT_BASE_URL to the public service URLs and redeploy web/api.
+
+databases:
+  - name: kiln-postgres
+    databaseName: kiln
+    user: kiln
+    plan: free
+    postgresMajorVersion: "16"
+
+  - name: kiln-redis
+    plan: free
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []
+
+services:
+  - type: web
+    name: kiln-agent
+    runtime: docker
+    plan: free
+    region: oregon
+    branch: main
+    autoDeploy: true
+    dockerfilePath: ./apps/agent/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kiln-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromDatabase:
+          name: kiln-redis
+          property: connectionString
+      - key: QDRANT_URL
+        value: ""
+      - key: LLM_BYOK_REQUIRED
+        value: "true"
+      - key: AGENT_SHARED_KEY
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: XAI_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: MAX_TOOL_CALLS
+        value: "24"
+      - key: MAX_ITERATIONS
+        value: "5"
+      - key: LANGCHAIN_TRACING_V2
+        value: "false"
+
+  - type: web
+    name: kiln-api
+    runtime: docker
+    plan: free
+    region: oregon
+    branch: main
+    autoDeploy: true
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: ./apps/api
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kiln-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromDatabase:
+          name: kiln-redis
+          property: connectionString
+      - key: AGENT_BASE_URL
+        sync: false
+      - key: AUTH_MODE
+        value: dev
+      - key: ALLOW_DEV_AUTH
+        value: "true"
+      - key: LLM_BYOK_REQUIRED
+        value: "true"
+      - key: CORS_ORIGINS
+        sync: false
+      - key: AGENT_SHARED_KEY
+        sync: false
+      - key: API_TO_AGENT_KEY
+        sync: false
+      - key: API_SHARED_KEY
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_PRO
+        sync: false
+
+  - type: web
+    name: kiln-web
+    runtime: static
+    plan: free
+    region: oregon
+    branch: main
+    autoDeploy: true
+    buildCommand: cd apps/web && npm ci && npm run build
+    staticPublishPath: apps/web/dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+    envVars:
+      - key: VITE_AUTH_MODE
+        value: dev
+      - key: VITE_API_URL
+        sync: false
+      - key: VITE_CLERK_PUBLISHABLE_KEY
+        sync: false

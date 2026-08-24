@@ -20,6 +20,7 @@ services:
     environment:
       APP_ENV: production
       AGENT_SHARED_KEY: ${AGENT_SHARED_KEY}
+      LLM_BYOK_REQUIRED: "false"
 
   api:
     restart: unless-stopped
@@ -29,6 +30,7 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS}
       AGENT_SHARED_KEY: ${AGENT_SHARED_KEY}
       API_TO_AGENT_KEY: ${AGENT_SHARED_KEY}
+      LLM_BYOK_REQUIRED: "false"
 
   web:
     restart: unless-stopped

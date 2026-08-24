@@ -92,6 +92,39 @@ async def test_start_retry_at_interrupt_reemits_interrupt(monkeypatch):
     assert graph.inputs == []
 
 
+async def test_start_retry_synthesizes_hitl_when_interrupt_missing(monkeypatch):
+    graph = _Graph(
+        _snapshot(
+            {
+                "status": "researching",
+                "query": "Explain continuous batching in serving systems",
+                "claims": [{"id": "C1", "text": "batching raises throughput"}],
+                "last_execution_id": "exec-1",
+            },
+            next_nodes=("hitl",),
+        )
+    )
+    monkeypatch.setattr(runtime, "_pool", _Pool())
+    monkeypatch.setattr(runtime, "_graph", graph)
+
+    frames = [
+        frame
+        async for frame in runtime.stream_execution(
+            {
+                "kind": "start",
+                "runId": "run-1",
+                "executionId": "exec-3",
+                "query": "Explain continuous batching in serving systems",
+            }
+        )
+    ]
+
+    assert frames[0]["type"] == "interrupt"
+    assert frames[0]["data"]["type"] == "approve_report"
+    assert frames[0]["snapshot"]["status"] == "awaiting_human"
+    assert graph.inputs == []
+
+
 async def test_same_resume_execution_continues_with_none(monkeypatch):
     graph = _Graph(
         _snapshot(
@@ -117,3 +150,35 @@ async def test_same_resume_execution_continues_with_none(monkeypatch):
 
     assert graph.inputs == [None]
     assert frames[-1]["type"] == "interrupt"
+
+
+async def test_resume_at_brief_sends_command_even_without_interrupt_payload(monkeypatch):
+    graph = _Graph(
+        _snapshot(
+            {
+                "status": "awaiting_human",
+                "query": "Explain continuous batching in serving systems",
+                "last_execution_id": "exec-1",
+            },
+            next_nodes=("briefing",),
+        )
+    )
+    monkeypatch.setattr(runtime, "_pool", _Pool())
+    monkeypatch.setattr(runtime, "_graph", graph)
+
+    frames = [
+        frame
+        async for frame in runtime.stream_execution(
+            {
+                "kind": "resume",
+                "runId": "run-1",
+                "executionId": "exec-2",
+                "decision": {"action": "start", "brief": {"goal": "batching"}},
+            }
+        )
+    ]
+
+    assert len(graph.inputs) == 1
+    assert graph.inputs[0] is not None
+    assert frames[0]["type"] == "interrupt"
+    assert frames[0]["data"]["type"] == "research_brief"

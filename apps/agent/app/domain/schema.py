@@ -180,6 +180,13 @@ class Claim(BaseModel):
     status: str = ""
     evidence_type: str = ""
     directness: str = ""
+    kind: str = ""  # direct | derived | inferred | recommendation | speculative
+    published: str = ""
+    locator: str = ""  # section / table / experiment if the source states it
+    quality_band: str = ""
+    provenance: str = ""  # measured | author_assumption | secondhand | unknown
+    verification_status: str = ""  # quote-matched statuses: verified | unsupported | ...
+    verification_note: str = ""
 
 
 class CriticVerdict(BaseModel):
@@ -193,9 +200,9 @@ class CriticVerdict(BaseModel):
 
 
 class Budget(BaseModel):
-    max_tool_calls: int = 12
+    max_tool_calls: int = 24
     max_tokens: int = 80_000
-    max_iterations: int = 3
+    max_iterations: int = 5
     used_tool_calls: int = 0
     used_tokens: int = 0
     iterations: int = 0
@@ -245,6 +252,8 @@ class ResearchBrief(BaseModel):
     deliverable: str = "Cited decision memo with claims, quotes, and contradictions"
     depth: str = "standard"  # quick | standard | deep
     assumptions: list[str] = Field(default_factory=list)
+    hypotheses: list[str] = Field(default_factory=list)
+    subquestions: list[str] = Field(default_factory=list)
 
 
 class CitationRef(BaseModel):

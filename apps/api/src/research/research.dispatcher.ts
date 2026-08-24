@@ -30,7 +30,7 @@ export class ResearchDispatcher implements OnModuleInit, OnModuleDestroy {
         let dispatched = false;
         do {
           dispatched = await this.repository.dispatchNext(async (record) => {
-            const jobId = `research:${record.run_id}:execution:${record.execution_version}`;
+            const jobId = `research-${record.run_id}-v${record.execution_version}`;
             await this.queue.add("execute", record.payload, {
               jobId,
               attempts: Number(process.env.RESEARCH_JOB_ATTEMPTS || 4),

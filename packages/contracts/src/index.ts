@@ -18,9 +18,23 @@ export const ApiErrorSchema = z.object({
 });
 export type ApiError = z.infer<typeof ApiErrorSchema>;
 
+export const LlmRequestSchema = z.object({
+  provider: z.enum(["gemini", "openai", "grok"]),
+  apiKey: z.string().min(8).max(4096).optional(),
+  model: z.string().min(1).max(200).optional(),
+  keys: z
+    .object({
+      gemini: z.string().min(8).max(4096).optional(),
+      openai: z.string().min(8).max(4096).optional(),
+      grok: z.string().min(8).max(4096).optional(),
+    })
+    .optional(),
+});
+
 export const StartResearchRequestSchema = z.object({
   query: z.string().min(8).max(4000),
   fresh: z.boolean().optional(),
+  llm: LlmRequestSchema.optional(),
 });
 export type StartResearchRequest = z.infer<typeof StartResearchRequestSchema>;
 
@@ -29,6 +43,7 @@ export const ResumeResearchRequestSchema = z.object({
   notes: z.string().optional(),
   extra_questions: z.array(z.string()).optional(),
   brief: z.record(z.unknown()).optional(),
+  llm: LlmRequestSchema.optional(),
 });
 export type ResumeResearchRequest = z.infer<typeof ResumeResearchRequestSchema>;
 
@@ -61,7 +76,7 @@ export const AgentSnapshotSchema = z
     hint: z.string().optional(),
     eta_s: z.number().optional(),
     elapsed_s: z.number().optional(),
-    interrupt: InterruptPayloadSchema.nullable().optional(),
+    interrupt: z.unknown().nullable().optional(),
     values: z.any().optional(),
     error: z.string().nullable().optional(),
   })

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { endpoints } from "../lib/api";
+import { loadPinnedClaims, unpinClaim, type PinnedClaim } from "../lib/pinnedClaims";
 
 export function WorkspacePage({ go }: { go: (to: string) => void }) {
   const [runs, setRuns] = useState<any[]>([]);
@@ -11,6 +12,7 @@ export function WorkspacePage({ go }: { go: (to: string) => void }) {
   const [status, setStatus] = useState("");
   const [cursor, setCursor] = useState<string | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [pinnedClaims, setPinnedClaims] = useState<PinnedClaim[]>([]);
 
   async function load(reset = true) {
     setLoading(true);
@@ -23,6 +25,7 @@ export function WorkspacePage({ go }: { go: (to: string) => void }) {
       });
       setRuns(reset ? data.runs || [] : [...runs, ...(data.runs || [])]);
       setNextCursor(data.next_cursor || null);
+      setPinnedClaims(loadPinnedClaims());
       setError("");
     } catch (err: any) {
       setError(err.message || "Workspace unavailable");
@@ -205,6 +208,32 @@ export function WorkspacePage({ go }: { go: (to: string) => void }) {
           ) : (
             <p className="idle">Select a run to inspect its event trail.</p>
           )}
+          <section className="panel" style={{ marginTop: 16 }}>
+            <h2 style={{ marginTop: 0, fontSize: 16 }}>Pinned claims</h2>
+            <p className="sub">Saved from evidence drawer on Research. Reuse in later questions.</p>
+            <ul className="pinned-claim-list">
+              {pinnedClaims.map((p) => (
+                <li key={p.id}>
+                  <p>{p.text}</p>
+                  <div className="btn-row">
+                    {p.runId ? (
+                      <button className="btn compact" type="button" onClick={() => go(`/?run=${p.runId}`)}>
+                        Open run
+                      </button>
+                    ) : null}
+                    <button
+                      className="btn compact"
+                      type="button"
+                      onClick={() => setPinnedClaims(unpinClaim(p.id))}
+                    >
+                      Unpin
+                    </button>
+                  </div>
+                </li>
+              ))}
+              {!pinnedClaims.length && <li className="sub">No pinned claims yet.</li>}
+            </ul>
+          </section>
         </main>
       </div>
     </>

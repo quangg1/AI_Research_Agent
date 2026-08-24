@@ -65,6 +65,7 @@ export async function api<T>(
   init?: RequestInit,
 ): Promise<T> {
   const res = await fetch(`${API}${path}`, {
+    cache: "no-store",
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -121,12 +122,13 @@ export const endpoints = {
   status: () => api("/v1/status", UnknownObjectSchema),
   health: () => api("/health", UnknownObjectSchema),
   me: () => api("/v1/me", UnknownObjectSchema),
-  startResearch: (query: string, fresh = false) =>
+  startResearch: (query: string, fresh = false, llm?: { provider: string; apiKey?: string; model?: string }) =>
     api("/v1/research", ResearchEnqueueResponseSchema, {
       method: "POST",
-      body: JSON.stringify({ query, fresh }),
+      body: JSON.stringify({ query, fresh, ...(llm ? { llm } : {}) }),
     }) as Promise<ResearchEnqueueResponse>,
   getRun: (id: string) => api(`/v1/research/${id}`, ResearchRunSchema) as Promise<ResearchRun>,
+  getGraph: (id: string) => api(`/v1/research/${id}/graph`, UnknownObjectSchema),
   resume: (id: string, body: unknown) =>
     api(`/v1/research/${id}/resume`, UnknownObjectSchema, {
       method: "POST",
@@ -134,8 +136,11 @@ export const endpoints = {
     }),
   cancel: (id: string) =>
     api(`/v1/research/${id}/cancel`, UnknownObjectSchema, { method: "POST" }),
-  duplicate: (id: string) =>
-    api(`/v1/research/${id}/duplicate`, ResearchEnqueueResponseSchema, { method: "POST" }),
+  duplicate: (id: string, llm?: { provider: string; apiKey?: string; model?: string }) =>
+    api(`/v1/research/${id}/duplicate`, ResearchEnqueueResponseSchema, {
+      method: "POST",
+      body: JSON.stringify(llm ? { llm } : {}),
+    }),
   deleteRun: (id: string) =>
     api(`/v1/research/${id}`, UnknownObjectSchema, { method: "DELETE" }),
   eventsUrl: async (id: string) => {

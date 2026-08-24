@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Headers,
   Param,
   Patch,
@@ -13,7 +14,7 @@ import {
 } from "@nestjs/common";
 import type { Response } from "express";
 import { ResumeResearchDto } from "./dto/resume-research.dto";
-import { StartResearchDto } from "./dto/start-research.dto";
+import { DuplicateResearchDto, StartResearchDto } from "./dto/start-research.dto";
 import { ResearchService } from "./research.service";
 import { AuthGuard, OrgAdminGuard } from "../auth/auth.guard";
 import { CurrentAuth, type AuthContext } from "../auth/auth.types";
@@ -41,13 +42,20 @@ export class ResearchController {
   @UseGuards(AuthGuard)
   @Post("/v1/research")
   start(@Body() body: StartResearchDto, @CurrentAuth() auth: AuthContext) {
-    return this.research.enqueue(body.query, body.fresh === true, auth);
+    return this.research.enqueue(body.query, body.fresh === true, auth, body.llm);
   }
 
   @UseGuards(AuthGuard)
+  @Header("Cache-Control", "no-store")
   @Get("/v1/research/:id")
   get(@Param("id") id: string, @CurrentAuth() auth: AuthContext) {
     return this.research.get(id, auth);
+  }
+
+  @UseGuards(AuthGuard)
+  @Get("/v1/research/:id/graph")
+  graph(@Param("id") id: string, @CurrentAuth() auth: AuthContext) {
+    return this.research.evidenceGraph(id, auth);
   }
 
   @UseGuards(AuthGuard)
@@ -68,8 +76,12 @@ export class ResearchController {
 
   @UseGuards(AuthGuard)
   @Post("/v1/research/:id/duplicate")
-  duplicate(@Param("id") id: string, @CurrentAuth() auth: AuthContext) {
-    return this.research.duplicate(id, auth);
+  duplicate(
+    @Param("id") id: string,
+    @Body() body: DuplicateResearchDto,
+    @CurrentAuth() auth: AuthContext,
+  ) {
+    return this.research.duplicate(id, auth, body?.llm);
   }
 
   @UseGuards(AuthGuard)

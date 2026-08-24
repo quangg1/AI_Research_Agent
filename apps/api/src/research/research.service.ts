@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   HttpException,
   Injectable,
@@ -11,7 +12,10 @@ import { randomBytes, randomUUID } from "crypto";
 import type { Response } from "express";
 import { AgentExecutionClient } from "./agent-execution.client";
 import { ResumeResearchDto } from "./dto/resume-research.dto";
+import { LlmCredentialDto, hasVisitorSecrets, llmByokRequired, sanitizeLlm } from "./dto/llm-credential.dto";
+import { LlmCredentialVault } from "./llm-credential.vault";
 import { ResearchRepository } from "./research.repository";
+import { presentRun } from "./present-run";
 import { TERMINAL_STATUSES } from "./research.types";
 import type { AuthContext } from "../auth/auth.types";
 import { isOrgAdmin } from "../auth/auth.types";
@@ -25,6 +29,7 @@ export class ResearchService {
     private readonly agent: AgentExecutionClient,
     private readonly auth: AuthService,
     private readonly billing: BillingService,
+    private readonly llmVault: LlmCredentialVault,
     @InjectQueue("research") private readonly queue: Queue,
   ) {}
 
@@ -41,7 +46,8 @@ export class ResearchService {
     };
   }
 
-  async enqueue(query: string, fresh = false, auth: AuthContext) {
+  async enqueue(query: string, fresh = false, auth: AuthContext, llm?: LlmCredentialDto) {
+    const credential = this.requireCredential(llm);
     const recent = await this.repository.query<{ n: number }>(
       `SELECT count(*)::int AS n FROM research_runs
        WHERE org_id=$1 AND created_at > NOW() - INTERVAL '60 seconds'
@@ -62,14 +68,19 @@ export class ResearchService {
       fresh,
       auth.orgId,
       auth.userId,
+      undefined,
+      credential?.provider,
+      credential?.model,
     );
     await this.billing.recordUsage(auth.orgId, auth.userId, created.id);
     this.auth.trackEvent(auth.orgId, auth.userId, "run_started", { runId: created.id });
-    return created;
+    if (hasVisitorSecrets(credential)) this.llmVault.put(created.executionId, credential);
+    return { id: created.id, status: created.status };
   }
 
   async resume(id: string, body: ResumeResearchDto, auth: AuthContext) {
     await this.requireRun(id, auth.orgId);
+    const credential = this.requireCredential(body.llm);
     const decision = {
       action: body.action || "approve",
       notes: body.notes || "",
@@ -79,12 +90,28 @@ export class ResearchService {
     if (body.action === "approve" || body.action === "start") {
       this.auth.trackEvent(auth.orgId, auth.userId, "brief_approved", { runId: id });
     }
-    return this.repository.createResumeWithOutbox(id, decision, auth.orgId);
+    const created = await this.repository.createResumeWithOutbox(
+      id,
+      decision,
+      auth.orgId,
+      credential?.provider,
+      credential?.model,
+    );
+    if (hasVisitorSecrets(credential)) this.llmVault.put(created.executionId, credential);
+    return { id: created.id, status: created.status };
   }
 
   async get(id: string, auth: AuthContext) {
     const row = await this.requireRun(id, auth.orgId);
-    return { ...row, agent: row.result_json || undefined };
+    return presentRun(row);
+  }
+
+  async evidenceGraph(id: string, auth: AuthContext) {
+    const row = await this.requireRun(id, auth.orgId);
+    const stored = await this.repository.loadEvidenceGraph(id, auth.orgId);
+    if (stored) return stored;
+    const presented = presentRun(row);
+    return presented.evidence_graph || { claims: [], sources: [], edges: [] };
   }
 
   async cancel(id: string, auth: AuthContext) {
@@ -100,9 +127,9 @@ export class ResearchService {
     return { id, deleted: true };
   }
 
-  async duplicate(id: string, auth: AuthContext) {
+  async duplicate(id: string, auth: AuthContext, llm?: LlmCredentialDto) {
     const row = await this.requireRun(id, auth.orgId);
-    return this.enqueue(String(row.query), true, auth);
+    return this.enqueue(String(row.query), true, auth, llm);
   }
 
   async events(id: string, res: Response, lastEventId: string | undefined, auth: AuthContext) {
@@ -174,10 +201,6 @@ export class ResearchService {
       });
     }
     return { ok: true, service: "kiln-api", agent: agentHealth };
-  }
-
-  async status() {
-    return this.agent.health();
   }
 
   async checkpoints(id: string, auth: AuthContext) {
@@ -362,12 +385,12 @@ export class ResearchService {
       throw new ForbiddenException("share expired");
     }
     const run = await this.repository.query(
-      `SELECT id, query, title, status, result_json, metrics_json, created_at
+      `SELECT id, query, title, status, result_json, interrupt_payload, metrics_json, created_at
        FROM research_runs WHERE id=$1 AND org_id=$2 AND deleted_at IS NULL`,
       [row.run_id, row.org_id],
     );
     if (!run.rowCount) throw new NotFoundException("run not found");
-    return { ...run.rows[0], agent: run.rows[0].result_json || undefined, share: { permission: "read" } };
+    return presentRun(run.rows[0], { share: { permission: "read" } });
   }
 
   async exportOrg(auth: AuthContext) {
@@ -439,6 +462,28 @@ export class ResearchService {
       ],
     );
     return result;
+  }
+
+  async status() {
+    const health = (await this.agent.health()) as Record<string, unknown>;
+    return {
+      ...health,
+      byok_required: llmByokRequired() || health.byok_required === true,
+      llm_mode: llmByokRequired() ? "byok" : health.llm_mode || "platform",
+    };
+  }
+
+  private requireCredential(llm?: LlmCredentialDto) {
+    const credential = sanitizeLlm(llm);
+    if (!credential) {
+      throw new BadRequestException("Select Gemini, OpenAI, or Grok.");
+    }
+    if (llmByokRequired() && !hasVisitorSecrets(credential)) {
+      throw new BadRequestException(
+        "A model API key is required. Paste your Gemini, OpenAI, or Grok key. Kiln never stores visitor keys.",
+      );
+    }
+    return credential;
   }
 
   private async requireRun(id: string, orgId: string) {

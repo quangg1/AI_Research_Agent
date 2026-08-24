@@ -1,7 +1,14 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { FormEvent, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { endpoints } from "../lib/api";
+import { byokReady, isCreditsExhaustedMessage, loadByok, llmPayload, type ByokState } from "../lib/byok";
+import { copyForNotion, downloadExportPack } from "../lib/exportMemo";
+import { ByokPanel } from "../components/ByokPanel";
+import { ClaimCard, EvidenceGraphPanel } from "../components/EvidenceGraph";
+import { DecisionCard } from "../components/DecisionCard";
+import { EvidenceDrawer } from "../components/EvidenceDrawer";
+import { MemoMarkdown, prepMemoMarkdown } from "../components/MemoMarkdown";
+import { loadReaderPrefs, MemoToc, ReaderToolbar, type ReaderPrefs } from "../components/MemoReadingChrome";
+import { RunHistoryPanel } from "../components/RunHistoryPanel";
 import { openAuthedEventStream } from "../lib/sse";
 
 const PIPELINE = ["briefing", "planner", "docs", "scholar", "search", "collector", "enrich", "retrieve", "extract", "critic", "hitl", "report"];
@@ -15,7 +22,7 @@ const EXAMPLES = [
 
 const STEP_COPY: Record<string, { title: string; hint: string; wait: string }> = {
   briefing: { title: "brief", hint: "Confirm research plan", wait: "Usually a few seconds" },
-  planner: { title: "planner", hint: "Decompose the question", wait: "Waiting on Gemini — often 1–3 min" },
+  planner: { title: "planner", hint: "Decompose the question", wait: "Waiting on your model — often 1–3 min" },
   docs: { title: "docs", hint: "Primary docs & frameworks", wait: "A few seconds" },
   scholar: { title: "scholar", hint: "Systems papers", wait: "A few seconds" },
   search: { title: "search", hint: "Current web sources", wait: "Web search can take 5–15s" },
@@ -23,9 +30,9 @@ const STEP_COPY: Record<string, { title: string; hint: string; wait: string }> =
   enrich: { title: "enrich", hint: "Fetch full documents", wait: "Fetching pages, 5–15s" },
   retrieve: { title: "retrieve", hint: "Rank by relevance", wait: "A few seconds" },
   extract: { title: "extract", hint: "Quote + citation ledger", wait: "A few seconds" },
-  critic: { title: "critic", hint: "Conflict check", wait: "Waiting on Gemini — often 30s–2 min" },
+  critic: { title: "critic", hint: "Conflict check", wait: "Waiting on your model — often 30s–2 min" },
   hitl: { title: "review", hint: "Human approval", wait: "Waiting on you" },
-  report: { title: "report", hint: "Write the memo", wait: "Longest Gemini call — often 1–4 min" },
+  report: { title: "report", hint: "Write the long memo", wait: "Compress notes then write — often 2–6 min" },
 };
 
 const TIER_LABEL: Record<string, string> = {
@@ -43,6 +50,9 @@ type Run = {
   id?: string;
   status?: string;
   query?: string;
+  error?: string | null;
+  interrupt_payload?: any;
+  evidence_graph?: any;
   agent?: {
     status?: string;
     interrupt?: any;
@@ -54,8 +64,29 @@ type Run = {
     hint?: string;
     eta_s?: number;
     started_at?: number;
+    next?: string[];
   };
 };
+
+function unwrapInterrupt(raw: any): any {
+  let cur = raw;
+  for (let i = 0; i < 6; i += 1) {
+    if (!cur) return cur;
+    if (Array.isArray(cur)) {
+      cur = cur[0];
+      continue;
+    }
+    if (typeof cur !== "object") return cur;
+    if (cur.type) return cur;
+    const inner = cur.value ?? cur.interrupt ?? (Array.isArray(cur.interrupts) ? cur.interrupts[0] : undefined);
+    if (inner != null) {
+      cur = inner;
+      continue;
+    }
+    return cur;
+  }
+  return cur;
+}
 
 function formatElapsed(seconds: number) {
   const s = Math.max(0, Math.floor(seconds));
@@ -69,10 +100,6 @@ function host(url: string) {
   } catch {
     return url;
   }
-}
-
-function toMd(text: string) {
-  return (text || "").trim();
 }
 
 export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => void; initialQuery?: string }) {
@@ -90,7 +117,22 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
   const [briefDraft, setBriefDraft] = useState<Record<string, any>>({});
   const [tick, setTick] = useState(Date.now());
   const [shareMsg, setShareMsg] = useState("");
+  const [byok, setByok] = useState<ByokState>(() => loadByok());
+  const [creditsForced, setCreditsForced] = useState(false);
+  const [platformProviders, setPlatformProviders] = useState<Record<string, boolean>>({});
+  const [readerPrefs, setReaderPrefs] = useState<ReaderPrefs>(() => loadReaderPrefs());
+  const [citeOpen, setCiteOpen] = useState<number | null>(null);
+  const [pinToast, setPinToast] = useState("");
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [railCollapsed, setRailCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("kiln_rail_collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
   const drawerRef = useRef<HTMLElement | null>(null);
+  const memoArticleRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -102,6 +144,15 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
     endpoints.examples().then((d) => {
       if (d.queries) setExamples(d.queries.map((text: string, i: number) => ({ tag: EXAMPLES[i]?.tag || "Ask", text })));
     }).catch(() => undefined);
+    endpoints
+      .status()
+      .then((d) => {
+        const providers = d.platform_providers;
+        if (providers && typeof providers === "object") {
+          setPlatformProviders(providers as Record<string, boolean>);
+        }
+      })
+      .catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -117,18 +168,35 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
         const data = await endpoints.getRun(runId);
         if (stop) return;
         setRun(data as Run);
-        setError("");
-        const st = data.agent?.status || data.status;
-        const intr = data.agent?.interrupt;
+        const failText = String(data.agent?.error || data.error || "");
+        const typed = data as Run;
+        const st = typed.status === "awaiting_brief" ? "awaiting_human" : (typed.status || typed.agent?.status);
+        const waiting = st === "awaiting_human";
+        const intr = waiting
+          ? unwrapInterrupt(typed.agent?.interrupt) || unwrapInterrupt(typed.interrupt_payload)
+          : undefined;
+        const creditsPause =
+          intr?.type === "credits_exhausted" || isCreditsExhaustedMessage(failText) || isCreditsExhaustedMessage(String(intr?.message || ""));
+        if (creditsPause) {
+          setCreditsForced(true);
+          setError(String(intr?.message || failText || "Model credits exhausted."));
+          setSearchOpen(true);
+        } else {
+          setError("");
+        }
         if (intr?.type === "research_brief" && intr.brief) {
           setBriefDraft((prev) => (Object.keys(prev).length ? prev : { ...intr.brief }));
         }
-        if (st === "completed" || st === "awaiting_human") setSearchOpen(false);
+        // Keep the key panel open when credits forced this poll; otherwise collapse on brief/done.
+        if (st === "completed" || st === "awaiting_human") {
+          if (!creditsPause) setSearchOpen(false);
+        }
         if (st === "completed" || st === "failed" || st === "cancelled" || st === "out_of_scope") {
           closeStream?.();
         }
       } catch (err: any) {
         if (!stop) setError(err.message || "Failed to load run");
+        if (isCreditsExhaustedMessage(String(err.message || ""))) setCreditsForced(true);
       }
     };
     poll();
@@ -153,23 +221,80 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
   }, [runId]);
 
   const values = run?.agent?.values;
-  const interrupt = run?.agent?.interrupt;
+  // Row status wins while executing — except a parked HITL/brief gate must still
+  // surface even if a heartbeat left the DB row as "running".
+  const rowStatus = run?.status === "awaiting_brief" ? "awaiting_human" : run?.status || "";
+  const gateInterrupt =
+    unwrapInterrupt(run?.agent?.interrupt) || unwrapInterrupt(run?.interrupt_payload);
+  const parkedGate =
+    rowStatus === "awaiting_human" ||
+    Boolean(gateInterrupt?.type) ||
+    (rowStatus === "running" &&
+      (run?.agent?.current_node === "hitl" || run?.agent?.current_node === "briefing") &&
+      Boolean(run?.interrupt_payload));
+  const executing = (rowStatus === "queued" || rowStatus === "running") && !parkedGate;
+  const status = parkedGate
+    ? "awaiting_human"
+    : executing
+      ? rowStatus
+      : rowStatus === "awaiting_human" || run?.agent?.status === "awaiting_human"
+        ? "awaiting_human"
+        : rowStatus || run?.agent?.status || "";
+  const rawInterrupt = executing ? undefined : gateInterrupt;
+  const traces: any[] = values?.traces || [];
+  const nextNodes: string[] = Array.isArray(run?.agent?.next) ? run.agent.next.map(String) : [];
+  const writingReport =
+    !parkedGate &&
+    (String(values?.status || "") === "approved" ||
+      nextNodes.includes("report") ||
+      (rowStatus === "running" && traces.some((t) => t?.node === "hitl" && t?.action === "approve")));
+  const currentNode =
+    (writingReport ? "report" : undefined) ||
+    run?.agent?.current_node ||
+    (traces.at(-1)?.node as string | undefined);
+  const waitingHuman = status === "awaiting_human";
+  const gateType =
+    rawInterrupt?.type ||
+    (waitingHuman && currentNode === "briefing" ? "research_brief" : undefined) ||
+    (waitingHuman && (currentNode === "hitl" || nextNodes.includes("hitl")) ? "approve_report" : undefined) ||
+    (waitingHuman && rawInterrupt?.brief ? "research_brief" : undefined) ||
+    (waitingHuman ? "approve_report" : undefined);
+  const interrupt = rawInterrupt || (gateType ? { type: gateType, ...(rawInterrupt || {}) } : undefined);
   const report = values?.report;
   const budget = values?.budget || interrupt?.budget;
-  const traces: any[] = values?.traces || [];
-  const status = run?.agent?.status || run?.status || "";
-  const currentNode = run?.agent?.current_node || (traces.at(-1)?.node as string | undefined);
-  const awaiting = status === "awaiting_human" && interrupt;
-  const awaitingBrief = awaiting && interrupt?.type === "research_brief";
-  const awaitingMemo = awaiting && interrupt?.type === "approve_report";
+  const awaitingBrief = waitingHuman && gateType === "research_brief";
+  const awaitingMemo = waitingHuman && gateType === "approve_report";
+  const failedCredits =
+    status === "failed" && isCreditsExhaustedMessage(String(run?.error || run?.agent?.error || error || ""));
+  const awaitingCredits =
+    (waitingHuman && gateType === "credits_exhausted") || failedCredits;
+  // Dig further is allowed until hard caps; the agent grants +1 iteration / +8
+  // tool calls on revise even if the first pass already hit the soft budget.
+  const canRevise = !budget
+    ? true
+    : Number(budget.iterations || 0) < 8 && Number(budget.used_tool_calls || 0) < 40;
+  const budgetExhaustedForDisplay = Boolean(
+    budget &&
+      (Number(budget.iterations || 0) >= Number(budget.max_iterations || 0) ||
+        Number(budget.used_tool_calls || 0) >= Number(budget.max_tool_calls || 0)),
+  );
   const done = status === "completed" && report;
   const running = Boolean(runId && status && !awaitingBrief && !awaitingMemo && !done && status !== "failed");
-  const critic = (done ? values?.critic : interrupt?.critic) || {};
-  const claims: any[] = done ? report.claims || [] : (!awaitingBrief ? interrupt?.claims_preview || [] : []);
-  const evidence: any[] = done ? report.evidence || [] : (!awaitingBrief ? interrupt?.evidence_preview || [] : []);
+  const critic = (done ? values?.critic : interrupt?.critic) || values?.critic || {};
+  const claims: any[] = done
+    ? report.claims || []
+    : !awaitingBrief
+      ? interrupt?.claims_preview || values?.claims || []
+      : [];
+  const evidence: any[] = done
+    ? report.evidence || []
+    : !awaitingBrief
+      ? interrupt?.evidence_preview || values?.retrieved || values?.evidence || []
+      : [];
   const citations: any[] = done ? report.citations || [] : [];
   const bodyMd = done ? report.body_markdown || "" : "";
   const metrics = done ? report.metrics || {} : {};
+  const evidenceGraph = (run as Run | null)?.evidence_graph || metrics.evidence_graph;
   const diagnosticsMd = done ? (metrics.diagnostics_markdown as string) || "" : "";
   type CoverageSlot = { id?: string; label?: string; status?: string };
   const coverageSlots: CoverageSlot[] = done
@@ -235,17 +360,27 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
   }), [evidence]);
 
   async function startResearch(q: string, fresh = false) {
+    if (!byokReady(byok, creditsForced)) {
+      setError(
+        creditsForced
+          ? "Every configured provider ran out of credits. Paste at least one of your own API keys and confirm the warning."
+          : "Select Gemini, OpenAI, or Grok.",
+      );
+      setSearchOpen(true);
+      return;
+    }
     setError("");
     setBusy(true);
     setRun(null);
     setFilter("all");
     setBriefDraft({});
     try {
-      const data = await endpoints.startResearch(q, fresh);
+      const data = await endpoints.startResearch(q, fresh, llmPayload(byok));
       setRunId(data.id);
       window.history.replaceState({}, "", `/?run=${data.id}`);
     } catch (err: any) {
       setError(err.message || String(err));
+      if (isCreditsExhaustedMessage(String(err.message || ""))) setCreditsForced(true);
     } finally {
       setBusy(false);
     }
@@ -260,15 +395,33 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
     if (!runId) return;
     setBusy(true);
     setError("");
+    // Optimistic: leave the brief gate immediately so polling cannot flash it back
+    // while the resume job is still clearing the LangGraph interrupt.
+    if (action === "start" || action === "approve" || action === "revise") {
+      setRun((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: "queued",
+              interrupt_payload: undefined,
+              agent: prev.agent
+                ? { ...prev.agent, status: "queued", interrupt: undefined }
+                : prev.agent,
+            }
+          : prev,
+      );
+    }
     try {
       await endpoints.resume(runId, {
         action,
         notes,
         extra_questions: notes ? [notes] : [],
         brief: extra?.brief || briefDraft,
+        llm: llmPayload(byok),
       });
     } catch (err: any) {
       setError(err.message || "Resume failed");
+      if (isCreditsExhaustedMessage(String(err.message || ""))) setCreditsForced(true);
     } finally {
       setBusy(false);
     }
@@ -292,7 +445,7 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
     if (!runId) return;
     setBusy(true);
     try {
-      const data = await endpoints.duplicate(runId);
+      const data = await endpoints.duplicate(runId, llmPayload(byok));
       setRunId(data.id);
       window.history.replaceState({}, "", `/?run=${data.id}`);
     } catch (err: any) {
@@ -331,11 +484,33 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
   }
 
   function exportMd() {
-    const blob = new Blob([reportMarkdown()], { type: "text/markdown" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "kiln-memo.md";
-    a.click();
+    downloadExportPack({
+      title: report?.title || "Kiln research memo",
+      query,
+      bodyMarkdown: reportMarkdown(),
+      decisionRule: report?.decision_rule,
+      citations,
+      claims,
+      metrics,
+      runId: runId || undefined,
+    });
+    void endpoints.track("report_exported", { kind: "md_pack", runId });
+  }
+
+  async function exportNotion() {
+    await copyForNotion({
+      title: report?.title || "Kiln research memo",
+      query,
+      bodyMarkdown: reportMarkdown(),
+      decisionRule: report?.decision_rule,
+      citations,
+      claims,
+      metrics,
+      runId: runId || undefined,
+    });
+    setShareMsg("Copied for Notion — paste into a page");
+    setTimeout(() => setShareMsg(""), 2500);
+    void endpoints.track("report_exported", { kind: "notion_copy", runId });
   }
 
   async function shareLink() {
@@ -354,12 +529,56 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
 
   async function askFollowup() {
     if (!followup.trim()) return;
-    const next = `Follow-up on: ${query}\n\n${followup}\n\nPrior findings:\n${synthesized.slice(0, 1200)}`;
+    const priorDecision = String(report?.decision_rule || synthesized || "").slice(0, 800);
+    const next = [
+      `Follow-up on prior Kiln run ${runId || ""}`.trim(),
+      "",
+      `Parent question: ${query}`,
+      "",
+      `Follow-up: ${followup.trim()}`,
+      "",
+      "Keep continuity with prior findings (do not restart from zero unless contradicted):",
+      priorDecision,
+    ].join("\n");
+    try {
+      if (runId) localStorage.setItem(`kiln_parent_${Date.now()}`, runId);
+    } catch {
+      /* ignore */
+    }
     setQuery(next);
     setSearchOpen(true);
     await startResearch(next);
     setFollowup("");
   }
+
+  function openCite(n: number) {
+    setCiteOpen(n);
+    if (readerPrefs.readingMode) {
+      /* drawer sits beside memo */
+    }
+  }
+
+  function jumpToc(id: string) {
+    const el = document.getElementById(id);
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  const activeCitation = useMemo(
+    () => (citeOpen != null ? citations.find((c: any) => Number(c.n) === citeOpen) : null),
+    [citeOpen, citations],
+  );
+  const relatedClaimsForCite = useMemo(() => {
+    if (citeOpen == null) return [];
+    return claims.filter((c: any) => {
+      const blob = `${c.text || ""} ${c.quote || ""} ${c.url || ""}`;
+      return blob.includes(`[${citeOpen}]`) || (activeCitation?.url && c.url === activeCitation.url);
+    }).slice(0, 4);
+  }, [citeOpen, claims, activeCitation]);
+
+  const tocSource = useMemo(
+    () => (bodyMd ? prepMemoMarkdown(bodyMd, { stripTitle: report?.title || undefined }) : ""),
+    [bodyMd, report?.title],
+  );
 
   function stepState(step: any) {
     const ev = step.event;
@@ -419,13 +638,32 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Ask a serving, RAG, agent, or eval question"
             />
+            <ByokPanel
+              value={byok}
+              onChange={setByok}
+              creditsForced={creditsForced}
+              platformProviders={platformProviders}
+            />
             <div className="search-actions">
               {runId && (
                 <button className="btn" type="button" onClick={() => setSearchOpen(false)}>
                   Collapse
                 </button>
               )}
-              <button className="btn primary" type="submit" disabled={busy || query.trim().length < 8}>
+              <button
+                className={`btn primary${busy ? " is-busy" : ""}`}
+                type="submit"
+                disabled={busy || query.trim().length < 8 || !byokReady(byok, creditsForced)}
+                title={
+                  busy
+                    ? "Starting the run"
+                    : query.trim().length < 8
+                      ? "Type at least 8 characters, or pick an example below"
+                      : !byokReady(byok, creditsForced)
+                        ? "Paste a key and confirm before running"
+                        : "Start research"
+                }
+              >
                 {busy ? "Starting…" : "Research"}
               </button>
             </div>
@@ -446,6 +684,11 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
           {error}
         </p>
       )}
+      {pinToast && (
+        <p className="idle" aria-live="polite">
+          {pinToast}
+        </p>
+      )}
       {shareMsg && (
         <p className="idle" aria-live="polite">
           {shareMsg}
@@ -453,33 +696,137 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
       )}
 
       {runId && (
-        <div className="workspace">
-          <aside className="panel pipeline">
-            <h3>Agent pipeline</h3>
-            {steps.map((step) => {
-              const state = stepState(step);
-              const ev = step.event;
-              return (
-                <button key={step.id} className={`step ${state === "now" || state === "warn" ? "active" : ""}`} type="button" onClick={() => setInspect(step)}>
-                  <span className={`ico ${state}`}>
-                    {state === "done" ? "✓" : state === "skip" ? "–" : state === "warn" ? "!" : state === "now" ? "●" : "○"}
-                  </span>
-                  <span>
-                    <div className="label">{step.title}{typeof ev?.n === "number" ? ` (${ev.n})` : ""}{ev?.skipped ? " · skip" : ""}{ev?.status === "contradicted" ? " · contradicted" : ""}</div>
-                    <div className="sub">{step.hint}</div>
-                  </span>
-                </button>
-              );
-            })}
+        <div
+          className={[
+            "research-layout",
+            railCollapsed || readerPrefs.readingMode ? "rail-collapsed" : "",
+            readerPrefs.readingMode ? "reading-mode" : "",
+            historyOpen ? "history-open" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          style={
+            {
+              ["--memo-font-scale" as string]: String(readerPrefs.fontScale),
+              ["--memo-measure" as string]:
+                readerPrefs.measure === "narrow"
+                  ? "44rem"
+                  : readerPrefs.measure === "wide"
+                    ? "min(88rem, 100%)"
+                    : "min(68rem, 100%)",
+            } as CSSProperties
+          }
+        >
+          <aside className="agent-rail" aria-label="Agent pipeline">
+            <div className="agent-rail-head">
+              <button
+                type="button"
+                className="rail-toggle"
+                aria-expanded={!railCollapsed && !readerPrefs.readingMode}
+                aria-label={railCollapsed ? "Expand pipeline" : "Collapse pipeline"}
+                title={railCollapsed ? "Expand pipeline" : "Collapse pipeline"}
+                onClick={() => {
+                  if (readerPrefs.readingMode) {
+                    setReaderPrefs((p) => {
+                      const next = { ...p, readingMode: false };
+                      try {
+                        localStorage.setItem("kiln_reader_prefs", JSON.stringify(next));
+                      } catch {
+                        /* ignore */
+                      }
+                      return next;
+                    });
+                    setRailCollapsed(false);
+                    try {
+                      localStorage.setItem("kiln_rail_collapsed", "0");
+                    } catch {
+                      /* ignore */
+                    }
+                    return;
+                  }
+                  setRailCollapsed((v) => {
+                    const next = !v;
+                    try {
+                      localStorage.setItem("kiln_rail_collapsed", next ? "1" : "0");
+                    } catch {
+                      /* ignore */
+                    }
+                    return next;
+                  });
+                }}
+              >
+                <span className="rail-toggle-icon" aria-hidden>
+                  {railCollapsed || readerPrefs.readingMode ? "»" : "«"}
+                </span>
+              </button>
+              <h3 className="rail-title">Pipeline</h3>
+            </div>
+            <button
+              className="btn compact history-toggle rail-only-expanded"
+              type="button"
+              onClick={() => setHistoryOpen((v) => !v)}
+            >
+              {historyOpen ? "Hide history" : "Run history"}
+            </button>
+            <div className="agent-rail-steps">
+              {steps.map((step) => {
+                const state = stepState(step);
+                const ev = step.event;
+                return (
+                  <button
+                    key={step.id}
+                    className={`step ${state === "now" || state === "warn" ? "active" : ""}`}
+                    type="button"
+                    title={step.title}
+                    onClick={() => setInspect(step)}
+                  >
+                    <span className={`ico ${state}`}>
+                      {state === "done" ? "✓" : state === "skip" ? "–" : state === "warn" ? "!" : state === "now" ? "●" : "○"}
+                    </span>
+                    <span className="step-copy">
+                      <div className="label">
+                        {step.title}
+                        {typeof ev?.n === "number" ? ` (${ev.n})` : ""}
+                        {ev?.skipped ? " · skip" : ""}
+                        {ev?.status === "contradicted" ? " · contradicted" : ""}
+                      </div>
+                      <div className="sub">{step.hint}</div>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
             {budget && (
-              <div className="metrics">
-                <div>{budget.iterations}/{budget.max_iterations} passes · {budget.used_tool_calls}/{budget.max_tool_calls} calls{budget.used_tokens ? ` · ${budget.used_tokens} tok` : ""}</div>
-                {running && <div className="metrics-live">{formatElapsed(elapsed)} elapsed · step {(PIPELINE.indexOf(currentNode || "planner") + 1) || 2}/{PIPELINE.length}</div>}
+              <div className="metrics rail-only-expanded">
+                <div>
+                  {budget.iterations}/{budget.max_iterations} passes · {budget.used_tool_calls}/{budget.max_tool_calls}{" "}
+                  calls
+                  {budget.used_tokens ? ` · ${budget.used_tokens} tok` : ""}
+                </div>
+                {running && (
+                  <div className="metrics-live">
+                    {formatElapsed(elapsed)} elapsed · step {(PIPELINE.indexOf(currentNode || "planner") + 1) || 2}/
+                    {PIPELINE.length}
+                  </div>
+                )}
               </div>
             )}
           </aside>
 
-          <main>
+          {historyOpen && !readerPrefs.readingMode && (
+            <RunHistoryPanel
+              currentRunId={runId || undefined}
+              currentQuery={query}
+              onOpenRun={(id) => {
+                setRunId(id);
+                window.history.replaceState({}, "", `/?run=${id}`);
+                setHistoryOpen(false);
+                setSearchOpen(false);
+              }}
+            />
+          )}
+
+          <main className="research-stage">
             {awaitingBrief && (
               <section className="panel brief-panel">
                 <div className="summary-head">
@@ -516,14 +863,102 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                   </tbody>
                 </table>
                 <div className="btn-row brief-actions">
-                  <button className="btn primary" type="button" onClick={() => resume("start", { brief: briefDraft })} disabled={busy}>Start research</button>
+                  <button
+                    className="btn primary"
+                    type="button"
+                    onClick={() => resume("start", { brief: briefDraft })}
+                    disabled={busy || !byokReady(byok, creditsForced)}
+                    title={
+                      busy
+                        ? "Starting…"
+                        : !byokReady(byok, creditsForced)
+                          ? creditsForced
+                            ? "Paste a key above and tick the billing checkbox"
+                            : "Fix provider keys above"
+                          : "Start deep research"
+                    }
+                  >
+                    Start research
+                  </button>
                   <button className="btn" type="button" onClick={() => resume("cancel")} disabled={busy}>Cancel</button>
                 </div>
+                {!byokReady(byok, creditsForced) && (
+                  <p className="err" role="alert">
+                    Hosted credits ran out. Scroll up, paste at least one API key, tick the checkbox, then Start research.
+                  </p>
+                )}
+                {byokReady(byok, creditsForced) &&
+                  !byok.acknowledged &&
+                  Object.values(byok.keys).some((k) => k.trim().length > 0) && (
+                  <p className="idle" aria-live="polite">
+                    You typed a key but did not tick the billing checkbox — Start will use hosted keys only. Tick the box above to use your key.
+                  </p>
+                )}
               </section>
             )}
 
-            {(done || awaitingMemo || (!awaitingBrief && claims.length > 0)) && (
+            {awaitingCredits && (
+              <section className="panel review-box">
+                <div className="hero-kicker">Credits pause</div>
+                <h2>{interrupt?.title || "Model credits exhausted"}</h2>
+                <p className="err" role="alert">
+                  {interrupt?.message ||
+                    run?.error ||
+                    run?.agent?.error ||
+                    error ||
+                    "Every configured provider ran out of credits."}
+                </p>
+                <p className="sub">
+                  {interrupt?.resume_hint ||
+                    "Paste a key above (and tick billing), or top up hosted credits — then Continue. Research resumes from this step, not from scratch."}
+                </p>
+                {Array.isArray(interrupt?.tried) && interrupt.tried.length > 0 && (
+                  <p className="idle">Tried: {interrupt.tried.join(", ")}</p>
+                )}
+                <div className="btn-row">
+                  <button
+                    className="btn primary"
+                    type="button"
+                    onClick={() => {
+                      setCreditsForced(true);
+                      setSearchOpen(true);
+                      void resume("continue");
+                    }}
+                    disabled={busy || !byokReady(byok, true)}
+                    title={
+                      !byokReady(byok, true)
+                        ? "Paste a key above and tick the billing checkbox"
+                        : "Resume from the paused step"
+                    }
+                  >
+                    Continue from this step
+                  </button>
+                  {failedCredits ? (
+                    <button className="btn" type="button" onClick={retryRun} disabled={busy}>
+                      Retry from scratch
+                    </button>
+                  ) : (
+                    <button className="btn" type="button" onClick={() => resume("cancel")} disabled={busy}>
+                      Cancel run
+                    </button>
+                  )}
+                </div>
+                {!byokReady(byok, true) && (
+                  <p className="err" role="alert">
+                    Scroll up, paste at least one API key, tick the checkbox, then Continue.
+                  </p>
+                )}
+              </section>
+            )}
+
+            {(done || awaitingMemo || (!awaitingBrief && !awaitingCredits && claims.length > 0)) && (
               <section className="panel memo-panel">
+                {query.trim() && (
+                  <div className="print-query">
+                    <span className="print-query-label">Research question</span>
+                    {query.trim()}
+                  </div>
+                )}
                 <div className="summary-head">
                   <div>
                     <div className="hero-kicker">Deep research memo</div>
@@ -535,10 +970,13 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                         Copy
                       </button>
                       <button className="btn" type="button" onClick={exportMd}>
-                        Export MD
+                        Export pack
+                      </button>
+                      <button className="btn" type="button" onClick={() => void exportNotion()}>
+                        Copy Notion
                       </button>
                       <button className="btn" type="button" onClick={() => window.print()}>
-                        Export PDF
+                        Print PDF
                       </button>
                       <button className="btn" type="button" onClick={shareLink}>
                         Share link
@@ -546,17 +984,70 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                       <button className="btn" type="button" onClick={retryRun} disabled={busy}>
                         Duplicate
                       </button>
+                      <button
+                        className="btn"
+                        type="button"
+                        onClick={() => {
+                          if (runId) void endpoints.pin(runId, true).then(() => {
+                            setPinToast("Run pinned in Workspace");
+                            setTimeout(() => setPinToast(""), 2000);
+                          });
+                        }}
+                      >
+                        Pin run
+                      </button>
                     </div>
                   )}
                 </div>
+                {done && (
+                  <ReaderToolbar
+                    prefs={readerPrefs}
+                    onChange={(next) => {
+                      setReaderPrefs(next);
+                      if (next.readingMode && !readerPrefs.readingMode) {
+                        setRailCollapsed(true);
+                        try {
+                          localStorage.setItem("kiln_rail_collapsed", "1");
+                        } catch {
+                          /* ignore */
+                        }
+                      }
+                    }}
+                  />
+                )}
+                {done && (
+                  <DecisionCard
+                    decisionRule={report?.decision_rule}
+                    executiveSummary={
+                      report?.executive_summary ||
+                      (bodyMd.match(/^##\s+Executive summary\s*\n+([\s\S]*?)(?=\n##\s|\n#\s|$)/i)?.[1] || synthesized)
+                    }
+                    confidence={metrics.depth_score != null ? Number(metrics.depth_score) : null}
+                    confidenceLabel={metrics.depth_label ? String(metrics.depth_label) : undefined}
+                  />
+                )}
                 {awaitingMemo && (
                   <div className="review-box">
-                    <p className="sub">Review the memo and sources, then approve or send the agent back.</p>
-                    <textarea placeholder="Optional follow-up for the next loop" value={notes} onChange={(e) => setNotes(e.target.value)} />
+                    <p className="sub">
+                      This is the review gate (step 11/12), not the memo yet. Approve writes the report. Dig further sends the agent back to search again.
+                    </p>
+                    <textarea placeholder="Optional follow-up for the next search loop" value={notes} onChange={(e) => setNotes(e.target.value)} />
                     <div className="btn-row">
-                      <button className="btn primary" type="button" onClick={() => resume("approve")} disabled={busy}>Approve</button>
-                      <button className="btn" type="button" onClick={() => resume("revise")} disabled={busy}>Dig further</button>
+                      <button className="btn primary" type="button" onClick={() => resume("approve")} disabled={busy || !byokReady(byok, creditsForced)}>Approve — write memo</button>
+                      <button className="btn" type="button" onClick={() => resume("revise")} disabled={busy || !canRevise || !byokReady(byok, creditsForced)}>Dig further</button>
                     </div>
+                    {!canRevise && (
+                      <p className="sub">
+                        Hard research cap reached (8 passes / 40 tool calls). Approve to write the memo.
+                      </p>
+                    )}
+                    {canRevise && budgetExhaustedForDisplay && (
+                      <p className="sub">
+                        First-pass budget is spent ({budget?.iterations}/{budget?.max_iterations} passes ·{" "}
+                        {budget?.used_tool_calls}/{budget?.max_tool_calls} calls). Dig further still works —
+                        it unlocks one more search loop.
+                      </p>
+                    )}
                   </div>
                 )}
                 {metrics.reuse_mode === "cached" && (
@@ -573,9 +1064,35 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                   </div>
                 )}
                 {bodyMd ? (
-                  <article className="memo md">
-                    <Markdown remarkPlugins={[remarkGfm]}>{toMd(bodyMd)}</Markdown>
-                  </article>
+                  <div className={`memo-layout${citeOpen != null ? " has-drawer" : ""}`}>
+                    {done && (
+                      <MemoToc markdown={tocSource} onJump={jumpToc} />
+                    )}
+                    <article className="memo md" ref={memoArticleRef}>
+                      <MemoMarkdown
+                        citations={citations}
+                        stripTitle={report?.title || undefined}
+                        onCiteClick={done ? openCite : undefined}
+                      >
+                        {bodyMd}
+                      </MemoMarkdown>
+                    </article>
+                    {done && citeOpen != null && (
+                      <EvidenceDrawer
+                        open
+                        citeN={citeOpen}
+                        citation={activeCitation}
+                        relatedClaims={relatedClaimsForCite}
+                        runId={runId || undefined}
+                        query={query}
+                        onClose={() => setCiteOpen(null)}
+                        onPinned={() => {
+                          setPinToast("Pinned — see Run history");
+                          setTimeout(() => setPinToast(""), 2000);
+                        }}
+                      />
+                    )}
+                  </div>
                 ) : synthesized ? (
                   <p className="synth">
                     {synthesized.split(/(\[\d+\])/).map((part, i) =>
@@ -596,16 +1113,11 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                   </ol>
                 )}
                 {!done && claims.map((c, i) => (
-                  <div className="claim-block" key={c.id || i}>
-                    <div className={Number(c.confidence) < 0.6 ? "score low" : "score"}>
-                      {Math.round(Number(c.confidence || 0) * 100)}% · {TIER_LABEL[c.tier] || (c.tier || "").replaceAll("_", " ") || "claim"}
-                    </div>
-                    <div className="md"><Markdown remarkPlugins={[remarkGfm]}>{toMd(c.text)}</Markdown></div>
-                    {c.quote && (
-                      <div className="quote md"><Markdown remarkPlugins={[remarkGfm]}>{toMd(c.quote)}</Markdown></div>
-                    )}
-                  </div>
+                  <ClaimCard key={c.id || i} claim={c} extra={(evidenceGraph?.claims || []).find((g: any) => g.id === c.id)} />
                 ))}
+                {done && !!evidenceGraph?.claims?.length && (
+                  <EvidenceGraphPanel graph={evidenceGraph} />
+                )}
                 {done && (
                   <details className="diagnostics-panel">
                     <summary>Research diagnostics</summary>
@@ -643,22 +1155,14 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                     )}
                     {diagnosticsMd ? (
                       <article className="memo md diagnostics-md">
-                        <Markdown remarkPlugins={[remarkGfm]}>{toMd(diagnosticsMd)}</Markdown>
+                        <MemoMarkdown className="md diagnostics-md">{diagnosticsMd}</MemoMarkdown>
                       </article>
                     ) : null}
                     {!!claims.length && (
                       <div className="diagnostics-claims">
                         <h4>Claim ledger</h4>
                         {claims.map((c, i) => (
-                          <div className="claim-block" key={c.id || i}>
-                            <div className={Number(c.confidence) < 0.6 ? "score low" : "score"}>
-                              {Math.round(Number(c.confidence || 0) * 100)}% · {TIER_LABEL[c.tier] || (c.tier || "").replaceAll("_", " ") || "claim"}
-                            </div>
-                            <div className="md"><Markdown remarkPlugins={[remarkGfm]}>{toMd(c.text)}</Markdown></div>
-                            {c.quote && (
-                              <div className="quote md"><Markdown remarkPlugins={[remarkGfm]}>{toMd(c.quote)}</Markdown></div>
-                            )}
-                          </div>
+                          <ClaimCard key={c.id || i} claim={c} extra={(evidenceGraph?.claims || []).find((g: any) => g.id === c.id)} />
                         ))}
                       </div>
                     )}
@@ -685,13 +1189,13 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
               </section>
             )}
 
-            {!awaitingBrief && !awaitingMemo && !done && status && status !== "queued" && (
+            {!awaitingBrief && !awaitingMemo && !awaitingCredits && !done && status && status !== "queued" && (
               <section className="panel progress-panel">
                 <div className="progress-head">
                   <span className="pulse" />
                   <div>
-                    <h2>{stepMeta.title}</h2>
-                    <p>{run?.agent?.hint || stepMeta.hint}</p>
+                    <h2>{writingReport ? "report" : stepMeta.title}</h2>
+                    <p>{writingReport ? "Writing the long memo" : run?.agent?.hint || stepMeta.hint}</p>
                   </div>
                   <time>{formatElapsed(elapsed)}</time>
                 </div>
@@ -701,16 +1205,39 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                 <div className="progress-meta">
                   Step {Math.max(1, PIPELINE.indexOf(currentNode || "planner") + 1)}/{PIPELINE.length}
                   {" · "}
-                  {stepMeta.wait}
+                  {writingReport ? "Usually 1–3 minutes" : stepMeta.wait}
                   {" · "}
-                  whole run is often several minutes after you confirm the brief
+                  {writingReport
+                    ? "Approve already happened — Kiln is writing the memo now"
+                    : "whole run is often several minutes after you confirm the brief"}
                 </div>
                 {status === "failed" ? (
                   <div>
-                    <p className="err">{run?.agent?.error || "This run failed."}</p>
-                    <button className="btn primary" type="button" onClick={retryRun} disabled={busy}>
-                      Retry from scratch
-                    </button>
+                    <p className="err">{run?.error || run?.agent?.error || "This run failed."}</p>
+                    <div className="btn-row">
+                      {isCreditsExhaustedMessage(String(run?.error || run?.agent?.error || "")) && (
+                        <button
+                          className="btn primary"
+                          type="button"
+                          onClick={() => {
+                            setCreditsForced(true);
+                            setSearchOpen(true);
+                            void resume("continue");
+                          }}
+                          disabled={busy || !byokReady(byok, true)}
+                          title={
+                            !byokReady(byok, true)
+                              ? "Paste a key above and tick the billing checkbox first"
+                              : "Resume from the paused checkpoint"
+                          }
+                        >
+                          Continue from this step
+                        </button>
+                      )}
+                      <button className="btn" type="button" onClick={retryRun} disabled={busy}>
+                        Retry from scratch
+                      </button>
+                    </div>
                   </div>
                 ) : elapsed > 50 ? (
                   <p className="progress-note">
@@ -735,7 +1262,7 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
               <p className="idle"><span className="pulse" /> Queued — starting the agent…</p>
             )}
 
-            {!!evidence.length && !awaitingBrief && !done && (
+            {!!evidence.length && !awaitingBrief && !awaitingCredits && !done && (
               <section>
                 <div className="filters">
                   {[
@@ -753,9 +1280,9 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                       <span className="tag">{TIER_LABEL[e.tier] || (e.tier || "source").replaceAll("_", " ")}</span>
                       <span className="conf">{Number(e.credibility || 0).toFixed(2)}</span>
                     </div>
-                    <div className="md"><Markdown remarkPlugins={[remarkGfm]}>{toMd(e.title || "")}</Markdown></div>
+                    <MemoMarkdown>{e.title || ""}</MemoMarkdown>
                     {e.snippet && (
-                      <div className="md"><Markdown remarkPlugins={[remarkGfm]}>{toMd(String(e.snippet).slice(0, 420))}</Markdown></div>
+                      <MemoMarkdown>{String(e.snippet).slice(0, 420)}</MemoMarkdown>
                     )}
                     <div className="source-meta">
                       {e.url ? <a href={e.url} target="_blank" rel="noreferrer">{host(e.url)} ↗</a> : null}

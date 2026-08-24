@@ -123,7 +123,9 @@ export function Shell({
               </div>
             )}
           </div>
-          <span className={`pill ${llmMode === "gemini" ? "on" : ""}`}>{llmMode || "offline"}</span>
+          <span className={`pill ${llmMode === "platform" || llmMode === "byok" || llmMode === "gemini" ? "on" : ""}`}>
+            {llmMode === "platform" ? "hosted LLM" : llmMode === "byok" ? "BYOK" : llmMode || "offline"}
+          </span>
           {tracing ? <span className="pill on">traced</span> : <span className="pill">local</span>}
         </div>
       </header>

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, TypeAdapter
 
 
 class ContractModel(BaseModel):
@@ -16,12 +16,26 @@ class ResumeDecision(ContractModel):
     brief: dict[str, Any] = Field(default_factory=dict)
 
 
+class LlmKeys(ContractModel):
+    gemini: SecretStr | None = None
+    openai: SecretStr | None = None
+    grok: SecretStr | None = None
+
+
+class LlmCredential(ContractModel):
+    provider: Literal["gemini", "openai", "grok"]
+    api_key: SecretStr | None = Field(default=None, alias="apiKey")
+    model: str | None = Field(default=None, max_length=200)
+    keys: LlmKeys | None = None
+
+
 class StartExecutionRequest(ContractModel):
     kind: Literal["start"]
     run_id: str = Field(alias="runId", min_length=1)
     execution_id: str = Field(alias="executionId", min_length=1)
     query: str = Field(min_length=8, max_length=4000)
     fresh: bool = False
+    llm: LlmCredential | None = None
 
 
 class ResumeExecutionRequest(ContractModel):
@@ -29,6 +43,7 @@ class ResumeExecutionRequest(ContractModel):
     run_id: str = Field(alias="runId", min_length=1)
     execution_id: str = Field(alias="executionId", min_length=1)
     decision: ResumeDecision
+    llm: LlmCredential | None = None
 
 
 ExecutionRequest = Annotated[

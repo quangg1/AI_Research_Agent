@@ -15,6 +15,10 @@ from app.domain.schema import (
 )
 
 
+def overwrite(_left: Any, right: Any) -> Any:
+    return right
+
+
 def merge_unique_evidence(left: list[dict], right: list[dict]) -> list[dict]:
     from app.graph.serde import pythonize
 
@@ -37,7 +41,7 @@ def merge_unique_evidence(left: list[dict], right: list[dict]) -> list[dict]:
 class ResearchState(TypedDict, total=False):
     query: str
     thread_id: str
-    last_execution_id: str
+    last_execution_id: Annotated[str, overwrite]
     started_at: float
     query_type: QueryType | str
     brief: dict[str, Any]
@@ -55,7 +59,7 @@ class ResearchState(TypedDict, total=False):
     human_decision: dict[str, Any]
     report: dict[str, Any]
     traces: Annotated[list[dict], operator.add]
-    status: str
+    status: Annotated[str, overwrite]
     out_of_scope: bool
     llm_mode: str
     # Answer reuse from the knowledge store

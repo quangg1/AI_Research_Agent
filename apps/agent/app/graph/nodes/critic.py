@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.domain.adversarial import overclaim_reasons
 from app.domain.coverage import (
     claims_from_must_answer,
     critic_should_pass,
@@ -31,7 +32,18 @@ def critic_node(state: ResearchState) -> dict:
     # Hard gate: coverage critic overrides LLM "sufficient"
     ok, gap_reasons = critic_should_pass(query, coverage, retrieved)
     leaks = topic_leakage_reasons(query, retrieved)
-    reasons = list(dict.fromkeys([*(verdict.reasons or []), *gap_reasons, *leaks]))
+    blob = " ".join(
+        f"{e.get('title', '')} {e.get('snippet', '')} {e.get('quote', '')}" for e in retrieved[:16]
+    )
+    method_reasons = overclaim_reasons(blob)
+    if not coverage.get("contradictions") and not any(
+        "contradict" in (r or "").lower() or "counter" in (r or "").lower()
+        for r in (verdict.reasons or [])
+    ):
+        method_reasons.append(
+            "No explicit counter-evidence thread yet — do not treat the convenient thesis as settled."
+        )
+    reasons = list(dict.fromkeys([*(verdict.reasons or []), *gap_reasons, *leaks, *method_reasons]))
     verdict.reasons = reasons
     verdict.coverage = {
         "ratio": coverage.get("ratio"),
@@ -186,9 +198,11 @@ def _llm_critic(state: ResearchState, evidence: list[dict], coverage: dict) -> C
             "If the question asks how something works or is built, generic overviews are not sufficient; "
             "a primary or source-level document is required.\n"
             "If gaps remain, status=insufficient and propose followup_queries targeting those gaps.\n"
+            "Also flag: overclaim (conclusion stronger than evidence), missing counter-evidence, "
+            "old papers used as sole support for current SOTA, and inference presented as a paper finding.\n"
             "JSON: status, reasons, followup_queries, claimed_unsupported, confidence_floor."
         ),
-        system="Kiln coverage critic. Refuse 'sufficient' when a critical dimension lacks direct evidence.",
+        system="Kiln coverage critic. Refuse 'sufficient' when a critical dimension lacks direct evidence or a controversial claim has no counter-thread.",
     )
     if not isinstance(payload, dict):
         return None

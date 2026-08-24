@@ -1,0 +1,361 @@
+"""ODR-style clean-then-write for Kiln memos.
+
+Aligned with Open Deep Research / modern deep-research report norms:
+answer-first Key findings, analytical Detailed analysis, measured-only
+Quantitative findings, a Worked example when evidence supports it, and a
+single Contradictions home — not a padded academic template.
+"""
+
+from __future__ import annotations
+
+import re
+
+WORD_TARGET = {"quick": 900, "standard": 1800, "deep": 3200}
+REPORT_MAX_TOKENS = {"quick": 6144, "standard": 10000, "deep": 12000}
+# Depth-aware note budgets (deep keeps more operational detail for the writer).
+NOTES_MAX_CHARS = {"quick": 20_000, "standard": 32_000, "deep": 48_000}
+ITEMS_PER_DIMENSION = {"quick": 4, "standard": 8, "deep": 12}
+QUOTE_CHARS = {"quick": 700, "standard": 1200, "deep": 2000}
+COMPRESS_MAX_TOKENS = {"quick": 6144, "standard": 8192, "deep": 12288}
+# Deep research: skip the LLM clean pass — raw dossier notes go to the writer.
+SKIP_LLM_COMPRESS_DEPTHS = frozenset({"deep"})
+
+
+def _depth(depth: str) -> str:
+    d = (depth or "standard").strip().lower()
+    return d if d in WORD_TARGET else "standard"
+
+
+def word_target(depth: str) -> int:
+    return WORD_TARGET[_depth(depth)]
+
+
+def report_max_tokens(depth: str) -> int:
+    return REPORT_MAX_TOKENS[_depth(depth)]
+
+
+def notes_max_chars(depth: str = "standard") -> int:
+    return NOTES_MAX_CHARS[_depth(depth)]
+
+
+def items_per_dimension(depth: str = "standard") -> int:
+    return ITEMS_PER_DIMENSION[_depth(depth)]
+
+
+def quote_chars(depth: str = "standard") -> int:
+    return QUOTE_CHARS[_depth(depth)]
+
+
+def compress_max_tokens(depth: str = "standard") -> int:
+    return COMPRESS_MAX_TOKENS[_depth(depth)]
+
+
+def should_skip_llm_compress(depth: str = "standard") -> bool:
+    return _depth(depth) in SKIP_LLM_COMPRESS_DEPTHS
+
+
+def word_count(text: str) -> int:
+    return len(re.findall(r"\S+", text or ""))
+
+
+def format_research_notes(
+    dossier: list[dict],
+    citations: list[dict],
+    *,
+    depth: str = "standard",
+    items_per_dimension: int | None = None,
+    quote_limit: int | None = None,
+) -> str:
+    """Dense, citation-preserving notes for the writer. Heuristic; no LLM."""
+    from app.domain.adversarial import extract_quantitative_rows
+
+    per_dim = items_per_dimension if items_per_dimension is not None else ITEMS_PER_DIMENSION[_depth(depth)]
+    qchars = quote_limit if quote_limit is not None else QUOTE_CHARS[_depth(depth)]
+    url_to_n = {c.get("url", "").rstrip("/").lower(): c.get("n") for c in citations if c.get("url")}
+    blocks: list[str] = [
+        "## Protected operational detail (writer must retain)",
+        "- Keep named system mechanisms step-by-step (e.g. PIVOT trajectory loops).",
+        "- Keep named runtime/eval metrics with units and harness (e.g. RAMP).",
+        "- Keep full enumerated failure-mode inventories (do not collapse '19 modes' to 'several').",
+        "- Keep scalability facts (KV-cache, HBM/bandwidth, multi-node) separate from latency.",
+        "- Keep concrete worked-example traces when present (token flow of named systems).",
+        "",
+    ]
+    flat: list[dict] = []
+    for dim in dossier:
+        items = dim.get("items") or []
+        if not items and not dim.get("label"):
+            continue
+        status = dim.get("status") or "unknown"
+        blocks.append(f"## {dim.get('id') or 'slot'}: {dim.get('label') or ''} (status: {status})")
+        if not items:
+            blocks.append("- No collected source covers this dimension. The memo must say so.")
+            continue
+        for ev in items[:per_dim]:
+            flat.append(ev)
+            url = (ev.get("url") or "").rstrip("/").lower()
+            n = url_to_n.get(url, "?")
+            quote = (ev.get("quote") or ev.get("snippet") or ev.get("full_text") or "")[:qchars]
+            title = ev.get("title") or url or "untitled"
+            tier = ev.get("tier") or ""
+            blocks.append(f"- [{n}] {title} ({tier}): {quote}")
+    numbers = extract_quantitative_rows(flat, citations)
+    blocks.append(
+        "## Quantitative fragments (copy into the memo table — outcome metrics only)\n"
+        "Table-worthy: %, ms, FLOPs, tok/s, cost/accuracy deltas. "
+        "Not table-worthy (mention in prose/Worked example only): N studies, ISL/OSL tokens, N runs. "
+        "Do not invent Latency/FLOP/Cost rows when no number is present; list those under Metric gaps."
+    )
+    if numbers:
+        for row in numbers:
+            blocks.append(
+                f"- [{row['n']}] {row['metric']} — benchmark: {row.get('benchmark_name') or 'unverified'}; "
+                f"condition: {row.get('condition') or 'unset'}; "
+                f"{row.get('warning') or 'ok'} — {row['title']} ({row.get('year') or 'year?'})"
+            )
+    else:
+        blocks.append(
+            "- None extracted from quotes. Leave the Quantitative findings table empty or omit it; "
+            "use Metric gaps for asked metrics — do not invent 'not reported' scaffold rows."
+        )
+    return "\n".join(blocks) if blocks else "(no dimension-grouped evidence)"
+
+
+def compress_system() -> str:
+    return (
+        "You CLEAN applied-AI research notes — you do not deeply summarize them. "
+        "Deduplicate repeated bullets, fix markdown structure, and group by dimension. "
+        "MUST PRESERVE verbatim: named mechanisms and how they work step-by-step, "
+        "every metric with units/benchmark/condition, full numbered failure-mode lists, "
+        "quotes, years, and every [n] citation. "
+        "FORBIDDEN: collapsing '19 failure modes' into 'several modes'; dropping PIVOT/RAMP "
+        "(or similar) operational steps; inventing sources; attributing a paper's corpus size to Kiln. "
+        "Prefer longer faithful notes over short paraphrase. Markdown only."
+    )
+
+
+def compress_prompt(notes: str, query: str, *, depth: str = "standard") -> str:
+    limit = notes_max_chars(depth)
+    return (
+        f"User question:\n{query}\n\n"
+        "Research notes (already cited). CLEAN them — do not deeply summarize.\n"
+        "Do not drop sources, quotes, numbers, years, mechanism steps, metric tables, "
+        "or enumerated failure modes. Do not invent facts.\n"
+        "Keep every [n] citation. Prefer verbatim quotes over paraphrase.\n"
+        "Output markdown with these sections (keep content under each; do not empty them):\n"
+        "- Sources used (title, year if present, quality band if given)\n"
+        "- Findings by dimension, each with supporting quote + [n]\n"
+        "- Operational mechanisms (named systems; keep step-by-step behavior)\n"
+        "- Quantitative fragments (copy numbers exactly; include benchmark/condition; "
+        "if missing write 'not reported')\n"
+        "- Failure-mode inventory (keep full enumeration when the notes list N modes)\n"
+        "- Counter-evidence / disagreements (required even if thin)\n"
+        "- Paper-says vs inference\n"
+        "- Temporal cautions (old papers used for current SOTA)\n"
+        "- Genuine field unknowns\n\n"
+        f"{notes[:limit]}"
+    )
+
+
+def writer_system() -> str:
+    return (
+        "You are Kiln's research writer for applied AI / LLM systems "
+        "(serving, RAG, agents, eval, fine-tune vs retrieval, inference stacks). "
+        "Write a modern deep-research memo in the Open Deep Research style: "
+        "answer-first, analytical prose, not a literature survey or template dump. "
+        "No self-reference, no process narration, no Research plan section, "
+        "no internal telemetry, no ASCII architecture diagrams. Stay on the asked question. "
+        "Invent nothing. "
+        "Hold two competing hypotheses in tension, but argue them ONCE in "
+        "'Contradictions & debates' — do not restate H1/H2 in every section. "
+        "Never convert benchmark failures into metaphysical claims "
+        "('no autonomy', 'unconstrained problem-solving') unless a cited source uses those words. "
+        "Write professional reader prose — NEVER prefix sentences with bracket tags like "
+        "[DIRECT], [INFERRED], [DERIVED], [RECOMMENDATION], or [SPECULATIVE]. "
+        "Epistemic stance (if needed) goes in natural language once, not as debug metadata. "
+        "Attribution: if a cited paper reviewed N artifacts/papers, write "
+        "'Based on [n]'s synthesis of N …' — never 'Our/this synthesis across N'. "
+        "Quantitative findings table: ONLY outcome / performance measurements "
+        "(error/accuracy %, latency ms, FLOPs, tok/s, cost multipliers, deltas vs a baseline). "
+        "FORBIDDEN table rows: experiment setup parameters (corpus size 'N studies', "
+        "ISL/OSL token lengths, 'N runs', batch size, prompt length) — those belong in "
+        "prose or Worked example, not the metrics table. "
+        "Never invent scaffold rows filled with 'not reported' / 'Not reported' for "
+        "Latency, FLOP, or Cost — put those asked-but-missing metrics under 'Metric gaps' "
+        "as bullets instead. "
+        "Never invent a before→after causal story from two differently conditioned percentages. "
+        "When the question names Scalability separately from Latency/Cost, analyze it in its own "
+        "### subsection (KV-cache limits, GPU memory bandwidth, multi-node/cluster behavior, "
+        "batching under search/MCTS) — do not bury it inside latency. "
+        "Prefer one concrete worked example (token-flow / system walkthrough of named stacks "
+        "in the notes, e.g. DeepSeek-R1 vs o1/o3) over abstract taxonomy. "
+        "Named systems need operational description, not name-drops. Enumerated failure modes stay enumerated. "
+        "Counter-evidence must engage the strongest contradicting source in substance. "
+        "Form claims bottom-up from extracted numbers first. "
+        "'Verified' / quote-matched ≠ independently measured. "
+        "Author estimates stay author_assumption, never High. "
+        "GitHub Awesome-lists are Band C. arXiv+OpenReview of the same paper = one work. "
+        "Write 42% → 62% as +20 percentage points (relative +47.6%), never '+20% boost'. "
+        "Folklore ('bigger models always win', 'RAG always needs a vector DB', "
+        "'LLM-as-judge is ground truth') must not be recommended."
+    )
+
+
+def writer_prompt(
+    *,
+    query: str,
+    brief: dict,
+    notes: str,
+    citations: list[dict],
+    min_words: int,
+    comparison_rule: str,
+    prior_note: str,
+    dimension_list: str,
+    method_block: str = "",
+) -> str:
+    depth = str((brief or {}).get("depth") or "standard")
+    limit = notes_max_chars(depth)
+    ledger = "\n".join(
+        f"[{c.get('n')}] {c.get('title') or ''} — {c.get('url') or ''}"
+        for c in citations
+        if c.get("n")
+    )
+    method = (method_block or "").strip()
+    method_section = f"{method}\n\n" if method else ""
+    claim_appendix = (
+        "## Appendix: Claim register\n"
+        "(deep only — compact table; do not restate Analysis)\n"
+        if depth == "deep"
+        else ""
+    )
+    return (
+        f"User question:\n{query}\n\n"
+        f"Research brief:\n{brief}\n\n"
+        f"{prior_note}"
+        f"{method_section}"
+        f"Dimensions this answer must cover (each gets a ### under Detailed analysis):\n"
+        f"{dimension_list}\n\n"
+        f"Research findings (cleaned notes — ground-truth excerpts):\n{notes[:limit]}\n\n"
+        f"Citation ledger (ONLY these [n] are legal):\n{ledger}\n\n"
+        "Write a reader-facing deep-research memo that ANSWERS the question.\n"
+        f"Target length: at least {min_words} words of substantive prose. "
+        "Spend tokens on evidence, numbers, contradictions, mechanisms, and one worked example — "
+        "not on repeating the same thesis across sections.\n"
+        "Anti-redundancy (critical):\n"
+        "- Say each load-bearing argument and each % / ms / FLOP figure ONCE. "
+        "Elsewhere refer back ('see Quantitative findings' / 'see Hybrid pipeline').\n"
+        "- The core architectural thesis (e.g. uncertainty-/entropy-gated routing) appears "
+        "ONCE in Executive summary OR Hybrid architecture — Key findings, Contradictions, "
+        "and Decision rule must NOT re-chew the same mechanism; Decision rule gives "
+        "cutoffs/heuristics only, Contradictions only the H1/H2 tension.\n"
+        "- Do NOT include ## Research plan, ## Scope as a long list, ## Findings "
+        "(use Key findings), or ## Competing hypotheses as a second H1/H2 dump.\n"
+        "- Detailed analysis must be ANALYTICAL (conclusion → evidence → nuance → cross-link), "
+        "not a repeated Evidence / Counter-evidence / Inference / Confidence stencil for every subsection.\n"
+        "Method:\n"
+        "- Extract numeric rows BEFORE leaning H1 or H2.\n"
+        "- Path: answer → key findings → analysis → measured table → worked example → "
+        "contradictions → decision → gaps.\n"
+        "- FORBIDDEN in the memo body: [DIRECT], [INFERRED], [DERIVED], [RECOMMENDATION], "
+        "[SPECULATIVE] tags — prose only; claim kinds belong in the claim-register extract, not the narrative.\n"
+        "- Every factual sentence carries an inline [n] from the ledger.\n"
+        "- When a dimension lacks evidence, one honest sentence — no speculation.\n"
+        f"- {comparison_rule}"
+        "- Exclude critic status, tool-call counts, iteration stats, and quality scores.\n"
+        "Required sections, in order (omit unused optional ones entirely):\n"
+        "# <title>\n"
+        "## Executive summary\n"
+        "  (2–5 sentences: answer first, confidence, top caveat — no process talk, no epistemic tags)\n"
+        "## Key findings\n"
+        "  (4–8 numbered insights ordered by importance; each is a distinct claim + [n], "
+        "not a paraphrase of the Executive summary thesis)\n"
+        "## Detailed analysis\n"
+        "  (### one subsection per dimension above, in that order. "
+        "If Scalability is listed, keep it separate from Latency/Cost. "
+        "Cross-reference other subsections. Prefer quotes/numbers over taxonomy.)\n"
+        "## Quantitative findings\n"
+        "  Markdown table ONLY for measured outcome metrics found in notes:\n"
+        "  Metric | Value | Benchmark | Condition | Baseline | Source [n]\n"
+        "  Include: accuracy/error %, latency, FLOPs, throughput, cost deltas.\n"
+        "  Exclude: N studies/papers, ISL/OSL token lengths, N runs, batch/prompt size.\n"
+        "  Forbidden: padding with Latency/FLOP/Cost rows set to 'not reported'.\n"
+        "  After the table, optional ### Metric gaps — bullets for asked metrics missing from notes.\n"
+        "## Worked example\n"
+        "  (Required for deep / comparisons when notes name ≥2 systems: concrete token-flow or "
+        "runtime walkthrough. Setup sizes like ISL/OSL belong here if needed. "
+        "If notes lack enough detail, say so in 2 sentences and omit padding.)\n"
+        "## Comparison (only if applicable)\n"
+        "## Contradictions & debates\n"
+        "  (Single home for H1 vs H2 + vendor-vs-independent disagreements; resolve with evidence weight; "
+        "do not restate the full gated-pipeline design)\n"
+        "## Decision rule\n"
+        "  ### Empirical cutoffs (sources only)\n"
+        "  ### Engineering heuristics (AI suggestion — not from papers; no full re-architecture dump)\n"
+        "## Uncertainties & gaps\n"
+        "  (Genuine field/measurement gaps — not restatements of run Limits)\n"
+        "## Limitations\n"
+        "## Source quality\n"
+        "## References\n"
+        f"{claim_appendix}"
+        "Decision rule: Empirical cutoffs need measured thresholds with [n], or "
+        "'Evidence-backed threshold: none.' Engineering heuristics are qualitative only — "
+        "FORBIDDEN to invent numeric cutoffs like '15 tool schemas' or '65% context' "
+        "unless a citation measured that exact threshold.\n"
+        "Write markdown only. Do not wrap the memo in JSON. "
+        "Math: wrap display equations in $$…$$ on their own lines; "
+        "inline vars as $b$, $d_{head}$ — never leave an unclosed $ before prose."
+    )
+
+
+def claims_prompt(body: str, citations: list[dict]) -> str:
+    ledger = [{"n": c.get("n"), "url": c.get("url"), "title": c.get("title")} for c in citations[:20]]
+    return (
+        "Extract grounded claims from this memo. JSON only: "
+        "{claims: [{id, text, quote, url, tier, support_ids, contradict_ids, confidence, caveats, "
+        "kind, published, locator, quality_band, provenance}], "
+        "limitations: [str], open_questions: [str], decision_rule: str, title: str, executive_summary: str}.\n"
+        "kind is direct | derived | inferred | recommendation | speculative. "
+        "provenance is measured | author_assumption | secondhand | unknown "
+        "(author_assumption when the source uses estimate/assume/illustrative compute). "
+        "locator is section/table/page if the memo states it. "
+        "quality_band is S|A|B|C (GitHub awesome-lists = C). published is a year if present. "
+        "Do not promote an inference to paper_says.\n"
+        f"Ledger:\n{ledger}\n\nMemo:\n{body[:12000]}"
+    )
+
+
+def parse_report_markdown(markdown: str) -> dict[str, str | list[str]]:
+    text = (markdown or "").strip()
+    title = ""
+    first = text.splitlines()[0] if text else ""
+    if first.startswith("# "):
+        title = first[2:].strip()
+    exec_summary = _section(text, "Executive summary")
+    decision = _section(text, "Decision rule")
+    limitations_raw = _section(text, "Limitations")
+    limitations = [
+        re.sub(r"^[-*]\s+", "", line).strip()
+        for line in (limitations_raw or "").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    return {
+        "title": title,
+        "executive_summary": exec_summary,
+        "decision_rule": decision,
+        "limitations": limitations[:12],
+        "body_markdown": text,
+    }
+
+
+def _section(markdown: str, heading: str) -> str:
+    pattern = re.compile(
+        rf"^##\s+{re.escape(heading)}\s*$",
+        re.IGNORECASE | re.MULTILINE,
+    )
+    match = pattern.search(markdown or "")
+    if not match:
+        return ""
+    rest = (markdown or "")[match.end() :]
+    nxt = re.search(r"^##\s+", rest, re.MULTILINE)
+    body = rest[: nxt.start()] if nxt else rest
+    return body.strip()

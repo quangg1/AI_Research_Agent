@@ -222,32 +222,87 @@ def decision_rule_for(query: str, ledger: list, critic: dict) -> str:
     supported = [s for s in slots if s.get("status") == "covered"]
     partial = [s for s in slots if s.get("status") == "weak"]
     missing = [s for s in slots if s.get("status") == "open"]
+    n_src = len(ledger)
 
-    lines: list[str] = []
+    lines: list[str] = [
+        "### Empirical cutoffs (sources only)",
+        "",
+        "Only thresholds measured in a cited experiment belong here. "
+        "If none were measured, write: *Evidence-backed threshold: none.*",
+        "",
+    ]
+    empirical_bullets = False
     if supported:
-        lines.append("**Act on these — the sources support them directly:**\n")
-        lines.extend(f"- {s.get('label') or s.get('id')}" for s in supported[:6])
+        lines.append("**Act on these — the sources support them directly:**")
         lines.append("")
+        for s in supported[:6]:
+            label = s.get("label") or s.get("id")
+            cite = s.get("support") or s.get("citation") or ""
+            suffix = f" — see {cite}." if cite else f" — from the {n_src} cited sources."
+            lines.append(f"- {label}{suffix}")
+            empirical_bullets = True
+        lines.append("")
+    if not empirical_bullets:
+        lines.append("*Evidence-backed threshold: none.*")
+        lines.append("")
+
+    lines.extend(
+        [
+            "### Engineering heuristics (AI suggestion — not from papers)",
+            "",
+            "Do **not** invent numeric cutoffs (tool-schema counts, % context filled, hop limits) "
+            "unless a citation measured them. Prefer qualitative guidance only.",
+            "",
+        ]
+    )
     if partial:
-        lines.append("**Verify before acting — evidence is indirect or single-sourced:**\n")
-        lines.extend(f"- {s.get('label') or s.get('id')}" for s in partial[:6])
+        lines.append("**Verify before acting — evidence is indirect or single-sourced:**")
+        lines.append("")
+        for s in partial[:6]:
+            label = s.get("label") or s.get("id")
+            lines.append(
+                f"- Verify: {label} — weak/single-sourced; confirm with one independent primary source."
+            )
         lines.append("")
     if missing:
-        lines.append("**Do not assume — nothing in the working set establishes these:**\n")
-        lines.extend(f"- {s.get('label') or s.get('id')}" for s in missing[:6])
+        lines.append("**Do not assume — not established by cited sources:**")
         lines.append("")
-    if not lines:
-        return (
-            f"For “{goal[:140]}”, act only on statements a cited primary source supports. "
-            "Anything not carried by a citation here should be treated as an open question, "
-            "not a conclusion."
+        for s in missing[:6]:
+            label = s.get("label") or s.get("id")
+            lines.append(f"- Do not assume: {label}.")
+        lines.append("")
+    if not partial and not missing and not empirical_bullets:
+        lines.append(
+            f"For “{goal[:140]}”, act only on statements a cited primary source supports."
         )
+        lines.append("")
     lines.append(
-        f"Applied to “{goal[:140]}”: treat the first group as decision input, the second as a "
-        "hypothesis that needs one confirming primary source, and the third as unknown. "
-        f"This rests on {len(ledger)} cited sources, which bounds how far any of it generalizes."
+        f"Applied to “{goal[:140]}”: empirical bullets are decision input; verify/do-not-assume "
+        f"are open. This rests on {n_src} cited sources."
     )
     return "\n".join(lines)
+
+
+def field_unknowns_for(query: str, critic: dict | None = None) -> list[str]:
+    """Genuine open measurement/field gaps — distinct from run Limitations."""
+    goal = user_goal(query) or (query or "").strip()
+    coverage = ((critic or {}).get("coverage") or {})
+    open_slots = [
+        s.get("label") or s.get("id")
+        for s in (coverage.get("slots") or [])
+        if s.get("status") == "open"
+    ]
+    unknowns = [
+        f"No cited source measures “{goal[:100]}” under a single shared harness "
+        "with reported N, success rate, and failure-mode breakdown.",
+        "Cross-framework serving/runtime penalties (e.g. KV-cache invalidation under long tool "
+        "trajectories) are rarely reported with comparable methodology across stacks.",
+        "Replication: many mechanism claims rest on a single system paper without an independent "
+        "reproduction study among the cited sources.",
+    ]
+    for label in open_slots[:3]:
+        unknowns.append(f"Still open in the literature covered here: {label}.")
+    return unknowns[:6]
 
 
 def coverage_gaps(query: str, must_cover: list[str], evidence: list[dict]) -> list[str]:

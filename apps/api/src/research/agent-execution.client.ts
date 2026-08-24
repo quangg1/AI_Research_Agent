@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { ExecuteJobPayload, ExecutionFrame } from "./research.types";
+import { agentLlmPayload, scrubObj, scrubText, type LlmCredentialDto } from "./dto/llm-credential.dto";
 
 const FRAME_TYPES = new Set(["update", "heartbeat", "interrupt", "terminal", "error"]);
 
@@ -16,7 +17,10 @@ export class AgentExecutionClient {
     };
   }
 
-  async *execute(payload: ExecuteJobPayload): AsyncGenerator<ExecutionFrame> {
+  async *execute(
+    payload: ExecuteJobPayload,
+    llm?: LlmCredentialDto,
+  ): AsyncGenerator<ExecutionFrame> {
     const body =
       payload.kind === "start"
         ? {
@@ -25,12 +29,14 @@ export class AgentExecutionClient {
             executionId: payload.executionId,
             query: payload.query,
             fresh: payload.fresh === true,
+            ...(llm ? { llm: agentLlmPayload(llm) } : {}),
           }
         : {
             kind: "resume",
             runId: payload.runId,
             executionId: payload.executionId,
             decision: payload.decision || {},
+            ...(llm ? { llm: agentLlmPayload(llm) } : {}),
           };
     const controller = new AbortController();
     const response = await fetch(`${this.baseUrl}/internal/v1/executions/stream`, {
@@ -40,7 +46,9 @@ export class AgentExecutionClient {
       signal: controller.signal,
     });
     if (!response.ok || !response.body) {
-      throw new Error(`Agent execution stream failed (${response.status}): ${await response.text()}`);
+      throw new Error(
+        `Agent execution stream failed (${response.status}): ${scrubText(await response.text())}`,
+      );
     }
 
     const reader = response.body.getReader();
@@ -94,7 +102,7 @@ export class AgentExecutionClient {
     if (!Number.isSafeInteger(frame.sequence) || Number(frame.sequence) < 0) {
       throw new Error("Agent frame sequence must be a non-negative integer");
     }
-    return frame as unknown as ExecutionFrame;
+    return scrubObj(frame) as ExecutionFrame;
   }
 
   async health(): Promise<Record<string, unknown>> {

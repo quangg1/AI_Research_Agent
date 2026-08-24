@@ -1,6 +1,6 @@
 # Deploy Kiln on Oracle Always Free (`AUTH_MODE=dev`)
 
-Mục tiêu: full stack (web + API + agent + Postgres + Redis + Qdrant) trên **một VM Oracle**, HTTPS, domain `.io.vn`, Gemini free, auth dev.
+Mục tiêu: full stack (web + API + agent + Postgres + Redis + Qdrant) trên **một VM Oracle**, HTTPS, domain `.io.vn`, **BYOK** (khách tự dán Gemini/OpenAI/Grok/Hugging Face), auth dev.
 
 Cursor **không đăng ký hộ** Oracle / domain / Google. Làm 3 tài khoản dưới đây, rồi SSH vào VM chạy lệnh.
 
@@ -12,12 +12,9 @@ Máy bạn có thay đổi local. Trên VM sẽ `git clone` remote. Commit + pus
 
 Repo: https://github.com/quangg1/AI_Research_Agent
 
-## 1. Gemini (free)
+## 1. Model keys (BYOK)
 
-1. Mở [Google AI Studio](https://aistudio.google.com/apikey) → Create API key.
-2. Giữ key; dán vào `.env` trên VM (`GOOGLE_API_KEY=`).
-
-Không bắt buộc Tavily: agent dùng DuckDuckGo nếu trống `TAVILY_API_KEY`.
+Kiln dùng key Gemini / OpenAI / Grok **trên VM** (`.env`). Khách chọn provider; hết credit thì form bắt dán key của họ. Key khách **không** ghi Postgres.
 
 ## 2. Domain `.io.vn`
 
@@ -68,7 +65,7 @@ nano .env
 | `DOMAIN` | `yourname.io.vn` (không `https://`) |
 | `ACME_EMAIL` | email của bạn |
 | `CORS_ORIGINS` | `https://yourname.io.vn` |
-| `GOOGLE_API_KEY` | key Gemini |
+| `GOOGLE_API_KEY` / `OPENAI_API_KEY` / `XAI_API_KEY` | key hosted; hết credit thì khách tự dán |
 | `AGENT_SHARED_KEY` | chạy `openssl rand -hex 32` rồi dán; copy cùng giá trị sang `API_TO_AGENT_KEY` |
 
 `VITE_API_URL` để **trống** (UI gọi `/v1` cùng domain).

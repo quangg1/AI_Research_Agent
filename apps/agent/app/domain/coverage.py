@@ -36,7 +36,45 @@ CODE_SOURCE_RE = re.compile(
 )
 ARXIV_ID_RE = re.compile(r"(\d{4}\.\d{4,5})(?:v\d+)?")
 REPO_RE = re.compile(r"(?:github|gitlab|bitbucket|codeberg)\.(?:com|org)/([^/]+)/([^/#?]+)", re.I)
+OPENREVIEW_RE = re.compile(r"openreview\.net/(?:forum\?id=|pdf\?id=|attachment\?id=)([A-Za-z0-9_-]+)", re.I)
 DOC_HOST_HINT_RE = re.compile(r"^(docs?|developer|developers|learn|api|help|support)\.", re.I)
+TITLE_NOISE_RE = re.compile(
+    r"\b(arxiv|preprint|under review|to appear|proceedings of|neurips|iclr|icml|acl|emnlp)\b",
+    re.I,
+)
+
+
+def normalize_work_title(title: str) -> str:
+    text = TITLE_NOISE_RE.sub(" ", (title or "").lower())
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()[:100]
+
+
+def work_identity(url: str, title: str = "") -> str:
+    """Canonical work id so arXiv + OpenReview of the same paper count once."""
+    raw = (url or "").strip()
+    blob = f"{raw} {title or ''}"
+    m = ARXIV_ID_RE.search(blob)
+    if m:
+        return f"arxiv:{m.group(1)}"
+    om = OPENREVIEW_RE.search(raw)
+    if om:
+        return f"openreview:{om.group(1)}"
+    nt = normalize_work_title(title)
+    if len(nt) >= 28:
+        return f"title:{nt}"
+    return canonical_source_key(raw, title)
+
+
+def _prefer_primary_venue(ev: dict) -> tuple[int, str]:
+    url = (ev.get("url") or "").lower()
+    if "arxiv.org" in url:
+        return (0, url)
+    if "openreview.net" in url:
+        return (1, url)
+    if "acm.org" in url or "ieee.org" in url or "neurips.cc" in url:
+        return (0, url)
+    return (2, url)
 
 
 def canonical_source_key(url: str, title: str = "") -> str:
@@ -44,6 +82,9 @@ def canonical_source_key(url: str, title: str = "") -> str:
     m = ARXIV_ID_RE.search(raw) or ARXIV_ID_RE.search(title or "")
     if m:
         return f"arxiv:{m.group(1)}"
+    om = OPENREVIEW_RE.search(raw)
+    if om:
+        return f"openreview:{om.group(1)}"
     gm = REPO_RE.search(raw)
     if gm:
         return f"repo:{gm.group(1).lower()}/{gm.group(2).lower().removesuffix('.git')}"
@@ -58,15 +99,25 @@ def canonical_source_key(url: str, title: str = "") -> str:
 
 
 def dedupe_evidence(evidence: list[dict]) -> list[dict]:
-    seen: set[str] = set()
+    """Drop venue duplicates (arXiv vs OpenReview) and identical URLs."""
+    seen_ids: set[str] = set()
+    title_to_id: dict[str, str] = {}
     out: list[dict] = []
-    for ev in evidence or []:
-        key = canonical_source_key(ev.get("url") or "", ev.get("title") or "")
-        if not key or key in seen:
+    ordered = sorted(list(evidence or []), key=_prefer_primary_venue)
+    for ev in ordered:
+        url = ev.get("url") or ""
+        title = ev.get("title") or ""
+        wid = work_identity(url, title)
+        nt = normalize_work_title(title)
+        if wid in seen_ids:
             continue
-        seen.add(key)
+        if nt and len(nt) >= 28 and nt in title_to_id:
+            continue
+        seen_ids.add(wid)
+        if nt and len(nt) >= 28:
+            title_to_id[nt] = wid
         row = dict(ev)
-        row["canonical_key"] = key
+        row["canonical_key"] = wid
         out.append(row)
     return out
 

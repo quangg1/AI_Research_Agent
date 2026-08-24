@@ -16,9 +16,16 @@ describe("ResearchRepository", () => {
       true,
       "org_default",
       "user_dev",
+      undefined,
+      "gemini",
     );
 
     expect(result).toMatchObject({ status: "queued", executionVersion: 1 });
+    const outboxArgs = client.query.mock.calls[3][1] as unknown[];
+    const outboxPayload = JSON.parse(String(outboxArgs[2]));
+    expect(outboxPayload.llmProvider).toBe("gemini");
+    expect(outboxPayload).not.toHaveProperty("llm");
+    expect(JSON.stringify(outboxPayload)).not.toMatch(/apiKey|sk-/);
     expect(client.query.mock.calls.map(([sql]) => String(sql).trim().split(/\s+/)[0])).toEqual([
       "BEGIN",
       "INSERT",
@@ -26,6 +33,8 @@ describe("ResearchRepository", () => {
       "INSERT",
       "COMMIT",
     ]);
+    expect(client.query.mock.calls[1][0]).toContain("$1::uuid");
+    expect(client.query.mock.calls[1][0]).toContain("$1::text");
     expect(client.query.mock.calls[3][0]).toContain("research_dispatch_outbox");
     expect(client.release).toHaveBeenCalled();
   });
@@ -57,5 +66,53 @@ describe("ResearchRepository", () => {
 
     await expect(repository.applyExecutionFrame(payload, frame, 1)).resolves.toBe(false);
     expect(client.query.mock.calls[1][0]).toContain("FOR UPDATE");
+  });
+
+  test("heartbeat with stale interrupt does not flip status back to awaiting_human", async () => {
+    const updateArgs: unknown[][] = [];
+    const client = {
+      query: jest.fn().mockImplementation(async (sql: string, params?: unknown[]) => {
+        const text = String(sql);
+        if (text.startsWith("BEGIN") || text.startsWith("COMMIT")) {
+          return { rowCount: 1, rows: [] };
+        }
+        if (text.includes("FOR UPDATE")) {
+          return { rowCount: 1, rows: [{ status: "running", org_id: "org", created_by: null }] };
+        }
+        if (text.includes("UPDATE research_runs SET")) {
+          updateArgs.push(params || []);
+          return { rowCount: 1, rows: [] };
+        }
+        return { rowCount: 1, rows: [] };
+      }),
+      release: jest.fn(),
+    };
+    const pool = { connect: jest.fn().mockResolvedValue(client) } as unknown as Pool;
+    const repository = new ResearchRepository(pool);
+    const payload: ExecuteJobPayload = {
+      kind: "resume",
+      runId: "run",
+      executionId: "execution",
+      executionVersion: 2,
+      decision: { action: "start" },
+    };
+    const frame = {
+      type: "heartbeat",
+      runId: "run",
+      executionId: "execution",
+      sequence: 1,
+      snapshot: {
+        status: "awaiting_human",
+        current_node: "briefing",
+        interrupt: { type: "research_brief" },
+      },
+    } as ExecutionFrame;
+
+    await expect(repository.applyExecutionFrame(payload, frame, 1)).resolves.toBe(true);
+    expect(updateArgs[0][3]).toBe("running");
+    const stored = JSON.parse(String(updateArgs[0][5]));
+    expect(stored.status).toBe("running");
+    expect(stored.interrupt).toBeUndefined();
+    expect(updateArgs[0][6]).toBeNull();
   });
 });

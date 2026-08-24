@@ -30,8 +30,21 @@ def test_compose_has_user_facing_sections():
         llm_mode="heuristic",
     )
     body = report.body_markdown
-    for heading in ("Executive summary", "Scope", "Findings", "Decision rule", "Limitations", "References"):
+    for heading in (
+        "Executive summary",
+        "Key findings",
+        "Detailed analysis",
+        "Quantitative findings",
+        "Contradictions & debates",
+        "Decision rule",
+        "Uncertainties & gaps",
+        "Limitations",
+        "Source quality",
+        "References",
+    ):
         assert heading in body
+    assert "Research plan" not in body
+    assert "Claim register" not in body
     assert "[" in body
     assert report.citations
     assert memo_is_user_clean(body)
@@ -117,7 +130,7 @@ def test_analysis_section_is_built_from_the_question_dimensions():
         brief={"depth": "deep", "must_answer": slots},
     )
     body = report.body_markdown
-    assert "## Analysis" in body
+    assert "## Detailed analysis" in body
     assert "How the cut is made, step by step" in body
     assert "HNH domain" in body
     assert "SGMV" not in body and "LoRA" not in body

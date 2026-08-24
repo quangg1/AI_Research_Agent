@@ -1,6 +1,7 @@
 # Ops runbook (MVP)
 
-See [docs/deploy-oracle.md](deploy-oracle.md) for Always Free VM + `.io.vn` + Gemini + `AUTH_MODE=dev`.
+See [docs/deploy-oracle.md](deploy-oracle.md) for Always Free VM + `.io.vn` + BYOK + `AUTH_MODE=dev`.
+See [docs/deploy-render.md](deploy-render.md) for GitHub → Render Blueprint CI/CD (`render.yaml`).
 
 ## Backups
 

@@ -28,7 +28,10 @@ def tier_for(url: str, fallback: SourceTier | None = None) -> SourceTier:
             return SourceTier.VENDOR_OR_CONSULTANCY
         # model / org roots → vendor, not "primary regulation"
         return SourceTier.VENDOR_OR_CONSULTANCY
-    if host in {"github.com", "gitlab.com"}:
+    if host in {"github.com", "gitlab.com", "bitbucket.org"}:
+        # Curated link lists are tertiary aggregators, not research papers.
+        if "awesome" in path or "/awesome-" in path or path.rstrip("/").endswith("-list"):
+            return SourceTier.NEWS_ANALYSIS
         return SourceTier.SPECIALIST_RESEARCH
     if is_secondary_host(host) or host in SECONDARY_HOSTS:
         return SourceTier.NEWS_ANALYSIS
@@ -46,8 +49,12 @@ def credibility_score(url: str, published: str = "", fallback: SourceTier | None
     tier = tier_for(url, fallback)
     score = TIER_SCORE[tier]
     host = host_of(url)
+    path = (urlparse(url).path or "").lower() if url else ""
     if host in {"github.com", "gitlab.com"}:
-        score = max(score, 0.80)
+        if "awesome" in path or "/awesome-" in path:
+            score = min(score, 0.38)
+        else:
+            score = max(min(score, 0.72), 0.55)
     if is_secondary_host(host):
         score = min(score, 0.40)
     year = _year(published)

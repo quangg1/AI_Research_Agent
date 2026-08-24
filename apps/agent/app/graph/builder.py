@@ -57,9 +57,9 @@ def after_critic_eval(state: ResearchState) -> str:
 
 
 def after_hitl(state: ResearchState) -> str:
-    budget = budget_from(state)
     decision = state.get("human_decision") or {}
-    if decision.get("action") == "revise" and not budget.exhausted:
+    # Dig further always re-enters the planner; hitl_node already grants revise headroom.
+    if decision.get("action") == "revise":
         return "planner"
     return "report"
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+from app.domain.adversarial import falsification_queries
 from app.domain.knowledge import lookup, seed_evidence
 from app.domain.routing_policy import heuristic_plan, is_learning_query, out_of_scope
 from app.domain.research_intent import is_mechanism_query, user_goal
@@ -28,11 +29,14 @@ def _planner_sync(state: ResearchState) -> dict:
     depth = (brief.get("depth") or "standard").lower()
     if budget.iterations == 1:
         if depth == "quick":
-            budget.max_iterations = min(budget.max_iterations, 1)
-            budget.max_tool_calls = min(budget.max_tool_calls, 6)
+            budget.max_iterations = min(budget.max_iterations, 2)
+            budget.max_tool_calls = min(budget.max_tool_calls, 8)
         elif depth == "deep":
-            budget.max_iterations = max(budget.max_iterations, 3)
-            budget.max_tool_calls = max(budget.max_tool_calls, 12)
+            budget.max_iterations = max(budget.max_iterations, 5)
+            budget.max_tool_calls = max(budget.max_tool_calls, 20)
+        else:
+            budget.max_iterations = max(budget.max_iterations, 4)
+            budget.max_tool_calls = max(budget.max_tool_calls, 16)
 
     if out_of_scope(query) and budget.iterations == 1 and not followups:
         event("planner_out_of_scope", query=query)
@@ -87,6 +91,9 @@ def _planner_sync(state: ResearchState) -> dict:
         }
         followups = _followups_from_prior(hit.record, followups)
         event("planner_knowledge_augment", similarity=hit.similarity, knowledge_id=hit.record.get("id"))
+
+    if budget.iterations == 1 and not followups:
+        followups = falsification_queries(query, brief)
 
     has_corpus = corpus_available()
     learning = is_learning_query(query)
@@ -228,6 +235,8 @@ def _llm_plan(
             "Classify as factual | comparison | open_research.\n"
             "Pick only the agents needed from search, scholar, docs.\n"
             "Emit multiple sub_queries that each chase a different claim — not copies of the same string.\n"
+            "At least one sub_query must seek counter-evidence or a result that would falsify the convenient thesis.\n"
+            "At least one sub_query must seek a measured number (benchmark, N, success rate, delta).\n"
             "Stay inside applied AI / LLM systems: serving, RAG, agents, eval, multi-LoRA kernels.\n"
             "JSON keys: query_type, goal, agents_to_run, assumptions, stop_conditions, "
             "sub_queries (list of {agent, question, rationale})."

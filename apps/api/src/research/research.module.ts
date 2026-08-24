@@ -6,6 +6,7 @@ import { ResearchProcessor } from "./research.processor";
 import { Pool } from "pg";
 import { AgentExecutionClient } from "./agent-execution.client";
 import { ResearchDispatcher } from "./research.dispatcher";
+import { LlmCredentialVault } from "./llm-credential.vault";
 import { DATABASE_POOL, ResearchRepository } from "./research.repository";
 import { AuthService } from "../auth/auth.service";
 import { AuthGuard, OrgAdminGuard } from "../auth/auth.guard";
@@ -28,6 +29,7 @@ import { BillingWebhookController } from "../billing/billing.webhook.controller"
     },
     ResearchRepository,
     AgentExecutionClient,
+    LlmCredentialVault,
     ResearchDispatcher,
     AuthService,
     AuthGuard,

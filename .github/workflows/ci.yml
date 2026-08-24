@@ -1,5 +1,6 @@
 name: ci
 
+# CI on GitHub; CD is Render autoDeploy from main (see render.yaml + docs/deploy-render.md).
 on:
   push:
     branches: [main, master]

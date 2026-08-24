@@ -12,11 +12,11 @@ Not a general chatbot. Domain is broad enough to be hard (vendor hype, conflicti
 | **Scenarios** | Deterministic serving-cost and RAG vs fine-tune calculator |
 | **Corpus** | Curated LLM-systems docs indexed for the docs agent |
 | **Workspace** | Org-scoped run history + Postgres event timeline |
-| **Settings** | Plan/usage (Stripe), API keys, org data export |
+| **Settings** | Plan/usage (Stripe), workspace API keys, bring-your-own model key |
 
 Multi-tenant SaaS: Clerk Organizations for identity/RBAC, Stripe for billing, org-scoped runs.
 
-See [docs/ops.md](docs/ops.md) for backups and auth modes. Agent loop, files, and data flow: [docs/agent-research-system.md](docs/agent-research-system.md). Oracle Always Free (dev auth): [docs/deploy-oracle.md](docs/deploy-oracle.md).
+See [docs/ops.md](docs/ops.md) for backups and auth modes. Agent loop, files, and data flow: [docs/agent-research-system.md](docs/agent-research-system.md). Oracle Always Free (dev auth): [docs/deploy-oracle.md](docs/deploy-oracle.md). Render Blueprint CI/CD: [docs/deploy-render.md](docs/deploy-render.md).
 
 ## Graph
 
@@ -58,7 +58,7 @@ Forbidden folklore (blocked in grounding): bigger-model-always-wins, RAG-always-
 | UI | React + Vite |
 | State | PostgreSQL (runs + LangGraph checkpoints + run_events) |
 | Vectors | Qdrant (wired into docs/retrieve, in-process hybrid fallback) |
-| LLM | Gemini (heuristic fallback if no key) |
+| LLM | Hosted Gemini / OpenAI / Grok from env. Visitor BYOK only after credits run out; keys are never stored. |
 | Search | Tavily or DuckDuckGo |
 | Scholar | OpenAlex |
 | Docs | Curated LLM-systems corpus + hybrid retrieval |
@@ -67,7 +67,8 @@ Forbidden folklore (blocked in grounding): bigger-model-always-wins, RAG-always-
 
 ```bash
 cp .env.example .env
-# optional: GOOGLE_API_KEY, TAVILY_API_KEY
+# Put GOOGLE_API_KEY, OPENAI_API_KEY, and/or XAI_API_KEY in .env for hosted models.
+# Visitors paste their own key only if those credits run out.
 docker compose up --build
 ```
 

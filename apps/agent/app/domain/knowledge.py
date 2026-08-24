@@ -20,7 +20,7 @@ from app.observability.logging import logger
 from app.persistence.postgres import transaction
 from app.retrieval.embed import DIM, cosine, embed_texts
 
-MAX_BODY_CHARS = 24_000
+MAX_BODY_CHARS = 80_000
 MAX_CITATIONS = 28
 _MEMORY: list[dict[str, Any]] = []
 _STORE_LOCK = threading.RLock()
@@ -419,7 +419,7 @@ def _record_from_report(
         "embedding": _embed(goal),
         "embedding_model": _embedding_model(),
         "title": (report.get("title") or "")[:300],
-        "executive_summary": (report.get("executive_summary") or "")[:4000],
+        "executive_summary": (report.get("executive_summary") or "")[:8000],
         "body_markdown": (report.get("body_markdown") or "")[:MAX_BODY_CHARS],
         "decision_rule": (report.get("decision_rule") or "")[:4000],
         "open_questions": list(report.get("open_questions") or [])[:12],

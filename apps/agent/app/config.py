@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     gemini_embed_model: str = "text-embedding-004"
     openai_api_key: str = ""
     openai_model: str = "gpt-4.1-mini"
+    xai_api_key: str = ""
+    grok_api_key: str = ""
+    grok_model: str = "grok-4.6"
     tavily_api_key: str = ""
 
     postgres_host: str = "localhost"
@@ -25,9 +28,9 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection: str = "kiln_evidence"
 
-    max_tool_calls: int = 12
+    max_tool_calls: int = 24
     max_input_tokens: int = 80_000
-    max_iterations: int = 3
+    max_iterations: int = 5
 
     # Answer reuse: how close a past question must be before its memo is reused.
     knowledge_enabled: bool = True
@@ -46,6 +49,37 @@ class Settings(BaseSettings):
     langchain_api_key: str = ""
     langchain_tracing_v2: bool = False
     langchain_project: str = "kiln"
+
+    # When true, research runs must send a caller LLM key. Server keys are not used.
+    llm_byok_required: bool = False
+
+    def grok_secret(self) -> str:
+        return (self.xai_api_key or self.grok_api_key).strip()
+
+    def platform_key(self, provider: str) -> str:
+        name = (provider or "").strip().lower()
+        if name == "gemini":
+            return self.google_api_key.strip()
+        if name == "openai":
+            return self.openai_api_key.strip()
+        if name == "grok":
+            return self.grok_secret()
+        return ""
+
+    def platform_keys(self, provider: str) -> list[str]:
+        from app.llm.providers import split_api_keys
+
+        return split_api_keys(self.platform_key(provider))
+
+    def platform_configured(self) -> dict[str, bool]:
+        return {
+            "gemini": bool(self.platform_keys("gemini")),
+            "openai": bool(self.platform_keys("openai")),
+            "grok": bool(self.platform_keys("grok")),
+        }
+
+    def require_byok(self) -> bool:
+        return bool(self.llm_byok_required)
 
 
 settings = Settings()

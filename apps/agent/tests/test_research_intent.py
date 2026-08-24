@@ -60,6 +60,20 @@ def test_slots_for_a_non_technical_question_carry_no_technical_vocabulary():
         assert leaked not in blob
 
 
+def test_scalability_is_its_own_slot_when_asked():
+    from app.domain.decompose import reset_slot_cache
+
+    reset_slot_cache()
+    q = (
+        "Compare o1 vs DeepSeek-R1 on latency, FLOP cost, and scalability "
+        "(KV-cache and multi-node MCTS)."
+    )
+    slots = derive_slots(q, use_llm=False)
+    ids = {s["id"] for s in slots}
+    assert "scalability" in ids
+    assert "quantitative" in ids
+
+
 def test_decision_rule_reflects_coverage_not_a_template():
     critic = {
         "status": "insufficient",
@@ -74,14 +88,33 @@ def test_decision_rule_reflects_coverage_not_a_template():
     rule = decision_rule_for(BIOLOGY_Q, [], critic)
     assert "How CRISPR-Cas9 cleaves DNA" in rule
     assert "Off-target effects" in rule
+    assert "Verify:" in rule or "Do not assume:" in rule
     assert "BM25" not in rule
     assert "vector database" not in rule.lower()
 
 
 def test_decision_rule_falls_back_without_coverage():
     rule = decision_rule_for(POLICY_Q, [], {"status": "insufficient"})
-    assert "GDPR" in rule or "gdpr" in rule.lower()
+    assert "Empirical cutoffs" in rule
+    assert "Engineering heuristics" in rule
+    assert "Evidence-backed threshold: none" in rule
     assert "BM25" not in rule
+
+
+def test_decision_rule_separates_empirical_from_heuristics():
+    critic = {
+        "coverage": {
+            "slots": [
+                {"id": "a", "label": "How CRISPR-Cas9 cleaves DNA", "status": "covered"},
+                {"id": "b", "label": "Off-target effects", "status": "open"},
+            ]
+        }
+    }
+    rule = decision_rule_for(BIOLOGY_Q, [{"n": 1}], critic)
+    assert "### Empirical cutoffs" in rule
+    assert "### Engineering heuristics" in rule
+    assert "How CRISPR-Cas9 cleaves DNA" in rule
+    assert "Off-target effects" in rule
 
 
 def test_secondary_host_demoted():

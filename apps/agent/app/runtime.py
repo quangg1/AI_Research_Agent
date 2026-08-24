@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import time
+from types import SimpleNamespace
 from typing import Any, AsyncIterator
 
 from langgraph.errors import GraphInterrupt
@@ -18,7 +19,8 @@ from app.contracts import ExecutionFrame, ExecutionRequest
 from app.domain import knowledge
 from app.domain.schema import Budget
 from app.graph.builder import build_graph, build_test_graph
-from app.llm.client import enable_langsmith, llm
+from app.llm.client import CreditsExhaustedError, LLMClient, bind_llm, enable_langsmith, get_llm, llm, reset_llm
+from app.llm.redact import scrub_obj, scrub_text
 from app.observability.logging import event, logger
 from app.persistence import postgres
 from app.retrieval.store import ingest_corpus
@@ -45,7 +47,7 @@ PIPELINE = [
 ]
 NODE_HINTS = {
     "briefing": "Drafting an editable research plan",
-    "planner": "Calling Gemini to decompose the question — this can take a couple of minutes",
+    "planner": "Calling your model to decompose the question — this can take a couple of minutes",
     "docs": "Reading primary docs and framework pages",
     "scholar": "Pulling systems papers",
     "search": "Searching current web sources",
@@ -55,7 +57,7 @@ NODE_HINTS = {
     "extract": "Building the quote and citation ledger",
     "critic": "Checking conflicts before the memo",
     "hitl": "Waiting for your review",
-    "report": "Writing the memo — Gemini stays on this step until the draft is done",
+    "report": "Writing the memo — your model stays on this step until the draft is done",
 }
 NODE_ETA_S = {
     "briefing": 8,
@@ -165,13 +167,56 @@ async def stream_execution(
     async for frame in _stream_execution(request):
         frame["sequence"] = sequence
         sequence += 1
-        yield frame
+        yield scrub_obj(frame)
 
 
 async def _stream_execution(
     request: ExecutionRequest | dict[str, Any]
 ) -> AsyncIterator[dict[str, Any]]:
     req = _request_adapter.validate_python(request)
+    run_id = req.run_id
+    execution_id = req.execution_id
+    sequence = 0
+    client, cred_error = _client_for_request(req)
+    if cred_error:
+        yield _frame(
+            "error",
+            run_id,
+            execution_id,
+            sequence=sequence,
+            error=cred_error,
+            retryable=False,
+        )
+        return
+    token = bind_llm(client)
+    try:
+        async for frame in _stream_execution_bound(req):
+            yield frame
+    finally:
+        reset_llm(token)
+        client.close()
+
+
+def _client_for_request(req) -> tuple[LLMClient, str | None]:
+    cred = getattr(req, "llm", None)
+    if cred is not None:
+        client = LLMClient.from_credential(cred)
+        if not client.available:
+            provider = str(getattr(cred, "provider", "") or "model")
+            return client, (
+                f"{provider} is not configured on this server. Paste your own API key to continue. "
+                "Kiln never stores visitor keys."
+            )
+        return client, None
+    if settings.require_byok():
+        return LLMClient(use_env=False), (
+            "A model API key is required. Paste your Gemini, OpenAI, or Grok key. "
+            "Kiln never stores visitor keys."
+        )
+    return LLMClient(), None
+
+
+async def _stream_execution_bound(req) -> AsyncIterator[dict[str, Any]]:
     run_id = req.run_id
     execution_id = req.execution_id
     sequence = 0
@@ -198,16 +243,59 @@ async def _stream_execution(
                 await lock_conn.execute("SELECT pg_advisory_unlock(%s)", (lock_key,))
     except asyncio.CancelledError:
         raise
+    except CreditsExhaustedError as exc:
+        snapshot = await _safe_snapshot(run_id)
+        # Build a lightweight namespace so the helper can read .values / .next
+        snap = SimpleNamespace(
+            values=(snapshot or {}).get("values") or {},
+            next=(snapshot or {}).get("next") or [],
+            tasks=[],
+            config={"configurable": {"checkpoint_id": (snapshot or {}).get("checkpoint_id")}},
+        )
+        frame = _credits_interrupt_frame(run_id, execution_id, snap, exc)
+        frame["sequence"] = sequence
+        if snapshot:
+            # Preserve annotated progress fields from the last safe snapshot.
+            merged = dict(snapshot)
+            merged["interrupt"] = frame.get("interrupt") or frame.get("data")
+            merged["status"] = "awaiting_human"
+            frame["snapshot"] = _annotate(merged)
+        yield frame
     except Exception as exc:
         logger.exception("execution_stream_failed run_id=%s", run_id)
         snapshot = await _safe_snapshot(run_id)
+        extra = tuple(
+            slot.api_key
+            for slot in getattr(get_llm(), "_slots", [])
+            if getattr(slot, "api_key", "")
+        ) or (getattr(get_llm(), "_api_key", "") or "",)
+        # Credits messages that leaked as generic exceptions still park, not fail.
+        msg = scrub_text(str(exc), extra)
+        if _looks_like_credits_error(msg):
+            snap = SimpleNamespace(
+                values=(snapshot or {}).get("values") or {},
+                next=(snapshot or {}).get("next") or [],
+                tasks=[],
+                config={"configurable": {}},
+            )
+            frame = _credits_interrupt_frame_from_message(
+                run_id, execution_id, snap, msg, provider="gemini", tried=["gemini"]
+            )
+            frame["sequence"] = sequence
+            if snapshot:
+                merged = dict(snapshot)
+                merged["interrupt"] = frame.get("data")
+                merged["status"] = "awaiting_human"
+                frame["snapshot"] = _annotate(merged)
+            yield frame
+            return
         yield _frame(
             "error",
             run_id,
             execution_id,
             sequence=sequence,
             snapshot=snapshot,
-            error=str(exc),
+            error=msg,
             retryable=_retryable(exc),
         )
 
@@ -231,25 +319,41 @@ async def _stream_locked(req) -> AsyncIterator[dict[str, Any]]:
             status=status,
         )
         return
+    decision = {}
+    if req.kind == "resume":
+        decision = req.decision.model_dump(by_alias=True)
+    action = str(decision.get("action") or "").strip().lower()
+    credits_continue = action in {"continue", "retry_credits"}
+
     if status == "failed":
-        yield _frame(
-            "error",
-            run_id,
-            execution_id,
-            snapshot=_snapshot_dict(snapshot, run_id),
-            error=str(values.get("error") or "execution failed"),
-            retryable=False,
-        )
-        return
+        # Credits failures are parked for Continue; legacy runs may still be "failed".
+        if not (req.kind == "resume" and credits_continue):
+            yield _frame(
+                "error",
+                run_id,
+                execution_id,
+                snapshot=_snapshot_dict(snapshot, run_id),
+                error=str(values.get("error") or "execution failed"),
+                retryable=False,
+            )
+            return
 
     if req.kind == "start":
         if values:
+            nxt = list(getattr(snapshot, "next", None) or [])
+            if not interrupt and any(node in {"hitl", "briefing"} for node in nxt):
+                interrupt = _interrupt_from_state(values, nxt)
             if interrupt:
+                annotated = _snapshot_dict(snapshot, run_id)
+                if not annotated.get("interrupt"):
+                    annotated["interrupt"] = _jsonable(interrupt)
+                    annotated["status"] = "awaiting_human"
+                    annotated = _annotate(annotated)
                 yield _frame(
                     "interrupt",
                     run_id,
                     execution_id,
-                    snapshot=_snapshot_dict(snapshot, run_id),
+                    snapshot=annotated,
                     data=_jsonable(interrupt),
                 )
                 return
@@ -277,15 +381,36 @@ async def _stream_locked(req) -> AsyncIterator[dict[str, Any]]:
                 retryable=False,
             )
             return
-        if not interrupt and values.get("last_execution_id") != execution_id:
+        nxt = list(getattr(snapshot, "next", None) or [])
+        if not interrupt and any(node in {"hitl", "briefing"} for node in nxt):
+            interrupt = _interrupt_from_state(values, nxt)
+        itype = interrupt.get("type") if isinstance(interrupt, dict) else None
+        lg_parked = bool(_interrupt_payload(snapshot)) or any(
+            node in {"hitl", "briefing"} for node in nxt
+        )
+        if values.get("last_execution_id") == execution_id:
+            # Same execution retried after a worker crash — continue, do not re-resume.
             graph_input = None
-        elif values.get("last_execution_id") == execution_id:
-            graph_input = None
-        else:
+        elif lg_parked and itype != "credits_exhausted":
+            # HITL / brief: resume value flows into interrupt().
             graph_input = Command(
-                resume=req.decision.model_dump(by_alias=True),
-                update={"last_execution_id": execution_id},
+                resume=decision,
+                update={"last_execution_id": execution_id, "status": "running", "error": ""},
             )
+        elif lg_parked and itype == "credits_exhausted":
+            # Credits pause created via interrupt() inside generate — resume that interrupt.
+            graph_input = Command(
+                resume=decision or {"action": "continue"},
+                update={"last_execution_id": execution_id, "status": "running", "error": ""},
+            )
+        elif credits_continue or itype == "credits_exhausted":
+            # Credits exhausted outside interrupt context (e.g. asyncio.to_thread).
+            # Checkpoint still points at the failed node — re-enter it with a fresh LLM bind.
+            graph_input = Command(
+                update={"last_execution_id": execution_id, "status": "running", "error": ""},
+            )
+        else:
+            graph_input = None
 
     try:
         async for update in _updates_with_heartbeats(
@@ -295,18 +420,27 @@ async def _stream_locked(req) -> AsyncIterator[dict[str, Any]]:
     except GraphInterrupt as exc:
         snapshot = await graph().aget_state(config)
         payload = _interrupt_payload(snapshot) or _interrupt_from_exc(exc)
-        yield _frame(
-            "interrupt",
-            run_id,
-            execution_id,
-            snapshot=_snapshot_dict(snapshot, run_id),
-            data=_jsonable(payload),
-        )
+        yield _credits_or_generic_interrupt(run_id, execution_id, snapshot, payload)
+        return
+    except CreditsExhaustedError as exc:
+        # LLM ran outside a LangGraph runnable context (common with to_thread) —
+        # park the run at the current checkpoint instead of failing the job.
+        snapshot = await graph().aget_state(config)
+        yield _credits_interrupt_frame(run_id, execution_id, snapshot, exc)
         return
 
     snapshot = await graph().aget_state(config)
     payload = _interrupt_payload(snapshot)
     annotated = _snapshot_dict(snapshot, run_id)
+    values = dict(getattr(snapshot, "values", None) or {})
+    nxt = list(getattr(snapshot, "next", None) or [])
+    if not payload and any(node in {"hitl", "briefing"} for node in nxt):
+        payload = _interrupt_from_state(values, nxt)
+        if payload:
+            annotated = dict(annotated)
+            annotated["interrupt"] = _jsonable(payload)
+            annotated["status"] = "awaiting_human"
+            annotated = _annotate(annotated)
     if payload:
         yield _frame(
             "interrupt",
@@ -316,7 +450,6 @@ async def _stream_locked(req) -> AsyncIterator[dict[str, Any]]:
             data=_jsonable(payload),
         )
         return
-    values = dict(getattr(snapshot, "values", None) or {})
     status = values.get("status")
     if status == "failed":
         yield _frame(
@@ -328,7 +461,7 @@ async def _stream_locked(req) -> AsyncIterator[dict[str, Any]]:
             retryable=False,
         )
         return
-    if status not in _TERMINAL and not list(getattr(snapshot, "next", None) or []):
+    if status not in _TERMINAL and not nxt:
         status = "completed"
     if status in _TERMINAL:
         yield _frame(
@@ -386,6 +519,130 @@ async def _updates_with_heartbeats(
             await aclose()
 
 
+def _looks_like_credits_error(message: str) -> bool:
+    blob = (message or "").lower()
+    return any(
+        token in blob
+        for token in (
+            "out of credits",
+            "credits are exhausted",
+            "insufficient_quota",
+            "quota exceeded",
+            "exceeded your current quota",
+            "resource_exhausted",
+        )
+    )
+
+
+def _credits_payload_from_exc(exc: CreditsExhaustedError, snapshot) -> dict[str, Any]:
+    return _credits_payload(
+        message=str(exc),
+        provider=getattr(exc, "provider", "") or "model",
+        tried=list(getattr(exc, "tried", None) or []),
+        source=getattr(exc, "source", "") or "platform",
+        snapshot=snapshot,
+    )
+
+
+def _credits_payload(
+    *,
+    message: str,
+    provider: str,
+    tried: list[str],
+    source: str,
+    snapshot,
+) -> dict[str, Any]:
+    nxt = list(getattr(snapshot, "next", None) or [])
+    return {
+        "type": "credits_exhausted",
+        "title": "Model credits exhausted",
+        "message": message,
+        "provider": provider,
+        "tried": tried,
+        "source": source,
+        "failed_node": nxt[0] if nxt else None,
+        "resume_hint": (
+            "Paste a new API key or top up credits, then Continue — "
+            "research resumes from this step, not from scratch."
+        ),
+    }
+
+
+def _credits_interrupt_frame(
+    run_id: str, execution_id: str, snapshot, exc: CreditsExhaustedError
+) -> dict[str, Any]:
+    return _credits_interrupt_frame_from_message(
+        run_id,
+        execution_id,
+        snapshot,
+        str(exc),
+        provider=getattr(exc, "provider", "") or "model",
+        tried=list(getattr(exc, "tried", None) or []),
+        source=getattr(exc, "source", "") or "platform",
+    )
+
+
+def _credits_interrupt_frame_from_message(
+    run_id: str,
+    execution_id: str,
+    snapshot,
+    message: str,
+    *,
+    provider: str = "model",
+    tried: list[str] | None = None,
+    source: str = "platform",
+) -> dict[str, Any]:
+    payload = _credits_payload(
+        message=message,
+        provider=provider,
+        tried=list(tried or []),
+        source=source,
+        snapshot=snapshot,
+    )
+    annotated = _snapshot_dict(snapshot, run_id)
+    annotated = dict(annotated)
+    annotated["interrupt"] = payload
+    annotated["status"] = "awaiting_human"
+    if payload.get("failed_node"):
+        annotated["current_node"] = payload["failed_node"]
+    annotated = _annotate(annotated)
+    annotated["hint"] = "Paused for credits — Continue resumes from this step"
+    return _frame(
+        "interrupt",
+        run_id,
+        execution_id,
+        snapshot=annotated,
+        data=payload,
+    )
+
+
+def _credits_or_generic_interrupt(
+    run_id: str, execution_id: str, snapshot, payload: Any
+) -> dict[str, Any]:
+    data = _unwrap_interrupt(payload) or {}
+    if isinstance(data, dict) and data.get("type") == "credits_exhausted":
+        annotated = _snapshot_dict(snapshot, run_id)
+        annotated = dict(annotated)
+        annotated["interrupt"] = data
+        annotated["status"] = "awaiting_human"
+        annotated = _annotate(annotated)
+        annotated["hint"] = "Paused for credits — Continue resumes from this step"
+        return _frame(
+            "interrupt",
+            run_id,
+            execution_id,
+            snapshot=annotated,
+            data=_jsonable(data),
+        )
+    return _frame(
+        "interrupt",
+        run_id,
+        execution_id,
+        snapshot=_snapshot_dict(snapshot, run_id),
+        data=_jsonable(payload),
+    )
+
+
 def _frame(
     frame_type: str,
     run_id: str,
@@ -425,6 +682,10 @@ async def _safe_snapshot(run_id: str) -> dict[str, Any]:
 
 
 def _retryable(exc: Exception) -> bool:
+    # Credits now park via interrupt when inside a graph; if they still surface
+    # as a stream error, do not auto-retry the whole job from scratch.
+    if isinstance(exc, CreditsExhaustedError):
+        return False
     return not isinstance(exc, (ValueError, KeyError, TypeError))
 
 
@@ -489,8 +750,12 @@ async def readiness() -> dict[str, Any]:
 
 def _snapshot_dict(snapshot, run_id: str) -> dict[str, Any]:
     values = _jsonable(dict(getattr(snapshot, "values", None) or {}))
-    interrupt = _jsonable(_interrupt_payload(snapshot))
-    status = values.get("status") or ("awaiting_human" if interrupt else "running")
+    interrupt = _unwrap_interrupt(_jsonable(_interrupt_payload(snapshot)))
+    raw_status = values.get("status")
+    if interrupt and raw_status not in _TERMINAL and raw_status != "failed":
+        status = "awaiting_human"
+    else:
+        status = raw_status or ("awaiting_human" if interrupt else "running")
     run = {
         "thread_id": run_id,
         "runId": run_id,
@@ -525,18 +790,34 @@ def _annotate(run: dict[str, Any]) -> dict[str, Any]:
         out["started_at"] if out.get("started_at") is not None else time.time()
     )
     elapsed = max(0, int(time.time() - started))
-    traces = (out.get("values") or {}).get("traces") or []
+    values = out.get("values") or {}
+    traces = values.get("traces") or []
     done_nodes = {trace.get("node") for trace in traces if isinstance(trace, dict)}
-    status = out.get("status") or "running"
+    status = out.get("status") or values.get("status") or "running"
+    nxt = [str(n) for n in (out.get("next") or [])]
+    value_status = str(values.get("status") or "")
     current = out.get("current_node")
-    if not current:
+    # After HITL resumes, traces still end on "hitl" while report is writing.
+    # Prefer the real next node / approved status so the UI does not say "Waiting for review".
+    if "report" in nxt or value_status in {"approved", "completed"} or "report" in done_nodes:
+        current = "report"
+    elif "hitl" in nxt or (status == "awaiting_human" and (out.get("interrupt") or {}).get("type") == "approve_report"):
+        current = "hitl"
+    elif "briefing" in nxt or (status == "awaiting_human" and (out.get("interrupt") or {}).get("type") == "research_brief"):
+        current = "briefing"
+    elif status == "awaiting_human" and (out.get("interrupt") or {}).get("type") == "credits_exhausted":
+        # Stay on the node that was running when credits ran out.
+        current = nxt[0] if nxt else (traces[-1].get("node") if traces else current) or "planner"
+    elif not current:
         if status == "awaiting_human":
             interrupt = out.get("interrupt") or {}
-            current = (
-                "briefing" if interrupt.get("type") == "research_brief" else "hitl"
-            )
-        elif "report" in done_nodes:
-            current = "report"
+            itype = interrupt.get("type")
+            if itype == "research_brief":
+                current = "briefing"
+            elif itype == "credits_exhausted":
+                current = nxt[0] if nxt else "planner"
+            else:
+                current = "hitl"
         elif traces:
             current = traces[-1].get("node") or "planner"
         else:
@@ -545,10 +826,12 @@ def _annotate(run: dict[str, Any]) -> dict[str, Any]:
         current = "planner"
     index = PIPELINE.index(current)
     completed = sum(1 for name in PIPELINE if name in done_nodes and name != current)
-    if status == "completed":
+    if status == "completed" or value_status == "completed":
         fraction = float(len(PIPELINE))
     elif status == "awaiting_human":
         fraction = completed + 0.5
+    elif current == "report":
+        fraction = max(completed, len(PIPELINE) - 1) + 0.55
     else:
         fraction = completed + 0.4
     remaining = sum(NODE_ETA_S.get(name, 8) for name in PIPELINE[index + 1 :])
@@ -556,7 +839,13 @@ def _annotate(run: dict[str, Any]) -> dict[str, Any]:
     out["elapsed_s"] = elapsed
     out["current_node"] = current
     out["progress"] = round(min(1.0, fraction / len(PIPELINE)), 3)
-    out["hint"] = NODE_HINTS.get(current, "Working…")
+    interrupt = out.get("interrupt") or {}
+    if interrupt.get("type") == "credits_exhausted" and status == "awaiting_human":
+        out["hint"] = "Paused for credits — Continue resumes from this step"
+    elif current == "report" and status != "completed" and value_status != "completed":
+        out["hint"] = "Writing the long memo"
+    else:
+        out["hint"] = NODE_HINTS.get(current, "Working…")
     out["eta_s"] = int(NODE_ETA_S.get(current, 15) + remaining * 0.65)
     return out
 
@@ -564,25 +853,79 @@ def _annotate(run: dict[str, Any]) -> dict[str, Any]:
 def _interrupt_from_exc(exc: GraphInterrupt) -> Any:
     interrupts = getattr(exc, "interrupts", None) or exc.args
     first = interrupts[0] if interrupts else None
-    return getattr(first, "value", first)
+    return _unwrap_interrupt(getattr(first, "value", first))
+
+
+def _interrupt_from_state(values: dict[str, Any], nxt: list[str]) -> dict[str, Any]:
+    if "briefing" in nxt and not values.get("brief_confirmed"):
+        return {
+            "type": "research_brief",
+            "title": "Research plan",
+            "brief": values.get("brief") or {},
+        }
+    retrieved = values.get("retrieved") or values.get("evidence") or []
+    return {
+        "type": "approve_report",
+        "query": values.get("query"),
+        "query_type": values.get("query_type"),
+        "plan": values.get("plan"),
+        "critic": values.get("critic"),
+        "budget": values.get("budget"),
+        "llm_mode": values.get("llm_mode"),
+        "claims_preview": (values.get("claims") or [])[:4],
+        "evidence_preview": [
+            {
+                "id": item.get("id"),
+                "title": item.get("title"),
+                "url": item.get("url"),
+                "tier": item.get("tier"),
+                "snippet": (item.get("snippet") or "")[:280],
+            }
+            for item in retrieved[:8]
+            if isinstance(item, dict)
+        ],
+    }
 
 
 def _interrupt_payload(snapshot) -> Any:
     for task in getattr(snapshot, "tasks", None) or []:
         interrupts = getattr(task, "interrupts", None) or []
         if interrupts:
-            return getattr(interrupts[0], "value", interrupts[0])
+            return _unwrap_interrupt(getattr(interrupts[0], "value", interrupts[0]))
     values = getattr(snapshot, "values", {}) or {}
-    return values.get("__interrupt__")
+    return _unwrap_interrupt(values.get("__interrupt__"))
+
+
+def _unwrap_interrupt(raw: Any) -> Any:
+    cur = raw
+    for _ in range(4):
+        if isinstance(cur, list) and cur:
+            cur = cur[0]
+            continue
+        if isinstance(cur, dict):
+            if cur.get("type"):
+                return cur
+            inner = cur.get("value")
+            if inner is None:
+                inner = cur.get("interrupt")
+            if inner is None:
+                nested = cur.get("interrupts")
+                if isinstance(nested, list) and nested:
+                    inner = nested[0]
+            if inner is not None:
+                cur = inner
+                continue
+        return cur
+    return cur
 
 
 def _jsonable(obj: Any) -> Any:
     try:
         json.dumps(obj)
-        return obj
+        return scrub_obj(obj)
     except TypeError:
         if isinstance(obj, dict):
-            return {str(key): _jsonable(value) for key, value in obj.items()}
+            return scrub_obj({str(key): _jsonable(value) for key, value in obj.items()})
         if isinstance(obj, (list, tuple)):
-            return [_jsonable(value) for value in obj]
-        return str(obj)
+            return scrub_obj([_jsonable(value) for value in obj])
+        return scrub_text(str(obj))

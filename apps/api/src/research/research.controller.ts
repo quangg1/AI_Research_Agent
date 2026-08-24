@@ -31,6 +31,12 @@ export class ResearchController {
 
   @Get("/health")
   health() {
+    // Liveness only — Render health checks must get 2xx even while deps warm up.
+    return { ok: true, service: "kiln-api" };
+  }
+
+  @Get("/ready")
+  ready() {
     return this.research.readiness();
   }
 

@@ -46,6 +46,22 @@ async def require_agent_key(request: Request, call_next):
 
 @app.get("/health")
 async def health():
+    # Liveness for orchestrators (Render). Deep deps live on /ready.
+    return JSONResponse(
+        {
+            "ok": True,
+            "service": "kiln-agent",
+            "llm_mode": "platform" if not settings.require_byok() else "byok",
+            "byok_required": settings.require_byok(),
+            "providers": list(PROVIDERS),
+            "platform_providers": settings.platform_configured(),
+        },
+        status_code=200,
+    )
+
+
+@app.get("/ready")
+async def ready():
     state = await runtime.readiness()
     body = {
         **state,

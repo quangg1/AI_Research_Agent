@@ -53,6 +53,10 @@ services:
         value: "5"
       - key: LANGCHAIN_TRACING_V2
         value: "false"
+      - key: APP_ENV
+        value: production
+      - key: PERSISTENCE_REQUIRED
+        value: "true"
 
   - type: web
     name: kiln-api

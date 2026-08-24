@@ -112,7 +112,6 @@ services:
   - type: web
     name: kiln-web
     runtime: static
-    plan: free
     branch: main
     autoDeploy: true
     buildCommand: cd apps/web && npm ci && npm run build

@@ -12,12 +12,15 @@ databases:
     plan: free
     postgresMajorVersion: "16"
 
-  - name: kiln-redis
+services:
+  # Redis-compatible Key Value (must be under services, not databases)
+  - type: keyvalue
+    name: kiln-redis
     plan: free
-    maxmemoryPolicy: allkeys-lru
+    region: oregon
+    maxmemoryPolicy: noeviction
     ipAllowList: []
 
-services:
   - type: web
     name: kiln-agent
     runtime: docker
@@ -34,8 +37,9 @@ services:
           name: kiln-postgres
           property: connectionString
       - key: REDIS_URL
-        fromDatabase:
+        fromService:
           name: kiln-redis
+          type: keyvalue
           property: connectionString
       - key: QDRANT_URL
         value: ""
@@ -76,8 +80,9 @@ services:
           name: kiln-postgres
           property: connectionString
       - key: REDIS_URL
-        fromDatabase:
+        fromService:
           name: kiln-redis
+          type: keyvalue
           property: connectionString
       - key: AGENT_BASE_URL
         sync: false

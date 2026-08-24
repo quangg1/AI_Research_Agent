@@ -23,16 +23,17 @@ Render **auto-deploys** services when `main` updates (Blueprint `autoDeploy: tru
 
 ## Database migrations
 
-Compose applies `infra/postgres/migrations/*.sql` locally. On Render, run once against `kiln-postgres` (Dashboard → PostgreSQL → **PSQL** / Shell), in order:
+Agent Docker image applies `infra/postgres/init.sql` + `migrations/*.sql` on every start
+(`apps/agent/scripts/render-start.sh`). Safe to re-run (`IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`).
+
+If you need to run them manually against Render Postgres:
 
 ```bash
-# From a machine with psql and DATABASE_URL (External Database URL from Render):
-for f in infra/postgres/migrations/*.sql; do
+# External Database URL from Render → kiln-postgres
+for f in infra/postgres/init.sql infra/postgres/migrations/*.sql; do
   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
 done
 ```
-
-Or paste each file into the Render PSQL console.
 
 ## CI vs CD
 

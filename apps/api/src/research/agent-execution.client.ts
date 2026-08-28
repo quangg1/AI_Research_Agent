@@ -4,13 +4,26 @@ import { agentLlmPayload, scrubObj, scrubText, type LlmCredentialDto } from "./d
 
 const FRAME_TYPES = new Set(["update", "heartbeat", "interrupt", "terminal", "error"]);
 
+function normalizeAgentBaseUrl(raw: string): string {
+  const trimmed = raw.trim().replace(/\/+$/, "");
+  if (!trimmed) return "http://localhost:8000";
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
 @Injectable()
 export class AgentExecutionClient {
-  private readonly baseUrl = process.env.AGENT_BASE_URL || "http://localhost:8000";
+  private readonly baseUrl = normalizeAgentBaseUrl(process.env.AGENT_BASE_URL || "http://localhost:8000");
   private readonly idleTimeoutMs = Number(process.env.AGENT_STREAM_IDLE_TIMEOUT_MS || 120_000);
 
+  private agentKey(): string {
+    const override = (process.env.API_TO_AGENT_KEY || "").trim();
+    if (override) return override;
+    return (process.env.AGENT_SHARED_KEY || "").trim();
+  }
+
   private headers(contentType = false): Record<string, string> {
-    const key = process.env.API_TO_AGENT_KEY || process.env.AGENT_SHARED_KEY;
+    const key = this.agentKey();
     return {
       ...(contentType ? { "Content-Type": "application/json" } : {}),
       ...(key ? { "X-Agent-Key": key } : {}),
@@ -107,11 +120,28 @@ export class AgentExecutionClient {
 
   async health(): Promise<Record<string, unknown>> {
     const response = await fetch(`${this.baseUrl}/health`, {
-      headers: this.headers(),
       signal: AbortSignal.timeout(5_000),
     });
     if (!response.ok) throw new Error(`Agent health failed (${response.status})`);
     return response.json() as Promise<Record<string, unknown>>;
+  }
+
+  /** Calls a protected route — catches AGENT_SHARED_KEY mismatch before research runs. */
+  async ready(): Promise<Record<string, unknown>> {
+    const key = this.agentKey();
+    if (!key) throw new Error("agent_auth: AGENT_SHARED_KEY is not set on kiln-api");
+    const response = await fetch(`${this.baseUrl}/ready`, {
+      headers: this.headers(),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (response.status === 401) {
+      throw new Error(
+        "agent_auth: invalid agent credentials — kiln-api AGENT_SHARED_KEY must match kiln-agent (delete API_TO_AGENT_KEY if set)",
+      );
+    }
+    const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!response.ok) throw new Error(`Agent ready failed (${response.status})`);
+    return body;
   }
 
   async fetch(path: string, init: RequestInit = {}): Promise<Response> {

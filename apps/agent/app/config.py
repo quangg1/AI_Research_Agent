@@ -81,5 +81,8 @@ class Settings(BaseSettings):
     def require_byok(self) -> bool:
         return bool(self.llm_byok_required)
 
+    def agent_key(self) -> str:
+        return (self.agent_shared_key or "").strip()
+
 
 settings = Settings()

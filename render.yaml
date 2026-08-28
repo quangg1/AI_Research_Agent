@@ -37,8 +37,10 @@ services:
         value: ""
       - key: LLM_BYOK_REQUIRED
         value: "true"
+      - key: APP_ENV
+        value: production
       - key: AGENT_SHARED_KEY
-        sync: false
+        generateValue: true
       - key: GOOGLE_API_KEY
         sync: false
       - key: OPENAI_API_KEY
@@ -74,7 +76,10 @@ services:
       - key: REDIS_URL
         sync: false
       - key: AGENT_BASE_URL
-        sync: false
+        fromService:
+          name: kiln-agent
+          type: web
+          property: host
       - key: AUTH_MODE
         value: dev
       - key: ALLOW_DEV_AUTH
@@ -84,9 +89,10 @@ services:
       - key: CORS_ORIGINS
         sync: false
       - key: AGENT_SHARED_KEY
-        sync: false
-      - key: API_TO_AGENT_KEY
-        sync: false
+        fromService:
+          name: kiln-agent
+          type: web
+          envVarKey: AGENT_SHARED_KEY
       - key: API_SHARED_KEY
         sync: false
       - key: CLERK_SECRET_KEY

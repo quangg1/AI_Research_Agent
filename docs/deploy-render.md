@@ -11,15 +11,34 @@ Render **auto-deploys** services when `main` updates (Blueprint `autoDeploy: tru
    [https://dashboard.render.com/blueprint/new?repo=https://github.com/quangg1/AI_Research_Agent](https://dashboard.render.com/blueprint/new?repo=https://github.com/quangg1/AI_Research_Agent)
 
 3. Connect the GitHub repo if prompted → **Apply**.
-4. Fill secrets marked `sync: false` in the Blueprint UI (same values for shared keys on api + agent):
-   - `REDIS_URL` — **reuse** your existing free Key Value (Render only allows one free). Dashboard → Key Value → **Internal Redis URL** (paste the same value into both kiln-api and kiln-agent). Do **not** create a second free Redis.
-   - `AGENT_SHARED_KEY` (and optional `API_TO_AGENT_KEY`) — long random string
-   - LLM / Tavily keys (or leave empty and rely on BYOK in the UI)
-5. After first deploy, copy public URLs from the dashboard:
-   - Agent → set **kiln-api** env `AGENT_BASE_URL=https://<kiln-agent>.onrender.com`
-   - API → set **kiln-web** env `VITE_API_URL=https://<kiln-api>.onrender.com`
-   - API → set `CORS_ORIGINS=https://<kiln-web>.onrender.com`
-6. Redeploy **kiln-api** and **kiln-web** (Manual Deploy → Clear build cache & deploy for web so Vite picks up `VITE_API_URL`).
+4. Fill remaining secrets marked `sync: false`:
+   - `REDIS_URL` — reuse your existing free Key Value (Internal Redis URL on **both** kiln-api and kiln-agent)
+   - LLM / Tavily keys (optional if using BYOK in the UI)
+5. Blueprint wires shared agent config automatically:
+   - `AGENT_SHARED_KEY` — generated on **kiln-agent**; **kiln-api** copies it via `fromService`
+   - `AGENT_BASE_URL` — auto-wired from kiln-agent hostname (api prepends `https://`)
+   - Do **not** set `API_TO_AGENT_KEY` on kiln-api unless you want a separate override (common cause of 401)
+6. After first deploy, set public URLs:
+   - **kiln-web** → `VITE_API_URL=https://<kiln-api>.onrender.com`
+   - **kiln-api** → `CORS_ORIGINS=https://<kiln-web>.onrender.com`
+7. Redeploy **kiln-web** (Clear build cache) and **kiln-api**.
+
+## Troubleshooting `invalid agent credentials`
+
+1. **kiln-api** → Environment → **delete** `API_TO_AGENT_KEY` if it exists.
+2. Copy `AGENT_SHARED_KEY` from **kiln-agent** → paste into **kiln-api** `AGENT_SHARED_KEY` (must match exactly).
+3. **Manual Deploy** kiln-api (env changes do not apply until redeploy).
+4. Open `https://<kiln-api>.onrender.com/ready` — if `dependencies` contains `agent_auth`, keys still mismatch.
+5. Test agent directly (PowerShell):
+
+```powershell
+$key = "PASTE_FROM_kiln-agent_ENV"
+$host = "https://YOUR-AGENT.onrender.com"
+Invoke-RestMethod "$host/health"
+Invoke-WebRequest "$host/ready" -Headers @{"X-Agent-Key"=$key}
+```
+
+Last command must return **200**. If it does but the app still fails, redeploy kiln-api.
 
 ## Database migrations
 

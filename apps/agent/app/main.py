@@ -21,7 +21,7 @@ from app.scenarios.llm_cost import compare_serving, rag_tradeoff
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    if settings.app_env.lower() in {"production", "prod"} and not settings.agent_shared_key:
+    if settings.app_env.lower() in {"production", "prod"} and not settings.agent_key():
         raise RuntimeError("AGENT_SHARED_KEY is required in production")
     await runtime.init_runtime()
     try:
@@ -36,8 +36,8 @@ app = FastAPI(title="Kiln Agent", version="0.2.0", lifespan=lifespan)
 @app.middleware("http")
 async def require_agent_key(request: Request, call_next):
     if request.url.path != "/health":
-        expected = settings.agent_shared_key
-        if expected and not hmac.compare_digest(request.headers.get("X-Agent-Key", ""), expected):
+        expected = settings.agent_key()
+        if expected and not hmac.compare_digest(request.headers.get("X-Agent-Key", "").strip(), expected):
             return JSONResponse({"detail": "invalid agent credentials"}, status_code=401)
         if settings.app_env.lower() in {"production", "prod"} and not expected:
             return JSONResponse({"detail": "agent authentication is not configured"}, status_code=503)

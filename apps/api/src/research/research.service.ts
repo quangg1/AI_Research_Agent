@@ -186,12 +186,14 @@ export class ResearchService {
         .then((redis) => (redis as unknown as { ping(): Promise<string> }).ping())
         .catch(() => failures.push("redis")),
       this.agent
-        .health()
+        .ready()
         .then((health) => {
           agentHealth = health;
           if (health.ok !== true) failures.push("agent");
         })
-        .catch(() => failures.push("agent")),
+        .catch((err: Error) => {
+          failures.push(err.message.startsWith("agent_auth:") ? "agent_auth" : "agent");
+        }),
     ]);
     if (failures.length) {
       throw new ServiceUnavailableException({

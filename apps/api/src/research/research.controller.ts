@@ -48,7 +48,7 @@ export class ResearchController {
   @UseGuards(AuthGuard)
   @Post("/v1/research")
   start(@Body() body: StartResearchDto, @CurrentAuth() auth: AuthContext) {
-    return this.research.enqueue(body.query, body.fresh === true, auth, body.llm);
+    return this.research.enqueue(body.query, body.fresh === true, auth, body.llm, body.parentRunId);
   }
 
   @UseGuards(AuthGuard)

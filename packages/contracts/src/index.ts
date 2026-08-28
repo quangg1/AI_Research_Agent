@@ -34,6 +34,7 @@ export const LlmRequestSchema = z.object({
 export const StartResearchRequestSchema = z.object({
   query: z.string().min(8).max(4000),
   fresh: z.boolean().optional(),
+  parentRunId: z.string().uuid().optional(),
   llm: LlmRequestSchema.optional(),
 });
 export type StartResearchRequest = z.infer<typeof StartResearchRequestSchema>;
@@ -89,6 +90,7 @@ export const ResearchRunSchema = z
     query: z.string(),
     status: RunStatusSchema.or(z.string()),
     thread_id: z.string().optional(),
+    parent_run_id: z.string().uuid().nullable().optional(),
     result_json: z.unknown().optional(),
     interrupt_payload: z.unknown().optional(),
     metrics_json: z.unknown().optional(),

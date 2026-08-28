@@ -122,10 +122,20 @@ export const endpoints = {
   status: () => api("/v1/status", UnknownObjectSchema),
   health: () => api("/health", UnknownObjectSchema),
   me: () => api("/v1/me", UnknownObjectSchema),
-  startResearch: (query: string, fresh = false, llm?: { provider: string; apiKey?: string; model?: string }) =>
+  startResearch: (
+    query: string,
+    fresh = false,
+    llm?: { provider: string; apiKey?: string; model?: string },
+    parentRunId?: string,
+  ) =>
     api("/v1/research", ResearchEnqueueResponseSchema, {
       method: "POST",
-      body: JSON.stringify({ query, fresh, ...(llm ? { llm } : {}) }),
+      body: JSON.stringify({
+        query,
+        fresh,
+        ...(parentRunId ? { parentRunId } : {}),
+        ...(llm ? { llm } : {}),
+      }),
     }) as Promise<ResearchEnqueueResponse>,
   getRun: (id: string) => api(`/v1/research/${id}`, ResearchRunSchema) as Promise<ResearchRun>,
   getGraph: (id: string) => api(`/v1/research/${id}/graph`, UnknownObjectSchema),

@@ -13,17 +13,33 @@ export function ByokPanel({
   value,
   onChange,
   creditsForced = false,
+  byokRequired = false,
   platformProviders,
+  submitBlockedReason,
 }: {
   value: ByokState;
   onChange: (next: ByokState) => void;
   creditsForced?: boolean;
+  byokRequired?: boolean;
   platformProviders?: Record<string, boolean>;
+  submitBlockedReason?: string;
 }) {
   const keys = visitorKeys(value);
   const pasted = visitorKeyList(value);
-  const ready = byokReady(value, creditsForced);
   const hostedAny = Object.values(platformProviders || {}).some(Boolean);
+  const ready = byokReady(value, creditsForced, { byokRequired, hostedAny });
+
+  function providerTitle(id: LlmProvider) {
+    const hasHosted = !!platformProviders?.[id];
+    const hasPasted = splitApiKeys(keys[id]).length > 0;
+    if (hasPasted) {
+      return `${PROVIDER_META[id].label}: your key will be used when billing is acknowledged.`;
+    }
+    if (hasHosted) {
+      return `${PROVIDER_META[id].label}: hosted key on this server (no paste needed unless you want your own billing).`;
+    }
+    return `${PROVIDER_META[id].label}: no hosted key — paste yours below and tick billing.`;
+  }
 
   function patch(partial: Partial<ByokState>) {
     const next = { ...value, ...partial };
@@ -49,20 +65,35 @@ export function ByokPanel({
             own keys. Kiln tries them in order for this run and never writes them to the database,
             logs, or job queue.
           </>
+        ) : byokRequired ? (
+          <>
+            <strong>Bring your own key (required).</strong> Paste a Gemini, OpenAI, or Grok key below and tick
+            the billing checkbox before Research. Keys are sent only for this run and never stored.
+          </>
+        ) : hostedAny ? (
+          <>
+            <strong>Hosted path available.</strong> Pick a provider and run — Kiln uses server keys when configured.
+            Paste your own key below to bill your provider account instead (optional; tick billing when you paste).
+          </>
         ) : (
           <>
-            <strong>Pick who to try first.</strong> Kiln uses your pasted keys, then host keys in
-            env. Paste several keys for one provider with <code>;</code> between them. If a key is
-            down or out of credits, the run continues with the next one. Keys are never stored.
+            <strong>No hosted keys on this server.</strong> Paste your API key below and tick the billing checkbox
+            before Research.
           </>
         )}
       </div>
+      {submitBlockedReason ? (
+        <p className="byok-block" role="alert">
+          {submitBlockedReason}
+        </p>
+      ) : null}
       <div className="byok-providers" role="radiogroup" aria-label="Preferred model provider">
         {(Object.keys(PROVIDER_META) as LlmProvider[]).map((id) => (
           <button
             key={id}
             type="button"
             className={`byok-choice ${value.provider === id ? "on" : ""}`}
+            title={providerTitle(id)}
             onClick={() => patch({ provider: id, apiKey: keys[id] })}
           >
             {PROVIDER_META[id].label}

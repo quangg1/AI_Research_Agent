@@ -1,14 +1,19 @@
 import { FormEvent, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { endpoints } from "../lib/api";
-import { byokReady, isCreditsExhaustedMessage, loadByok, llmPayload, type ByokState } from "../lib/byok";
+import { byokReady, canSubmitResearch, isCreditsExhaustedMessage, loadByok, llmPayload, type ByokState } from "../lib/byok";
 import { copyForNotion, downloadExportPack } from "../lib/exportMemo";
+import { dismissFirstRun, firstRunDismissed, FIRST_RUN_TEMPLATES } from "../lib/firstRun";
+import { notifyResearch, requestNotificationPermission } from "../lib/notifications";
 import { ByokPanel } from "../components/ByokPanel";
 import { ClaimCard, EvidenceGraphPanel } from "../components/EvidenceGraph";
 import { DecisionCard } from "../components/DecisionCard";
 import { EvidenceDrawer } from "../components/EvidenceDrawer";
+import { FirstRunBanner } from "../components/FirstRunBanner";
 import { MemoMarkdown, prepMemoMarkdown } from "../components/MemoMarkdown";
 import { loadReaderPrefs, MemoToc, ReaderToolbar, type ReaderPrefs } from "../components/MemoReadingChrome";
+import { ResearchThread } from "../components/ResearchThread";
 import { RunHistoryPanel } from "../components/RunHistoryPanel";
+import { SourcesPanel } from "../components/SourcesPanel";
 import { openAuthedEventStream } from "../lib/sse";
 
 const PIPELINE = ["briefing", "planner", "docs", "scholar", "search", "collector", "enrich", "retrieve", "extract", "critic", "hitl", "report"];
@@ -66,6 +71,10 @@ type Run = {
     started_at?: number;
     next?: string[];
   };
+  thread?: {
+    parent?: { id: string; query: string; status: string } | null;
+    children?: { id: string; query: string; status: string }[];
+  };
 };
 
 function unwrapInterrupt(raw: any): any {
@@ -120,10 +129,13 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
   const [byok, setByok] = useState<ByokState>(() => loadByok());
   const [creditsForced, setCreditsForced] = useState(false);
   const [platformProviders, setPlatformProviders] = useState<Record<string, boolean>>({});
+  const [byokRequired, setByokRequired] = useState(false);
+  const [showFirstRun, setShowFirstRun] = useState(() => !firstRunDismissed());
   const [readerPrefs, setReaderPrefs] = useState<ReaderPrefs>(() => loadReaderPrefs());
   const [citeOpen, setCiteOpen] = useState<number | null>(null);
   const [pinToast, setPinToast] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
+  const notifiedStatusRef = useRef<string>("");
   const [railCollapsed, setRailCollapsed] = useState(() => {
     try {
       return localStorage.getItem("kiln_rail_collapsed") === "1";
@@ -151,8 +163,10 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
         if (providers && typeof providers === "object") {
           setPlatformProviders(providers as Record<string, boolean>);
         }
+        if (d.byok_required === true) setByokRequired(true);
       })
       .catch(() => undefined);
+    void requestNotificationPermission();
   }, []);
 
   useEffect(() => {
@@ -193,6 +207,21 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
         }
         if (st === "completed" || st === "failed" || st === "cancelled" || st === "out_of_scope") {
           closeStream?.();
+        }
+        const notifyKey = `${runId}:${st}`;
+        if (
+          runId &&
+          notifyKey !== notifiedStatusRef.current &&
+          (st === "completed" || st === "awaiting_human" || st === "failed")
+        ) {
+          notifiedStatusRef.current = notifyKey;
+          if (st === "completed") {
+            notifyResearch("Research complete", "Your memo is ready to read.", runId);
+          } else if (st === "awaiting_human") {
+            notifyResearch("Review needed", "Kiln is waiting for your input on this run.", runId);
+          } else if (st === "failed") {
+            notifyResearch("Research failed", failText || "Open the run for details.", runId);
+          }
         }
       } catch (err: any) {
         if (!stop) setError(err.message || "Failed to load run");
@@ -359,13 +388,24 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
     high: evidence.filter((e) => Number(e.credibility || 0) >= 0.9).length,
   }), [evidence]);
 
-  async function startResearch(q: string, fresh = false) {
-    if (!byokReady(byok, creditsForced)) {
-      setError(
-        creditsForced
-          ? "Every configured provider ran out of credits. Paste at least one of your own API keys and confirm the warning."
-          : "Select Gemini, OpenAI, or Grok.",
-      );
+  const hostedAny = useMemo(
+    () => Object.values(platformProviders).some(Boolean),
+    [platformProviders],
+  );
+  const submitCheck = useMemo(
+    () => canSubmitResearch(byok, { creditsForced, byokRequired, hostedAny }),
+    [byok, creditsForced, byokRequired, hostedAny],
+  );
+  const submitReady = submitCheck.ok;
+  const creditsReady = useMemo(
+    () => byokReady(byok, true, { byokRequired: true, hostedAny }),
+    [byok, hostedAny],
+  );
+
+  async function startResearch(q: string, fresh = false, parentRunId?: string) {
+    const check = canSubmitResearch(byok, { creditsForced, byokRequired, hostedAny });
+    if (!check.ok) {
+      setError(check.reason || "Fix model settings before running.");
       setSearchOpen(true);
       return;
     }
@@ -374,9 +414,14 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
     setRun(null);
     setFilter("all");
     setBriefDraft({});
+    notifiedStatusRef.current = "";
     try {
-      const data = await endpoints.startResearch(q, fresh, llmPayload(byok));
+      await requestNotificationPermission();
+      const data = await endpoints.startResearch(q, fresh, llmPayload(byok), parentRunId);
       setRunId(data.id);
+      setSearchOpen(false);
+      setShowFirstRun(false);
+      dismissFirstRun();
       window.history.replaceState({}, "", `/?run=${data.id}`);
     } catch (err: any) {
       setError(err.message || String(err));
@@ -528,27 +573,30 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
   }
 
   async function askFollowup() {
-    if (!followup.trim()) return;
-    const priorDecision = String(report?.decision_rule || synthesized || "").slice(0, 800);
-    const next = [
-      `Follow-up on prior Kiln run ${runId || ""}`.trim(),
-      "",
-      `Parent question: ${query}`,
-      "",
-      `Follow-up: ${followup.trim()}`,
-      "",
-      "Keep continuity with prior findings (do not restart from zero unless contradicted):",
-      priorDecision,
-    ].join("\n");
+    const text = followup.trim();
+    if (!runId || text.length < 8) return;
+    setBusy(true);
+    setError("");
     try {
-      if (runId) localStorage.setItem(`kiln_parent_${Date.now()}`, runId);
-    } catch {
-      /* ignore */
+      await requestNotificationPermission();
+      const data = await endpoints.startResearch(text, false, llmPayload(byok), runId);
+      setRunId(data.id);
+      setSearchOpen(false);
+      notifiedStatusRef.current = "";
+      window.history.replaceState({}, "", `/?run=${data.id}`);
+      setFollowup("");
+    } catch (err: any) {
+      setError(err.message || "Follow-up failed");
+    } finally {
+      setBusy(false);
     }
-    setQuery(next);
-    setSearchOpen(true);
-    await startResearch(next);
-    setFollowup("");
+  }
+
+  function openThreadRun(id: string) {
+    setRunId(id);
+    window.history.replaceState({}, "", `/?run=${id}`);
+    setSearchOpen(false);
+    setHistoryOpen(false);
   }
 
   function openCite(n: number) {
@@ -628,6 +676,17 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
               </div>
             </section>
           )}
+          {!runId && showFirstRun && (
+            <FirstRunBanner
+              hostedAny={hostedAny}
+              byokRequired={byokRequired}
+              onPick={(text) => setQuery(text)}
+              onDismiss={() => {
+                dismissFirstRun();
+                setShowFirstRun(false);
+              }}
+            />
+          )}
           <form className="search-card" onSubmit={onSubmit}>
             <label className="sr-only" htmlFor="research-query">
               Research question
@@ -642,7 +701,9 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
               value={byok}
               onChange={setByok}
               creditsForced={creditsForced}
+              byokRequired={byokRequired}
               platformProviders={platformProviders}
+              submitBlockedReason={!submitReady ? submitCheck.reason : undefined}
             />
             <div className="search-actions">
               {runId && (
@@ -653,14 +714,14 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
               <button
                 className={`btn primary${busy ? " is-busy" : ""}`}
                 type="submit"
-                disabled={busy || query.trim().length < 8 || !byokReady(byok, creditsForced)}
+                disabled={busy || query.trim().length < 8 || !submitReady}
                 title={
                   busy
                     ? "Starting the run"
                     : query.trim().length < 8
                       ? "Type at least 8 characters, or pick an example below"
-                      : !byokReady(byok, creditsForced)
-                        ? "Paste a key and confirm before running"
+                      : !submitReady
+                        ? submitCheck.reason || "Fix model settings before running"
                         : "Start research"
                 }
               >
@@ -670,11 +731,18 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
           </form>
           {!runId && (
             <div className="suggest">
-              {examples.map((ex) => (
+              {FIRST_RUN_TEMPLATES.map((ex) => (
                 <button type="button" className="badge" key={ex.text} onClick={() => setQuery(ex.text)}>
-                  {ex.tag}: {ex.text.length > 72 ? `${ex.text.slice(0, 72)}…` : ex.text}
+                  {ex.tag}
                 </button>
               ))}
+              {examples
+                .filter((ex) => !FIRST_RUN_TEMPLATES.some((t) => t.text === ex.text))
+                .map((ex) => (
+                  <button type="button" className="badge" key={ex.text} onClick={() => setQuery(ex.text)}>
+                    {ex.tag}: {ex.text.length > 72 ? `${ex.text.slice(0, 72)}…` : ex.text}
+                  </button>
+                ))}
             </div>
           )}
         </>
@@ -827,6 +895,12 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
           )}
 
           <main className="research-stage">
+            <ResearchThread
+              parent={run?.thread?.parent}
+              children={run?.thread?.children}
+              currentRunId={runId || undefined}
+              onOpen={openThreadRun}
+            />
             {awaitingBrief && (
               <section className="panel brief-panel">
                 <div className="summary-head">
@@ -867,11 +941,11 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                     className="btn primary"
                     type="button"
                     onClick={() => resume("start", { brief: briefDraft })}
-                    disabled={busy || !byokReady(byok, creditsForced)}
+                    disabled={busy || !submitReady}
                     title={
                       busy
                         ? "Starting…"
-                        : !byokReady(byok, creditsForced)
+                        : !submitReady
                           ? creditsForced
                             ? "Paste a key above and tick the billing checkbox"
                             : "Fix provider keys above"
@@ -882,12 +956,12 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                   </button>
                   <button className="btn" type="button" onClick={() => resume("cancel")} disabled={busy}>Cancel</button>
                 </div>
-                {!byokReady(byok, creditsForced) && (
+                {!submitReady && (
                   <p className="err" role="alert">
                     Hosted credits ran out. Scroll up, paste at least one API key, tick the checkbox, then Start research.
                   </p>
                 )}
-                {byokReady(byok, creditsForced) &&
+                {submitReady &&
                   !byok.acknowledged &&
                   Object.values(byok.keys).some((k) => k.trim().length > 0) && (
                   <p className="idle" aria-live="polite">
@@ -924,9 +998,9 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                       setSearchOpen(true);
                       void resume("continue");
                     }}
-                    disabled={busy || !byokReady(byok, true)}
+                    disabled={busy || !creditsReady}
                     title={
-                      !byokReady(byok, true)
+                      !creditsReady
                         ? "Paste a key above and tick the billing checkbox"
                         : "Resume from the paused step"
                     }
@@ -943,7 +1017,7 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                     </button>
                   )}
                 </div>
-                {!byokReady(byok, true) && (
+                {!creditsReady && (
                   <p className="err" role="alert">
                     Scroll up, paste at least one API key, tick the checkbox, then Continue.
                   </p>
@@ -1033,8 +1107,8 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                     </p>
                     <textarea placeholder="Optional follow-up for the next search loop" value={notes} onChange={(e) => setNotes(e.target.value)} />
                     <div className="btn-row">
-                      <button className="btn primary" type="button" onClick={() => resume("approve")} disabled={busy || !byokReady(byok, creditsForced)}>Approve — write memo</button>
-                      <button className="btn" type="button" onClick={() => resume("revise")} disabled={busy || !canRevise || !byokReady(byok, creditsForced)}>Dig further</button>
+                      <button className="btn primary" type="button" onClick={() => resume("approve")} disabled={busy || !submitReady}>Approve — write memo</button>
+                      <button className="btn" type="button" onClick={() => resume("revise")} disabled={busy || !canRevise || !submitReady}>Dig further</button>
                     </div>
                     {!canRevise && (
                       <p className="sub">
@@ -1064,7 +1138,7 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                   </div>
                 )}
                 {bodyMd ? (
-                  <div className={`memo-layout${citeOpen != null ? " has-drawer" : ""}`}>
+                  <div className={`memo-layout${done ? " has-sources" : ""}${citeOpen != null ? " has-drawer" : ""}`}>
                     {done && (
                       <MemoToc markdown={tocSource} onJump={jumpToc} />
                     )}
@@ -1077,6 +1151,9 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                         {bodyMd}
                       </MemoMarkdown>
                     </article>
+                    {done && !!citations.length && (
+                      <SourcesPanel citations={citations} activeN={citeOpen} onSelect={openCite} />
+                    )}
                     {done && citeOpen != null && (
                       <EvidenceDrawer
                         open
@@ -1181,9 +1258,12 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                   </details>
                 )}
                 {done && (
-                  <div className="review-box">
-                    <textarea placeholder="Ask a follow-up on this memo" value={followup} onChange={(e) => setFollowup(e.target.value)} />
-                    <button className="btn primary" type="button" onClick={askFollowup} disabled={busy || followup.trim().length < 4}>Ask follow-up</button>
+                  <div className="review-box followup-box">
+                    <p className="sub">Ask a follow-up in this thread — Kiln links it to the memo above and keeps context.</p>
+                    <textarea placeholder="Ask a follow-up on this memo (at least 8 characters)" value={followup} onChange={(e) => setFollowup(e.target.value)} />
+                    <button className="btn primary" type="button" onClick={askFollowup} disabled={busy || followup.trim().length < 8 || !submitReady}>
+                      Ask follow-up
+                    </button>
                   </div>
                 )}
               </section>
@@ -1224,9 +1304,9 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                             setSearchOpen(true);
                             void resume("continue");
                           }}
-                          disabled={busy || !byokReady(byok, true)}
+                          disabled={busy || !creditsReady}
                           title={
-                            !byokReady(byok, true)
+                            !creditsReady
                               ? "Paste a key above and tick the billing checkbox first"
                               : "Resume from the paused checkpoint"
                           }

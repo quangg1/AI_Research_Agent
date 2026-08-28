@@ -436,8 +436,14 @@ a:hover { text-decoration: underline; }
   .memo-layout {
     grid-template-columns: 200px minmax(0, 1fr);
   }
+  .memo-layout.has-sources {
+    grid-template-columns: 200px minmax(0, 1fr) minmax(240px, 280px);
+  }
   .memo-layout.has-drawer {
     grid-template-columns: 180px minmax(0, 1fr) minmax(260px, 320px);
+  }
+  .memo-layout.has-sources.has-drawer {
+    grid-template-columns: 180px minmax(0, 1fr) minmax(220px, 260px) minmax(240px, 280px);
   }
 }
 
@@ -483,6 +489,180 @@ a:hover { text-decoration: underline; }
   letter-spacing: 0.02em;
 }
 .memo button.cite-btn:hover { text-decoration: underline; }
+
+.sources-panel {
+  position: sticky;
+  top: 72px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 10px;
+  background: var(--card);
+  max-height: calc(100vh - 100px);
+  overflow: auto;
+  min-width: 0;
+}
+.research-layout.reading-mode .sources-panel { top: 64px; }
+.sources-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 0 4px;
+}
+.sources-panel-head h3 {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.sources-count {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+}
+.sources-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.sources-list li { margin: 0 0 4px; }
+.sources-item {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 10px;
+  padding: 8px 6px;
+  cursor: pointer;
+  color: var(--text);
+}
+.sources-item:hover,
+.sources-item.on {
+  background: rgba(255, 255, 255, 0.04);
+}
+.sources-item.on .sources-n { color: var(--ember); }
+.sources-n {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  padding-top: 2px;
+}
+.sources-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.sources-title {
+  font-size: 12.5px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.sources-body .source-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.first-run-banner {
+  margin: 0 0 18px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--card) 88%, var(--ember) 12%);
+}
+.first-run-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.first-run-head h2 {
+  margin: 6px 0 8px;
+  font-size: 1.25rem;
+}
+.first-run-label {
+  margin: 0 0 8px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.research-thread {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.thread-label {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.thread-role {
+  display: block;
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.thread-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 6px;
+  cursor: pointer;
+  color: var(--text);
+}
+.thread-item:hover,
+.thread-item.on {
+  background: rgba(255, 255, 255, 0.04);
+}
+.thread-item.on .thread-query { color: var(--ember); }
+.thread-query {
+  display: block;
+  font-size: 13px;
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+.thread-status {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.thread-children {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.thread-item.parent {
+  border-left: 2px solid var(--ember);
+  padding-left: 10px;
+}
+
+.followup-box .sub {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.share-memo {
+  margin-top: 18px;
+}
 
 .evidence-drawer {
   position: sticky; top: 72px;

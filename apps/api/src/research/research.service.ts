@@ -46,8 +46,25 @@ export class ResearchService {
     };
   }
 
-  async enqueue(query: string, fresh = false, auth: AuthContext, llm?: LlmCredentialDto) {
+  async enqueue(
+    query: string,
+    fresh = false,
+    auth: AuthContext,
+    llm?: LlmCredentialDto,
+    parentRunId?: string,
+  ) {
     const credential = this.requireCredential(llm);
+    let effectiveQuery = query;
+    if (parentRunId) {
+      const parent = await this.requireRun(parentRunId, auth.orgId);
+      effectiveQuery = [
+        "Follow-up on prior Kiln research.",
+        "",
+        `Parent question: ${String(parent.query || "").trim()}`,
+        "",
+        `Follow-up: ${query.trim()}`,
+      ].join("\n");
+    }
     const recent = await this.repository.query<{ n: number }>(
       `SELECT count(*)::int AS n FROM research_runs
        WHERE org_id=$1 AND created_at > NOW() - INTERVAL '60 seconds'
@@ -64,13 +81,14 @@ export class ResearchService {
       throw new HttpException((err as Error).message, status);
     }
     const created = await this.repository.createRunWithOutbox(
-      query,
+      effectiveQuery,
       fresh,
       auth.orgId,
       auth.userId,
       undefined,
       credential?.provider,
       credential?.model,
+      parentRunId,
     );
     await this.billing.recordUsage(auth.orgId, auth.userId, created.id);
     this.auth.trackEvent(auth.orgId, auth.userId, "run_started", { runId: created.id });
@@ -103,7 +121,8 @@ export class ResearchService {
 
   async get(id: string, auth: AuthContext) {
     const row = await this.requireRun(id, auth.orgId);
-    return presentRun(row);
+    const thread = await this.repository.loadThreadMeta(id, auth.orgId);
+    return { ...presentRun(row), thread };
   }
 
   async evidenceGraph(id: string, auth: AuthContext) {

@@ -1,5 +1,5 @@
 import { Type } from "class-transformer";
-import { IsBoolean, IsOptional, IsString, Length, ValidateNested } from "class-validator";
+import { IsBoolean, IsOptional, IsString, IsUUID, Length, ValidateNested } from "class-validator";
 import { LlmCredentialDto } from "./llm-credential.dto";
 
 export class StartResearchDto {
@@ -10,6 +10,10 @@ export class StartResearchDto {
   @IsOptional()
   @IsBoolean()
   fresh?: boolean;
+
+  @IsOptional()
+  @IsUUID()
+  parentRunId?: string;
 
   @IsOptional()
   @ValidateNested()

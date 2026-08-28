@@ -18,6 +18,7 @@ COPY infra/postgres/migrations/001_research_lifecycle_owner.sql /app/migrations/
 COPY infra/postgres/migrations/002_knowledge_corpus.sql /app/migrations/002_knowledge_corpus.sql
 COPY infra/postgres/migrations/003_tenancy.sql /app/migrations/003_tenancy.sql
 COPY infra/postgres/migrations/004_evidence_graph.sql /app/migrations/004_evidence_graph.sql
+COPY infra/postgres/migrations/005_parent_run.sql /app/migrations/005_parent_run.sql
 
 COPY apps/agent/scripts/render-start.sh /app/render-start.sh
 RUN chmod +x /app/render-start.sh

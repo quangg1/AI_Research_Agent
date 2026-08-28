@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS research_runs (
     org_id TEXT REFERENCES organizations(id),
     created_by TEXT REFERENCES users(id),
     title TEXT,
+    parent_run_id UUID REFERENCES research_runs(id) ON DELETE SET NULL,
     archived BOOLEAN NOT NULL DEFAULT FALSE,
     deleted_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -85,6 +86,9 @@ CREATE INDEX IF NOT EXISTS research_runs_org_created_idx
 CREATE INDEX IF NOT EXISTS research_runs_org_status_idx
     ON research_runs (org_id, status)
     WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS research_runs_parent_idx
+    ON research_runs (parent_run_id, created_at DESC)
+    WHERE parent_run_id IS NOT NULL AND deleted_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS run_events (
     id BIGSERIAL PRIMARY KEY,

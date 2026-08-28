@@ -147,12 +147,47 @@ export function needsVisitorKey(state: ByokState, creditsForced: boolean) {
   return creditsForced || visitorKeyList(state).length > 0;
 }
 
-export function byokReady(state: ByokState, creditsForced: boolean) {
-  const pasted = visitorKeyList(state);
-  // Hosted path stays usable even if the user typed a key but has not
-  // acknowledged yet (keys are only sent after ack — see llmPayload).
-  if (!creditsForced) return true;
-  return state.acknowledged && pasted.length > 0;
+export function canSubmitResearch(
+  state: ByokState,
+  opts: { creditsForced: boolean; byokRequired: boolean; hostedAny: boolean },
+): { ok: boolean; reason?: string } {
+  if (opts.creditsForced) {
+    if (!state.acknowledged || visitorKeyList(state).length === 0) {
+      return { ok: false, reason: "Paste at least one API key and tick the billing checkbox to continue." };
+    }
+    return { ok: true };
+  }
+  if (opts.byokRequired) {
+    if (!state.acknowledged || visitorKeyList(state).length === 0) {
+      return {
+        ok: false,
+        reason: "This server requires your API key — paste one below and tick the billing checkbox.",
+      };
+    }
+    return { ok: true };
+  }
+  if (!state.provider) {
+    return { ok: false, reason: "Pick Gemini, OpenAI, or Grok." };
+  }
+  if (!opts.hostedAny && visitorKeyList(state).length === 0) {
+    return {
+      ok: false,
+      reason: "No hosted model keys on this server — paste your API key below.",
+    };
+  }
+  return { ok: true };
+}
+
+export function byokReady(
+  state: ByokState,
+  creditsForced: boolean,
+  opts?: { byokRequired?: boolean; hostedAny?: boolean },
+) {
+  return canSubmitResearch(state, {
+    creditsForced,
+    byokRequired: opts?.byokRequired ?? false,
+    hostedAny: opts?.hostedAny ?? true,
+  }).ok;
 }
 
 export function isCreditsExhaustedMessage(message: string) {

@@ -75,6 +75,13 @@ nano .env
 ## 6. Chạy stack
 
 ```bash
+chmod +x infra/oracle/deploy.sh
+./infra/oracle/deploy.sh
+```
+
+Hoặc thủ công:
+
+```bash
 docker compose -f docker-compose.yml -f docker-compose.oracle.yml up -d --build
 docker compose -f docker-compose.yml -f docker-compose.oracle.yml ps
 docker compose -f docker-compose.yml -f docker-compose.oracle.yml logs -f caddy web api agent
@@ -87,9 +94,8 @@ Mở `https://yourname.io.vn` — UI Research, auth dev (header mặc định `u
 ## 7. Bảo trì
 
 ```bash
-# cập nhật code
-git pull
-docker compose -f docker-compose.yml -f docker-compose.oracle.yml up -d --build
+./infra/oracle/deploy.sh
+```
 
 # backup DB (chạy trên VM)
 docker compose exec -T postgres pg_dump -U kiln kiln > backup-$(date +%Y%m%d).sql

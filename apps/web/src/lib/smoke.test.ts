@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { byokReady, llmPayload, type ByokState } from "./byok";
+import { byokReady, canSubmitResearch, llmPayload, type ByokState } from "./byok";
 import { prepMathMarkdown, prepMemoMarkdown } from "../components/MemoMarkdown";
 
 const base: ByokState = {
@@ -119,6 +119,18 @@ describe("kiln web smoke", () => {
     const ok: ByokState = { ...base, apiKey: key, keys: { ...base.keys, openai: key }, acknowledged: true };
     expect(byokReady(ok, false)).toBe(true);
     expect(llmPayload(ok)).toMatchObject({ provider: "openai" });
+  });
+
+  it("blocks research when BYOK is required without a pasted key", () => {
+    expect(canSubmitResearch(base, { creditsForced: false, byokRequired: true, hostedAny: true }).ok).toBe(false);
+    const key = "sk-" + "x".repeat(40);
+    const ok: ByokState = { ...base, apiKey: key, keys: { ...base.keys, openai: key }, acknowledged: true, provider: "openai" };
+    expect(canSubmitResearch(ok, { creditsForced: false, byokRequired: true, hostedAny: true }).ok).toBe(true);
+  });
+
+  it("allows hosted path without pasted key when BYOK is not required", () => {
+    expect(canSubmitResearch(base, { creditsForced: false, byokRequired: false, hostedAny: true }).ok).toBe(true);
+    expect(canSubmitResearch(base, { creditsForced: false, byokRequired: false, hostedAny: false }).ok).toBe(false);
   });
 
   it("builds export pack with ledger", async () => {

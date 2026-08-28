@@ -43,6 +43,7 @@ export class ResearchRepository {
     title?: string,
     llmProvider?: ExecuteJobPayload["llmProvider"],
     llmModel?: string,
+    parentRunId?: string,
   ) {
     const runId = randomUUID();
     const executionId = randomUUID();
@@ -59,9 +60,9 @@ export class ResearchRepository {
     return this.transaction(async (client) => {
       await client.query(
         `INSERT INTO research_runs
-           (id, query, status, thread_id, execution_version, execution_id, org_id, created_by, title)
-         VALUES ($1::uuid, $2, 'queued', $1::text, 1, $3::uuid, $4, $5, $6)`,
-        [runId, query, executionId, orgId, userId, title || query.slice(0, 120)],
+           (id, query, status, thread_id, execution_version, execution_id, org_id, created_by, title, parent_run_id)
+         VALUES ($1::uuid, $2, 'queued', $1::text, 1, $3::uuid, $4, $5, $6, $7::uuid)`,
+        [runId, query, executionId, orgId, userId, title || query.slice(0, 120), parentRunId || null],
       );
       await client.query(
         `INSERT INTO run_events
@@ -111,6 +112,38 @@ export class ResearchRepository {
     } catch {
       return null;
     }
+  }
+
+  async loadThreadMeta(runId: string, orgId: string) {
+    const parent = await this.pool.query<{
+      id: string;
+      query: string;
+      status: string;
+      parent_run_id: string | null;
+    }>(
+      `SELECT p.id, p.query, p.status, p.parent_run_id
+       FROM research_runs c
+       JOIN research_runs p ON p.id = c.parent_run_id
+       WHERE c.id = $1 AND c.org_id = $2 AND p.org_id = $2 AND c.deleted_at IS NULL`,
+      [runId, orgId],
+    );
+    const children = await this.pool.query<{
+      id: string;
+      query: string;
+      status: string;
+      created_at: Date;
+    }>(
+      `SELECT id, query, status, created_at
+       FROM research_runs
+       WHERE parent_run_id = $1 AND org_id = $2 AND deleted_at IS NULL
+       ORDER BY created_at ASC
+       LIMIT 20`,
+      [runId, orgId],
+    );
+    return {
+      parent: parent.rows[0] || null,
+      children: children.rows,
+    };
   }
 
   async getRunForOrg(runId: string, orgId: string) {

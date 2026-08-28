@@ -40,7 +40,20 @@ Invoke-WebRequest "$host/ready" -Headers @{"X-Agent-Key"=$key}
 
 Last command must return **200**. If it does but the app still fails, redeploy kiln-api.
 
-## Database migrations
+## Agent cold start on free tier
+
+kiln-agent is slower to wake than kiln-api because it runs Postgres migrations (first boot
+only), LangGraph checkpointer setup, and optional corpus ingest. Recent builds:
+
+- `/health` returns **200 immediately** while init continues (`boot: starting` → `ready`)
+- `/ready` stays **503** until the graph/checkpointer is up — use this before research
+- Set `QDRANT_URL` empty on Render (Qdrant is skipped; no 30s localhost timeout)
+- After the first successful deploy, restarts skip SQL migrate when `research_runs` exists
+
+If the agent looks stuck: open `/health` (should be 200 quickly), then `/ready` with
+`X-Agent-Key` until `ok: true`. Upgrade the agent plan for always-on if cold starts are
+unacceptable.
+
 
 Agent Docker image applies `infra/postgres/init.sql` + `migrations/*.sql` on every start
 (`apps/agent/scripts/render-start.sh`). Safe to re-run (`IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`).

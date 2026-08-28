@@ -164,12 +164,13 @@ def ingest_corpus() -> int:
             )
 
     try:
-        _index_qdrant(
-            docs,
-            generation,
-            model,
-            force_rebuild=bool(previous_models and previous_models != {model}),
-        )
+        if settings.qdrant_enabled():
+            _index_qdrant(
+                docs,
+                generation,
+                model,
+                force_rebuild=bool(previous_models and previous_models != {model}),
+            )
         with transaction() as conn:
             conn.execute(
                 """
@@ -307,6 +308,8 @@ def corpus_stats() -> dict:
 
 
 def search_qdrant(query: str, k: int = 8) -> list[dict] | None:
+    if not settings.qdrant_enabled():
+        return None
     try:
         from qdrant_client import QdrantClient
         from qdrant_client.http import models as qm

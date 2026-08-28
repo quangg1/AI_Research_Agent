@@ -29,6 +29,8 @@ _graph = None
 _pool: AsyncConnectionPool | None = None
 _checkpointer = None
 _tracing = False
+_init_task: asyncio.Task | None = None
+_init_error: BaseException | None = None
 _request_adapter = TypeAdapter(ExecutionRequest)
 
 PIPELINE = [
@@ -81,12 +83,6 @@ async def init_runtime() -> None:
     _tracing = enable_langsmith()
     try:
         await asyncio.to_thread(postgres.open_pool)
-        await asyncio.to_thread(ingest_corpus)
-        if settings.knowledge_import_path:
-            imported = await asyncio.to_thread(
-                knowledge.import_jsonl, settings.knowledge_import_path
-            )
-            event("knowledge_import", records=imported)
 
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
@@ -106,6 +102,17 @@ async def init_runtime() -> None:
         await _checkpointer.setup()
         _graph = build_graph(_checkpointer)
         event("checkpointer", backend="postgres")
+
+        # Corpus ingest is useful but must not block Render liveness / health checks.
+        try:
+            await asyncio.to_thread(ingest_corpus)
+        except Exception as exc:
+            logger.warning("corpus_ingest_deferred %s", exc)
+        if settings.knowledge_import_path:
+            imported = await asyncio.to_thread(
+                knowledge.import_jsonl, settings.knowledge_import_path
+            )
+            event("knowledge_import", records=imported)
     except Exception:
         await _close_pools()
         _checkpointer = None
@@ -135,6 +142,64 @@ async def close_runtime() -> None:
     await _close_pools()
     _graph = None
     _checkpointer = None
+
+
+def init_complete() -> bool:
+    return _graph is not None and _checkpointer is not None
+
+
+def init_error() -> str | None:
+    if _init_error is None:
+        return None
+    return str(_init_error)
+
+
+async def _run_init() -> None:
+    global _init_error
+    try:
+        await init_runtime()
+    except BaseException as exc:
+        _init_error = exc
+        logger.exception("runtime_init_failed")
+        raise
+
+
+def start_background_init() -> asyncio.Task:
+    global _init_task, _init_error
+    _init_error = None
+    _init_task = asyncio.create_task(_run_init())
+    return _init_task
+
+
+async def wait_for_init(timeout_s: float | None = None) -> bool:
+    task = _init_task
+    if task is None:
+        return init_complete()
+    if task.done():
+        return init_complete()
+    if timeout_s is None:
+        await task
+        return init_complete()
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=timeout_s)
+    except asyncio.TimeoutError:
+        return False
+    return init_complete()
+
+
+async def shutdown_background_init() -> None:
+    global _init_task
+    task = _init_task
+    _init_task = None
+    if task is None or task.done():
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except BaseException:
+        pass
 
 
 def tracing_on() -> bool:
@@ -731,6 +796,15 @@ async def list_checkpoints(thread_id: str) -> list[dict[str, Any]]:
 
 
 async def readiness() -> dict[str, Any]:
+    if not init_complete():
+        err = init_error()
+        return {
+            "ok": False,
+            "boot": "starting" if err is None else "failed",
+            "checkpointer": False,
+            "db": False,
+            **({"error": err[:500]} if err else {}),
+        }
     checkpointer_ok = _checkpointer is not None and _graph is not None
     sync_db = await asyncio.to_thread(postgres.health)
     async_db = False

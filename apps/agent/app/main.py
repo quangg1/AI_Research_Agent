@@ -15,6 +15,7 @@ from app.contracts import ExecutionRequest
 from app.domain import knowledge
 from app.llm.client import llm
 from app.llm.providers import PROVIDERS
+from app.observability.logging import logger
 from app.retrieval.store import corpus_stats, ingest_corpus
 from app.scenarios.llm_cost import compare_serving, rag_tradeoff
 
@@ -23,10 +24,12 @@ from app.scenarios.llm_cost import compare_serving, rag_tradeoff
 async def lifespan(_app: FastAPI):
     if settings.app_env.lower() in {"production", "prod"} and not settings.agent_key():
         raise RuntimeError("AGENT_SHARED_KEY is required in production")
-    await runtime.init_runtime()
+    logger.info("agent_boot_start background_init=true")
+    runtime.start_background_init()
     try:
         yield
     finally:
+        await runtime.shutdown_background_init()
         await runtime.close_runtime()
 
 
@@ -35,22 +38,25 @@ app = FastAPI(title="Kiln Agent", version="0.2.0", lifespan=lifespan)
 
 @app.middleware("http")
 async def require_agent_key(request: Request, call_next):
-    if request.url.path != "/health":
-        expected = settings.agent_key()
-        if expected and not hmac.compare_digest(request.headers.get("X-Agent-Key", "").strip(), expected):
-            return JSONResponse({"detail": "invalid agent credentials"}, status_code=401)
-        if settings.app_env.lower() in {"production", "prod"} and not expected:
-            return JSONResponse({"detail": "agent authentication is not configured"}, status_code=503)
+    if request.url.path == "/health":
+        return await call_next(request)
+    expected = settings.agent_key()
+    if expected and not hmac.compare_digest(request.headers.get("X-Agent-Key", "").strip(), expected):
+        return JSONResponse({"detail": "invalid agent credentials"}, status_code=401)
+    if settings.app_env.lower() in {"production", "prod"} and not expected:
+        return JSONResponse({"detail": "agent authentication is not configured"}, status_code=503)
     return await call_next(request)
 
 
 @app.get("/health")
 async def health():
-    # Liveness for orchestrators (Render). Deep deps live on /ready.
+    # Liveness for Render — must respond before LangGraph/corpus init finishes.
+    boot = "ready" if runtime.init_complete() else ("failed" if runtime.init_error() else "starting")
     return JSONResponse(
         {
-            "ok": True,
+            "ok": boot != "failed",
             "service": "kiln-agent",
+            "boot": boot,
             "llm_mode": "platform" if not settings.require_byok() else "byok",
             "byok_required": settings.require_byok(),
             "providers": list(PROVIDERS),
@@ -77,6 +83,10 @@ async def ready():
 
 @app.post("/internal/v1/executions/stream")
 async def execute(req: ExecutionRequest):
+    if not runtime.init_complete():
+        if not await runtime.wait_for_init(timeout_s=120):
+            detail = runtime.init_error() or "Agent is still starting — retry shortly"
+            raise HTTPException(503, detail)
     async def ndjson():
         async for frame in runtime.stream_execution(req):
             yield json.dumps(frame, ensure_ascii=False, default=str) + "\n"
@@ -101,6 +111,8 @@ async def legacy_resume(thread_id: str):
 
 @app.get("/v1/runs/{thread_id}")
 async def get_run(thread_id: str):
+    if not runtime.init_complete() and not await runtime.wait_for_init(timeout_s=30):
+        raise HTTPException(503, runtime.init_error() or "Agent is still starting")
     run = await runtime.load_run(thread_id)
     if not run:
         raise HTTPException(404, "run not found")
@@ -115,6 +127,8 @@ async def events(thread_id: str):
 
 @app.get("/v1/runs/{thread_id}/checkpoints")
 async def checkpoints(thread_id: str):
+    if not runtime.init_complete() and not await runtime.wait_for_init(timeout_s=30):
+        raise HTTPException(503, runtime.init_error() or "Agent is still starting")
     if not await runtime.load_run(thread_id):
         raise HTTPException(404, "run not found")
     return {"thread_id": thread_id, "checkpoints": await runtime.list_checkpoints(thread_id)}

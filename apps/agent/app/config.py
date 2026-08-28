@@ -84,5 +84,8 @@ class Settings(BaseSettings):
     def agent_key(self) -> str:
         return (self.agent_shared_key or "").strip()
 
+    def qdrant_enabled(self) -> bool:
+        return bool(self.qdrant_url.strip())
+
 
 settings = Settings()

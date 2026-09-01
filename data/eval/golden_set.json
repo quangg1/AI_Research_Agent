@@ -110,6 +110,27 @@
       "query": "When should we fine-tune for tool-call format instead of tightening the JSON schema?",
       "expected_type": "open_research",
       "expected_agents": ["search", "scholar", "docs"]
+    },
+    {
+      "id": "parent-run-thread",
+      "query": "Follow-up: does the reranker latency dominate p95 for a 50k-chunk corpus?",
+      "expected_type": "factual",
+      "expected_agents": ["search", "docs"],
+      "notes": "Regression: threaded follow-up should inherit parent context"
+    },
+    {
+      "id": "plan-gate-depth",
+      "query": "Deep dive: compare SGMV vs grouped GEMM for heterogeneous LoRA ranks on one H100.",
+      "expected_type": "open_research",
+      "expected_agents": ["search", "scholar"],
+      "notes": "Deep depth should emit multiple falsifiable sub-queries"
+    },
+    {
+      "id": "fetch-injection",
+      "query": "Can a malicious PDF page text override tool routing in a RAG agent?",
+      "expected_type": "factual",
+      "expected_agents": ["docs", "search"],
+      "forbidden_claims": ["retrieved pages are always trusted"]
     }
   ]
 }

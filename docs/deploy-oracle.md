@@ -111,4 +111,72 @@ Máy Oracle **không tắt**; Always Free không sleep như Render Free.
 | Agent 401 | `AGENT_SHARED_KEY` trống hoặc khác `API_TO_AGENT_KEY` |
 | Caddy không lấy cert | DNS chưa về IP VM, hoặc port 80 bị chặn |
 | Out of memory | `docker stats`; 12 GB thường đủ, đừng chạy thêm VM trên cùng tenancy |
-| Shape A1 hết hàng | Thử region/AD khác, hoặc tạo lại sau |
+| Shape A1 hết hàng | Thử Pay-As-You-Go upgrade, retry 2h–6h sáng VN, hoặc [script retry qua đêm](#8-script-retry-qua-đêm-chỉ-ad-1) |
+
+## 8. Script retry qua đêm (chỉ AD-1)
+
+Khi Console báo **Out of capacity** liên tục, chạy script trên **Windows** để OCI CLI thử tạo VM mỗi ~90 giây.
+
+### 8.1 Cài OCI CLI + API key (một lần)
+
+1. **PowerShell** (chọn một cách):
+
+   **Cách A — pip** (nếu đã có Python/conda, như `(base)`):
+   ```powershell
+   pip install oci-cli
+   oci --version
+   ```
+
+   **Cách B — MSI** (không cần Python): tải [Windows-Server-Installer.msi](https://github.com/oracle/oci-cli/releases/latest) từ GitHub → chạy installer → mở terminal mới → `oci --version`.
+
+   **Cách C — script Oracle:**
+   ```powershell
+   Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+   iex ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.ps1'))
+   ```
+2. Oracle Console → **Profile (góc phải)** → **My profile** → **API keys** → **Add API key** → **Generate API key pair** → tải `.pem` về (vd. `C:\Users\ADMIN\.oci\oci_api_key.pem`).
+3. Cấu hình CLI:
+   ```powershell
+   oci setup config
+   ```
+   - Region: region bạn đang dùng (vd. `ap-tokyo-1`)
+   - User OCID / Tenancy OCID: copy từ Console
+   - Key file: đường dẫn file `.pem` vừa tải
+
+4. SSH key (nếu chưa có):
+   ```powershell
+   ssh-keygen -t ed25519 -f $env:USERPROFILE\.ssh\id_ed25519
+   ```
+
+### 8.2 Lấy OCID (subnet, image, AD)
+
+Trong repo, folder `infra/oracle`:
+
+```powershell
+cd D:\AI_Research_Agent\infra\oracle
+copy retry.env.example retry.env
+notepad retry.env
+```
+
+Điền `COMPARTMENT_OCID` (Tenancy OCID hoặc compartment root), rồi:
+
+```powershell
+$env:COMPARTMENT_OCID = "ocid1.compartment.oc1..your..."
+.\collect-ocids.ps1 -CompartmentOcid $env:COMPARTMENT_OCID
+```
+
+Copy **AVAILABILITY_DOMAIN**, **SUBNET_OCID** (public subnet), **IMAGE_OCID** (Ubuntu 22.04/24.04 ARM) vào `retry.env`.
+
+### 8.3 Chạy qua đêm
+
+```powershell
+cd D:\AI_Research_Agent\infra\oracle
+.\retry-launch.ps1
+```
+
+- Log ghi vào `infra/oracle/retry-YYYYMMDD-HHMMSS.log`
+- **Ctrl+C** để dừng
+- Thành công → Console có instance **RUNNING** + Public IP → SSH và làm tiếp mục 4–7
+
+**Lưu ý:** Subnet trong `retry.env` phải là **public** (prohibit public IP = false). Nên **Upgrade Pay-As-You-Go** trước khi chạy script — tỷ lệ thành công cao hơn.
+

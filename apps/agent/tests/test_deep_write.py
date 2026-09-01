@@ -32,7 +32,7 @@ def _dimension(n: int) -> dict:
 def test_word_targets_match_deep_research_length():
     assert word_target("quick") >= 900
     assert word_target("standard") >= 1800
-    assert word_target("deep") >= 3000
+    assert word_target("deep") >= 5000
 
 
 def test_research_notes_keep_more_than_two_sources_per_dimension():
@@ -117,7 +117,7 @@ def test_writer_prompt_asks_for_long_markdown_not_json():
     outline = prompt.split("Required sections")[-1]
     assert "## Research plan" not in outline
     assert "## Key findings" in outline or "Key findings" in prompt
-    assert "no ASCII" in writer_system() or "no ASCII architecture diagrams" in writer_system()
+    assert "no ASCII" in writer_system() or "no ASCII art" in writer_system()
     assert writer_system().startswith("You are Kiln's research writer")
     assert "NEVER prefix" in writer_system() or "[DIRECT]" in writer_system()
     assert "Label load-bearing" not in prompt
@@ -125,15 +125,16 @@ def test_writer_prompt_asks_for_long_markdown_not_json():
 
 
 def test_llm_report_uses_markdown_body_when_writer_returns_prose():
+    filler = " ".join(["detail"] * 420)
     memo = (
         "# RAG without a vector DB\n\n"
-        "## Executive summary\n\nLexical retrieval can be enough. [1]\n\n"
-        "## Scope\n\nApplied LLM retrieval stacks.\n\n"
-        "## Analysis\n\n### Retrieval substrate\n\nBM25 remains competitive. [1]\n\n"
-        "## Findings\n\nDo not require a vector database by default. [1]\n\n"
+        "## At a glance\n\nLexical retrieval can suffice for many corpora.\n\n"
+        f"## Executive summary\n\nLexical retrieval can be enough. {filler} [1]\n\n"
+        "## Key findings\n\n1. BM25 remains competitive on structured corpora. [1]\n\n"
+        "## Detailed analysis\n\n### Retrieval substrate\n\nBM25 remains competitive. [1]\n\n"
+        "### Vector stores\n\nNot mandatory for every RAG stack. [1]\n\n"
         "## Decision rule\n\nStart with hybrid BM25. [1]\n\n"
-        "## Limitations\n\n- Corpus is English-only.\n\n"
-        "## References\n\n[1] example\n"
+        "## References\n\n[1] example.\n"
     )
 
     class Stub:
@@ -141,6 +142,7 @@ def test_llm_report_uses_markdown_body_when_writer_returns_prose():
         mode = "gemini"
         last_tokens = 100
         last_error = None
+        _slots = [object()]
 
         def generate(self, prompt, system="", max_tokens=2048, json_mode=False):
             if "CLEAN applied-AI research notes" in system or "compress applied-AI research notes" in system:

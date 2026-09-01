@@ -15,10 +15,11 @@ def docs_node(state: ResearchState) -> dict:
     if budget_from(state).remaining_calls <= 0:
         return {"evidence": [], "traces": [{"node": "docs", "skipped": "budget"}]}
 
-    docs = get_store_documents()
+    org_id = state.get("org_id") or None
+    docs = get_store_documents(org_id)
     if not docs:
-        ingest_corpus()
-        docs = get_store_documents() or load_corpus()
+        ingest_corpus(org_id)
+        docs = get_store_documents(org_id) or load_corpus(org_id=org_id) or load_corpus()
     if not docs:
         event("docs", n=0, skipped="no_corpus")
         return {"evidence": [], "traces": [{"node": "docs", "skipped": "no_corpus"}]}
@@ -28,7 +29,7 @@ def docs_node(state: ResearchState) -> dict:
     questions = _questions(state, AgentName.DOCS)
     hits: list[dict] = []
     for question in questions[:2]:
-        qdrant_hits = search_qdrant(question, k=6)
+        qdrant_hits = search_qdrant(question, k=6, org_id=org_id)
         if qdrant_hits:
             hits.extend(qdrant_hits)
         hits.extend(hybrid_retrieve(question, docs, k=6))

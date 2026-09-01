@@ -15,6 +15,7 @@ from app.retrieval.hybrid import hybrid_retrieve
 
 _MEMORY: list[dict] = []
 _POINT_NAMESPACE = uuid.UUID("8939b197-8c31-49d7-a526-f4971e493a65")
+GLOBAL_SCOPE = "__global__"
 
 
 def _memory_backend() -> bool:
@@ -30,6 +31,10 @@ def _embedding_model() -> str:
         if settings.google_api_key
         else f"hash:{DIM}"
     )
+
+
+def _org_scope(org_id: str | None) -> str:
+    return org_id or GLOBAL_SCOPE
 
 
 def _doc_from_row(row: dict) -> dict:
@@ -48,32 +53,43 @@ def _doc_from_row(row: dict) -> dict:
         "source_agent": "docs",
         "generation": int(row.get("generation") or 1),
         "embedding_model": row.get("embedding_model") or "",
+        "org_id": row.get("org_id"),
     }
 
 
-def get_store_documents() -> list[dict]:
+def get_store_documents(org_id: str | None = None) -> list[dict]:
     global _MEMORY
     if _memory_backend():
         if not _MEMORY:
-            _MEMORY = load_corpus()
-        return [dict(doc) for doc in _MEMORY]
+            _MEMORY = _prepare_documents(None)
+        docs = [dict(doc) for doc in _MEMORY]
+        if org_id:
+            return [d for d in docs if not d.get("org_id") or d.get("org_id") == org_id]
+        return docs
+    params: list[str | None] = []
+    org_clause = ""
+    if org_id:
+        org_clause = "AND (org_id IS NULL OR org_id = %s)"
+        params.append(org_id)
     with transaction() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT id, url, title, host, tier, snippet, source_path, quote,
-                   credibility, published, source_kind, generation, embedding_model
+                   credibility, published, source_kind, generation, embedding_model, org_id
             FROM corpus_documents
-            WHERE active = TRUE
+            WHERE active = TRUE {org_clause}
             ORDER BY source_path, chunk_index, id
-            """
+            """,
+            tuple(params),
         ).fetchall()
     return [_doc_from_row(row) for row in rows]
 
 
-def _prepare_documents() -> list[dict]:
+def _prepare_documents(org_id: str | None) -> list[dict]:
     counters: dict[str, int] = defaultdict(int)
     prepared: list[dict] = []
-    for raw in load_corpus():
+    raw_docs = load_corpus(org_id=org_id) if org_id else load_corpus()
+    for raw in raw_docs:
         doc = dict(raw)
         source_path = str(doc.get("path") or "")
         chunk_index = counters[source_path]
@@ -83,15 +99,19 @@ def _prepare_documents() -> list[dict]:
         doc["chunk_index"] = chunk_index
         doc["content_hash"] = hashlib.sha256(snippet.encode("utf-8")).hexdigest()
         doc["host"] = urlparse(str(doc.get("url") or "")).hostname or "corpus"
+        doc["org_id"] = org_id
         prepared.append(doc)
     return prepared
 
 
-def ingest_corpus() -> int:
+def ingest_corpus(org_id: str | None = None) -> int:
     global _MEMORY
-    docs = _prepare_documents()
+    docs = _prepare_documents(org_id)
     if _memory_backend():
-        _MEMORY = docs
+        if org_id:
+            _MEMORY = [d for d in _MEMORY if d.get("org_id") != org_id] + docs
+        else:
+            _MEMORY = docs
         return len(docs)
 
     model = _embedding_model()
@@ -106,24 +126,36 @@ def ingest_corpus() -> int:
                 """
                 SELECT DISTINCT embedding_model FROM corpus_documents
                 WHERE active = TRUE AND embedding_model IS NOT NULL
-                """
+                  AND org_id IS NOT DISTINCT FROM %s
+                """,
+                (org_id,),
             ).fetchall()
         }
         generation = int(
             conn.execute(
-                "SELECT COALESCE(MAX(generation), 0) + 1 AS value FROM corpus_documents"
+                """
+                SELECT COALESCE(MAX(generation), 0) + 1 AS value
+                FROM corpus_documents
+                WHERE org_id IS NOT DISTINCT FROM %s
+                """,
+                (org_id,),
             ).fetchone()["value"]
         )
         conn.execute(
             """
             INSERT INTO corpus_sync_runs
-                (id, status, generation, source_hash, documents_seen, embedding_model)
-            VALUES (%s, 'running', %s, %s, %s, %s)
+                (id, status, generation, source_hash, documents_seen, embedding_model, org_id)
+            VALUES (%s, 'running', %s, %s, %s, %s, %s)
             """,
-            (sync_id, generation, source_hash, len(docs), model),
+            (sync_id, generation, source_hash, len(docs), model, org_id),
         )
         conn.execute(
-            "UPDATE corpus_documents SET active = FALSE, updated_at = NOW() WHERE active = TRUE"
+            """
+            UPDATE corpus_documents
+            SET active = FALSE, updated_at = NOW()
+            WHERE active = TRUE AND org_id IS NOT DISTINCT FROM %s
+            """,
+            (org_id,),
         )
         for doc in docs:
             conn.execute(
@@ -131,9 +163,9 @@ def ingest_corpus() -> int:
                 INSERT INTO corpus_documents
                     (id, url, title, host, tier, snippet, source_path, chunk_index,
                      content_hash, quote, credibility, published, source_kind,
-                     generation, active, embedding_model, indexed_at, updated_at)
+                     generation, active, embedding_model, indexed_at, updated_at, org_id)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, TRUE, %s, NULL, NOW())
+                        %s, TRUE, %s, NULL, NOW(), %s)
                 ON CONFLICT (id) DO UPDATE SET
                     url = EXCLUDED.url, title = EXCLUDED.title, host = EXCLUDED.host,
                     tier = EXCLUDED.tier, snippet = EXCLUDED.snippet,
@@ -142,7 +174,7 @@ def ingest_corpus() -> int:
                     credibility = EXCLUDED.credibility, published = EXCLUDED.published,
                     source_kind = EXCLUDED.source_kind, generation = EXCLUDED.generation,
                     active = TRUE, embedding_model = EXCLUDED.embedding_model,
-                    indexed_at = NULL, updated_at = NOW()
+                    indexed_at = NULL, updated_at = NOW(), org_id = EXCLUDED.org_id
                 """,
                 (
                     doc["id"],
@@ -160,15 +192,17 @@ def ingest_corpus() -> int:
                     doc.get("source_kind"),
                     generation,
                     model,
+                    org_id,
                 ),
             )
 
     try:
-        if settings.qdrant_enabled():
+        if settings.qdrant_enabled() and docs:
             _index_qdrant(
                 docs,
                 generation,
                 model,
+                org_id,
                 force_rebuild=bool(previous_models and previous_models != {model}),
             )
         with transaction() as conn:
@@ -176,8 +210,9 @@ def ingest_corpus() -> int:
                 """
                 UPDATE corpus_documents SET indexed_at = NOW(), updated_at = NOW()
                 WHERE active = TRUE AND generation = %s AND embedding_model = %s
+                  AND org_id IS NOT DISTINCT FROM %s
                 """,
-                (generation, model),
+                (generation, model, org_id),
             )
             conn.execute(
                 """
@@ -187,7 +222,12 @@ def ingest_corpus() -> int:
                 """,
                 (len(docs), sync_id),
             )
-        logger.info("qdrant_ingested %s generation=%s", len(docs), generation)
+        logger.info(
+            "qdrant_ingested org=%s count=%s generation=%s",
+            org_id or GLOBAL_SCOPE,
+            len(docs),
+            generation,
+        )
     except Exception as exc:
         with transaction() as conn:
             conn.execute(
@@ -197,7 +237,7 @@ def ingest_corpus() -> int:
                 """,
                 (str(exc)[:2000], sync_id),
             )
-        logger.warning("qdrant_unavailable using_postgres %s", exc)
+        logger.warning("qdrant_unavailable using_postgres org=%s %s", org_id, exc)
     return len(docs)
 
 
@@ -205,12 +245,14 @@ def _index_qdrant(
     docs: list[dict],
     generation: int,
     model: str,
+    org_id: str | None,
     *,
     force_rebuild: bool = False,
 ) -> None:
     from qdrant_client import QdrantClient
     from qdrant_client.http import models as qm
 
+    org_scope = _org_scope(org_id)
     client = QdrantClient(url=settings.qdrant_url, timeout=30)
     vectors = (
         embed_texts([str(doc.get("snippet") or "") for doc in docs]) if docs else []
@@ -244,12 +286,13 @@ def _index_qdrant(
                         "document_id": doc["id"],
                         "generation": generation,
                         "embedding_model": model,
+                        "org_scope": org_scope,
                     },
                 )
                 for index, doc in enumerate(docs)
             ],
         )
-    stale = _qdrant_point_ids(client) - set(point_ids)
+    stale = _qdrant_point_ids(client, org_scope) - set(point_ids)
     if stale:
         client.delete(
             collection_name=settings.qdrant_collection,
@@ -258,12 +301,22 @@ def _index_qdrant(
         )
 
 
-def _qdrant_point_ids(client) -> set[str]:
+def _qdrant_point_ids(client, org_scope: str) -> set[str]:
+    from qdrant_client.http import models as qm
+
     ids: set[str] = set()
     offset = None
     while True:
         points, offset = client.scroll(
             collection_name=settings.qdrant_collection,
+            scroll_filter=qm.Filter(
+                must=[
+                    qm.FieldCondition(
+                        key="org_scope",
+                        match=qm.MatchValue(value=org_scope),
+                    )
+                ]
+            ),
             limit=256,
             offset=offset,
             with_payload=False,
@@ -274,15 +327,33 @@ def _qdrant_point_ids(client) -> set[str]:
             return ids
 
 
-def corpus_available() -> bool:
-    return len(get_store_documents()) > 0
+def _latest_generation(org_id: str | None) -> dict | None:
+    with transaction() as conn:
+        return conn.execute(
+            """
+            SELECT generation, embedding_model FROM corpus_documents
+            WHERE active = TRUE AND org_id IS NOT DISTINCT FROM %s
+            ORDER BY generation DESC LIMIT 1
+            """,
+            (org_id,),
+        ).fetchone()
 
 
-def corpus_stats() -> dict:
-    docs = get_store_documents()
+def corpus_available(org_id: str | None = None) -> bool:
+    return len(get_store_documents(org_id)) > 0
+
+
+def corpus_stats(org_id: str | None = None) -> dict:
+    docs = get_store_documents(org_id)
     hosts: dict[str, int] = {}
     tiers: dict[str, int] = {}
+    org_docs = 0
+    global_docs = 0
     for d in docs:
+        if d.get("org_id"):
+            org_docs += 1
+        else:
+            global_docs += 1
         url = d.get("url") or ""
         host = url.split("/")[2] if url.startswith("http") else "corpus"
         hosts[host] = hosts.get(host, 0) + 1
@@ -290,6 +361,9 @@ def corpus_stats() -> dict:
         tiers[tier] = tiers.get(tier, 0) + 1
     return {
         "documents": len(docs),
+        "org_documents": org_docs,
+        "global_documents": global_docs,
+        "org_id": org_id,
         "hosts": hosts,
         "tiers": tiers,
         "items": [
@@ -301,13 +375,15 @@ def corpus_stats() -> dict:
                 "credibility": d.get("credibility"),
                 "published": d.get("published"),
                 "snippet": (d.get("snippet") or "")[:220],
+                "org_id": d.get("org_id"),
+                "source_kind": d.get("source_kind"),
             }
             for d in docs
         ],
     }
 
 
-def search_qdrant(query: str, k: int = 8) -> list[dict] | None:
+def search_qdrant(query: str, k: int = 8, org_id: str | None = None) -> list[dict] | None:
     if not settings.qdrant_enabled():
         return None
     try:
@@ -316,47 +392,76 @@ def search_qdrant(query: str, k: int = 8) -> list[dict] | None:
 
         client = QdrantClient(url=settings.qdrant_url, timeout=5)
         vector = embed_texts([query])[0]
-        with transaction() as conn:
-            current = conn.execute(
-                """
-                SELECT generation, embedding_model FROM corpus_documents
-                WHERE active = TRUE ORDER BY generation DESC LIMIT 1
-                """
-            ).fetchone()
-        if not current:
+        scopes: list[qm.Filter] = []
+        global_gen = _latest_generation(None)
+        if global_gen:
+            scopes.append(
+                qm.Filter(
+                    must=[
+                        qm.FieldCondition(
+                            key="org_scope",
+                            match=qm.MatchValue(value=GLOBAL_SCOPE),
+                        ),
+                        qm.FieldCondition(
+                            key="generation",
+                            match=qm.MatchValue(value=global_gen["generation"]),
+                        ),
+                        qm.FieldCondition(
+                            key="embedding_model",
+                            match=qm.MatchValue(value=global_gen["embedding_model"]),
+                        ),
+                    ]
+                )
+            )
+        if org_id:
+            org_gen = _latest_generation(org_id)
+            if org_gen:
+                scopes.append(
+                    qm.Filter(
+                        must=[
+                            qm.FieldCondition(
+                                key="org_scope",
+                                match=qm.MatchValue(value=org_id),
+                            ),
+                            qm.FieldCondition(
+                                key="generation",
+                                match=qm.MatchValue(value=org_gen["generation"]),
+                            ),
+                            qm.FieldCondition(
+                                key="embedding_model",
+                                match=qm.MatchValue(value=org_gen["embedding_model"]),
+                            ),
+                        ]
+                    )
+                )
+        if not scopes:
             return []
         hits = client.search(
             collection_name=settings.qdrant_collection,
             query_vector=vector,
-            query_filter=qm.Filter(
-                must=[
-                    qm.FieldCondition(
-                        key="generation",
-                        match=qm.MatchValue(value=current["generation"]),
-                    ),
-                    qm.FieldCondition(
-                        key="embedding_model",
-                        match=qm.MatchValue(value=current["embedding_model"]),
-                    ),
-                ]
-            ),
+            query_filter=qm.Filter(should=scopes),
             limit=k,
         )
         document_ids = [hit.payload.get("document_id") for hit in hits if hit.payload]
         if not document_ids:
             return []
+        params: list[str | None] = [document_ids]
+        org_clause = ""
+        if org_id:
+            org_clause = "AND (org_id IS NULL OR org_id = %s)"
+            params.append(org_id)
         with transaction() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT id, url, title, host, tier, snippet, source_path, quote,
-                       credibility, published, source_kind, generation, embedding_model
+                       credibility, published, source_kind, generation, embedding_model, org_id
                 FROM corpus_documents
-                WHERE active = TRUE AND id = ANY(%s)
+                WHERE active = TRUE AND id = ANY(%s) {org_clause}
                 """,
-                (document_ids,),
+                tuple(params),
             ).fetchall()
         by_id = {row["id"]: _doc_from_row(row) for row in rows}
         return [by_id[doc_id] for doc_id in document_ids if doc_id in by_id]
     except Exception as exc:
-        logger.warning("qdrant_search_failed using_postgres %s", exc)
-        return hybrid_retrieve(query, get_store_documents(), k=k)
+        logger.warning("qdrant_search_failed using_postgres org=%s %s", org_id, exc)
+        return hybrid_retrieve(query, get_store_documents(org_id), k=k)

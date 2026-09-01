@@ -21,6 +21,10 @@ export class ResumeResearchDto {
   brief?: Record<string, unknown>;
 
   @IsOptional()
+  @IsObject()
+  plan?: Record<string, unknown>;
+
+  @IsOptional()
   @ValidateNested()
   @Type(() => LlmCredentialDto)
   llm?: LlmCredentialDto;

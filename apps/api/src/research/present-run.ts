@@ -11,13 +11,14 @@ export function presentRun<T extends RunRow>(row: T, extra: Record<string, unkno
   const waiting = row.status === "awaiting_human" || row.status === "awaiting_brief";
   const persisted = row.interrupt_payload;
   const interruptPeek = (persisted ?? snapshot.interrupt) as { type?: string } | null | undefined;
-  const gateNode = snapshot.current_node === "hitl" || snapshot.current_node === "briefing";
+  const GATE_TYPES = new Set(["research_brief", "plan_review", "memo_draft", "approve_report", "credits_exhausted"]);
+  const GATE_NODES = new Set(["hitl", "briefing", "plan_gate", "memo_gate"]);
+  const gateNode = GATE_NODES.has(String(snapshot.current_node || ""));
+  const gateType = GATE_TYPES.has(String(interruptPeek?.type || ""));
   const creditsGate = interruptPeek?.type === "credits_exhausted";
-  // Only resurrect a gate when the row is still waiting, or a heartbeat flipped a
-  // true parked HITL/credits pause to "running" while interrupt_payload is still set.
-  // After Start/Approve/Continue, resume clears interrupt_payload — never revive from snapshot alone.
+  // Resurrect parked gates when heartbeat left status=running but interrupt_payload persists.
   const showWaiting =
-    waiting || (row.status === "running" && Boolean(persisted) && (gateNode || creditsGate));
+    waiting || (row.status === "running" && Boolean(persisted) && (gateNode || gateType || creditsGate));
   if (showWaiting) {
     const interrupt = persisted ?? snapshot.interrupt;
     if (interrupt) snapshot.interrupt = interrupt;

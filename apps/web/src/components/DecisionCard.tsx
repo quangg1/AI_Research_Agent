@@ -4,22 +4,33 @@ export function DecisionCard({
   decisionRule,
   confidence,
   confidenceLabel,
+  confidenceBreakdown,
   flipCondition,
   executiveSummary,
+  atAGlance,
 }: {
   decisionRule?: string;
   confidence?: number | null;
   confidenceLabel?: string;
+  confidenceBreakdown?: Record<string, unknown> | null;
   flipCondition?: string;
   executiveSummary?: string;
+  atAGlance?: string;
 }) {
-  const recommendation = pickRecommendation(executiveSummary, decisionRule);
+  const recommendation =
+    (atAGlance && atAGlance.trim()) || pickRecommendation(executiveSummary, decisionRule);
   if (!recommendation && confidence == null) return null;
 
   const flip =
     (flipCondition && !looksLikeDiagram(flipCondition) && flipCondition.trim()) ||
     extractFlip(decisionRule || "") ||
     "New measured evidence undercuts the lead recommendation, or your latency/cost envelope forbids the gated path.";
+
+  const breakdown = confidenceBreakdown as {
+    must_answer_pct?: number;
+    critical_pct?: number;
+    primary_sources_pct?: number;
+  } | null;
 
   return (
     <section className="decision-card" aria-label="Decision summary">
@@ -32,6 +43,13 @@ export function DecisionCard({
             {confidence != null ? `${confidence}/100` : "—"}
             {confidenceLabel ? ` · ${confidenceLabel}` : ""}
           </strong>
+          {breakdown && (breakdown.must_answer_pct != null || breakdown.primary_sources_pct != null) && (
+            <p className="decision-breakdown">
+              Must-answer {breakdown.must_answer_pct ?? "—"}% · Primary sources{" "}
+              {breakdown.primary_sources_pct ?? "—"}%
+              {breakdown.critical_pct != null ? ` · Critical ${breakdown.critical_pct}%` : ""}
+            </p>
+          )}
         </div>
         <div className="decision-revisit">
           <span className="decision-label">Revisit if</span>

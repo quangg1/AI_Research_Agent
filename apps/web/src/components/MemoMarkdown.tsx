@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import "katex/dist/katex.min.css";
 import { slugifyHeading } from "../lib/memoToc";
+import { MermaidBlock } from "./MermaidBlock";
 
 export type MemoCite = { n?: number; url?: string; title?: string; quote?: string; tier?: string; host?: string };
 
@@ -159,9 +160,18 @@ export function fenceAsciiDiagrams(text: string): string {
   const isDiagramLine = (line: string) => {
     const t = line.trim();
     if (!t || /^```/.test(t)) return false;
+    // Markdown horizontal rules — not monospace diagrams
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(t)) return false;
+    // Rendered KaTeX / MathML must stay in markdown — code fences show raw HTML.
+    if (/class="katex"|katex-block|<math[\s>]/i.test(line)) return false;
+    // List bullets are prose, not monospace diagrams.
+    if (/^([*+-]|\d+\.)\s/.test(t)) return false;
     if (/^[▼▲►◄─│┌┐└┘├┤┬┴┼+|=\-]{3,}/.test(t)) return true;
-    if ((t.match(/→|->|-->|—>/g) || []).length >= 1 && /\[[^\]]{2,}\]/.test(t)) return true;
-    if ((t.match(/→|->|-->/g) || []).length >= 2) return true;
+    // Arrow + bracket heuristics only on plain text (skip HTML attribute brackets).
+    if (!/[<]/.test(t)) {
+      if ((t.match(/→|->|-->|—>/g) || []).length >= 1 && /\[[^\]]{2,}\]/.test(t)) return true;
+      if ((t.match(/→|->|-->/g) || []).length >= 2) return true;
+    }
     // Bracket node on its own (flowchart), not bare citations like [12]
     if (/^\[[^\]]*[A-Za-z][^\]]*\]\s*$/.test(t) && !/^\[\d+(?:\s*,\s*\d+)*\]$/.test(t)) return true;
     return false;
@@ -232,7 +242,14 @@ export function prepMemoMarkdown(text: string, opts?: { stripTitle?: string }) {
   return out;
 }
 
-const CITE_RE = /\[(\d+(?:\s*,\s*\d+)*)\]/g;
+const CITE_RE =
+  /\[(\d+(?:\s+(?:peer|primary|repo|specialist|vendor|news|industry))?(?:\s*,\s*\d+(?:\s+(?:peer|primary|repo|specialist|vendor|news|industry))?)*)\]/gi;
+
+function parseCiteToken(tok: string): { n: number; tier?: string } | null {
+  const m = tok.trim().match(/^(\d+)(?:\s+(peer|primary|repo|specialist|vendor|news|industry))?$/i);
+  if (!m) return null;
+  return { n: Number(m[1]), tier: m[2]?.toLowerCase() };
+}
 
 function citeMeta(n: number, cites?: MemoCite[]) {
   return cites?.find((c) => Number(c.n) === n);
@@ -249,24 +266,25 @@ function renderCites(
   const re = new RegExp(CITE_RE.source, "g");
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) parts.push(text.slice(last, m.index));
-    const nums = m[1].split(/\s*,\s*/).map((x) => Number(x));
+    const tokens = m[1].split(/\s*,\s*/).map(parseCiteToken).filter(Boolean) as { n: number; tier?: string }[];
     parts.push(
       <span className="cite-group" key={`c-${m.index}-${m[1]}`}>
-        {nums.map((n, i) => {
+        {tokens.map(({ n, tier }, i) => {
           const hit = citeMeta(n, cites);
+          const label = tier ? `[${n} ${tier}]` : `[${n}]`;
           if (onCiteClick) {
             return (
               <button
                 key={`${n}-${i}`}
                 type="button"
                 className="cite cite-btn"
-                title={hit?.title || `Source [${n}]`}
+                title={hit?.title || `Source [${n}]${tier ? ` (${tier})` : ""}`}
                 onClick={(e) => {
                   e.preventDefault();
                   onCiteClick(n);
                 }}
               >
-                [{n}]
+                {label}
               </button>
             );
           }
@@ -277,9 +295,9 @@ function renderCites(
               href={hit?.url || `#ref-${n}`}
               target={hit?.url ? "_blank" : undefined}
               rel="noreferrer"
-              title={hit?.title || `Source [${n}]`}
+              title={hit?.title || `Source [${n}]${tier ? ` (${tier})` : ""}`}
             >
-              [{n}]
+              {label}
             </a>
           );
         })}
@@ -360,6 +378,28 @@ export function MemoMarkdown({
             </div>
           ),
           hr: () => <hr className="memo-rule" />,
+          code: ({ className, children, ...props }) => {
+            const lang = /language-(\w+)/.exec(className || "")?.[1];
+            const text = String(children).replace(/\n$/, "");
+            if (lang === "mermaid") {
+              return <MermaidBlock code={text} />;
+            }
+            if (className) {
+              return (
+                <code className={className} {...props}>
+                  {children}
+                </code>
+              );
+            }
+            return <code {...props}>{children}</code>;
+          },
+          pre: ({ children, ...props }) => {
+            const child = Children.only(children) as ReactElement<{ className?: string }>;
+            if (isValidElement(child) && String(child.props?.className || "").includes("language-mermaid")) {
+              return <>{children}</>;
+            }
+            return <pre {...props}>{children}</pre>;
+          },
           a: ({ href, children: c }) => (
             <a href={href} target={href?.startsWith("http") ? "_blank" : undefined} rel="noreferrer">
               {c}

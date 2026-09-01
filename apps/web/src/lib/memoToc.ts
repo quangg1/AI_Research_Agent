@@ -8,7 +8,7 @@ export function extractMemoToc(markdown: string): MemoHeading[] {
     const m = /^(#{2,3})\s+(.+?)\s*$/.exec(line);
     if (!m) continue;
     const level = m[1].length as 2 | 3;
-    const text = m[2].replace(/\[(\d+)\]/g, "").trim();
+    const text = m[2].replace(/\[\d+(?:\s+(?:peer|primary|repo|specialist|vendor|news|industry))?\]/gi, "").trim();
     if (!text || text.length > 120) continue;
     let slug = text
       .toLowerCase()

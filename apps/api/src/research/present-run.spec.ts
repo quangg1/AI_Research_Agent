@@ -104,4 +104,25 @@ describe("presentRun", () => {
       interrupt: { type: "credits_exhausted" },
     });
   });
+
+  test("keeps the plan gate when a heartbeat flipped status to running", () => {
+    const presented = presentRun({
+      id: "run-9",
+      status: "running",
+      result_json: {
+        status: "running",
+        current_node: "plan_gate",
+        hint: "Review agent plan",
+      },
+      interrupt_payload: {
+        type: "plan_review",
+        sub_queries: [{ agent: "search", question: "LoRA batching latency" }],
+      },
+    });
+    expect(presented.status).toBe("awaiting_human");
+    expect(presented.agent).toMatchObject({
+      status: "awaiting_human",
+      interrupt: { type: "plan_review" },
+    });
+  });
 });

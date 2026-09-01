@@ -22,7 +22,9 @@ def chunk_text(text: str, size: int = 900, overlap: int = 120) -> list[str]:
     return [c for c in chunks if c.strip()]
 
 
-def load_corpus(corpus_dir: str | None = None) -> list[dict]:
+def load_corpus(corpus_dir: str | None = None, *, org_id: str | None = None) -> list[dict]:
+    if org_id:
+        return _load_from_root(_org_corpus_root(org_id), org_id=org_id)
     candidates = [
         Path(corpus_dir) if corpus_dir else None,
         Path(settings.corpus_dir),
@@ -32,10 +34,29 @@ def load_corpus(corpus_dir: str | None = None) -> list[dict]:
         Path(__file__).resolve().parents[3] / "data" / "corpus",
     ]
     root = next((p for p in candidates if p and p.exists()), Path("data/corpus"))
+    return _load_from_root(root, org_id=None)
+
+
+def org_corpus_root(org_id: str) -> Path:
+    return _org_corpus_root(org_id)
+
+
+def _org_corpus_root(org_id: str) -> Path:
+    candidates = [
+        Path(settings.corpus_dir) / "orgs" / org_id,
+        Path("/app/data/corpus/orgs") / org_id,
+        Path("data/corpus/orgs") / org_id,
+        Path(__file__).resolve().parents[3] / "data" / "corpus" / "orgs" / org_id,
+    ]
+    return next((p for p in candidates if p.parent.parent.exists() or p.exists()), candidates[0])
+
+
+def _load_from_root(root: Path, *, org_id: str | None) -> list[dict]:
     docs: list[dict] = []
     if not root.exists():
         return docs
-    for path in sorted(root.glob("*.md")):
+    id_prefix = f"org_{org_id}_" if org_id else "doc_"
+    for path in sorted(root.rglob("*.md")):
         raw = path.read_text(encoding="utf-8")
         meta = _parse_header(raw)
         body = _body_without_header(raw)
@@ -45,12 +66,11 @@ def load_corpus(corpus_dir: str | None = None) -> list[dict]:
             doc_id = hashlib.sha1(f"{path.name}:{chunk_i}".encode()).hexdigest()[:12]
             url = meta.get("url") or f"corpus://{path.name}"
             tier, score = credibility_score(url, meta.get("published", ""), _tier(meta.get("credibility")))
-            # These files are Kiln notes that *point at* a URL. They are not the vendor page.
             tier = SourceTier.SPECIALIST_RESEARCH
             score = min(float(score), 0.68)
             docs.append(
                 {
-                    "id": f"doc_{doc_id}",
+                    "id": f"{id_prefix}{doc_id}",
                     "title": meta.get("title") or path.stem,
                     "url": url,
                     "snippet": chunk[:1200],
@@ -60,7 +80,7 @@ def load_corpus(corpus_dir: str | None = None) -> list[dict]:
                     "credibility": score,
                     "published": meta.get("published", ""),
                     "path": str(path),
-                    "source_kind": "corpus_note",
+                    "source_kind": "corpus_note" if not org_id else "org_upload",
                 }
             )
     return docs

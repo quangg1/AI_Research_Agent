@@ -4,6 +4,7 @@ import {
   SignedIn,
   SignedOut,
   SignInButton,
+  SignUpButton,
   UserButton,
   OrganizationSwitcher,
   useAuth,
@@ -35,6 +36,37 @@ function ClerkBridge({ children }: { children: React.ReactNode }) {
     if (organization?.id) localStorage.setItem("kiln_org_id", organization.id);
   }, [organization?.id]);
   return <>{children}</>;
+}
+
+function ClerkGate({ children }: { children: React.ReactNode }) {
+  if (authMode !== "clerk" || !clerkKey) return <>{children}</>;
+  return (
+    <>
+      <SignedOut>
+        <section className="hero auth-gate">
+          <div className="hero-kicker">Workspace access</div>
+          <h1>Sign in to continue</h1>
+          <p>
+            Create an account or pick your organization workspace to run research on your private corpus and saved
+            history.
+          </p>
+          <div className="btn-row">
+            <SignInButton mode="modal">
+              <button className="btn primary" type="button">
+                Sign in
+              </button>
+            </SignInButton>
+            <SignUpButton mode="modal">
+              <button className="btn" type="button">
+                Sign up
+              </button>
+            </SignUpButton>
+          </div>
+        </section>
+      </SignedOut>
+      <SignedIn>{children}</SignedIn>
+    </>
+  );
 }
 
 function AppInner() {
@@ -86,21 +118,15 @@ function AppInner() {
 
   return (
     <Shell path={route} go={go} llmMode={statusInfo.llm_mode} tracing={statusInfo.tracing} healthOk={healthOk}>
-      {authMode === "clerk" && (
+      {authMode === "clerk" && clerkKey && (
         <div className="auth-bar">
-          <SignedOut>
-            <SignInButton mode="modal">
-              <button className="btn primary" type="button">
-                Sign in
-              </button>
-            </SignInButton>
-          </SignedOut>
           <SignedIn>
             <OrganizationSwitcher hidePersonal afterSelectOrganizationUrl="/" />
             <UserButton />
           </SignedIn>
         </div>
       )}
+      <ClerkGate>
       {!consent && (
         <div className="consent-banner" role="dialog" aria-label="Privacy notice">
           <p>
@@ -138,6 +164,7 @@ function AppInner() {
           </button>
         </section>
       )}
+      </ClerkGate>
     </Shell>
   );
 }

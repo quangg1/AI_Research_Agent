@@ -17,6 +17,7 @@ from pydantic import TypeAdapter
 from app.config import settings
 from app.contracts import ExecutionFrame, ExecutionRequest
 from app.domain import knowledge
+from app.domain.research_depth import configure_budget_pools
 from app.domain.schema import Budget
 from app.graph.builder import build_graph, build_test_graph
 from app.llm.client import CreditsExhaustedError, LLMClient, bind_llm, enable_langsmith, get_llm, llm, reset_llm
@@ -36,6 +37,7 @@ _request_adapter = TypeAdapter(ExecutionRequest)
 PIPELINE = [
     "briefing",
     "planner",
+    "plan_gate",
     "docs",
     "scholar",
     "search",
@@ -46,10 +48,12 @@ PIPELINE = [
     "critic",
     "hitl",
     "report",
+    "memo_gate",
 ]
 NODE_HINTS = {
     "briefing": "Drafting an editable research plan",
     "planner": "Calling your model to decompose the question — this can take a couple of minutes",
+    "plan_gate": "Review agent plan before searching",
     "docs": "Reading primary docs and framework pages",
     "scholar": "Pulling systems papers",
     "search": "Searching current web sources",
@@ -60,10 +64,12 @@ NODE_HINTS = {
     "critic": "Checking conflicts before the memo",
     "hitl": "Waiting for your review",
     "report": "Writing the memo — your model stays on this step until the draft is done",
+    "memo_gate": "Review memo draft before publishing",
 }
 NODE_ETA_S = {
     "briefing": 8,
     "planner": 90,
+    "plan_gate": 6,
     "docs": 8,
     "scholar": 8,
     "search": 12,
@@ -74,6 +80,7 @@ NODE_ETA_S = {
     "critic": 45,
     "hitl": 0,
     "report": 120,
+    "memo_gate": 8,
 }
 _TERMINAL = {"completed", "cancelled", "out_of_scope"}
 
@@ -213,11 +220,14 @@ def graph():
 
 
 def new_budget() -> Budget:
-    return Budget(
-        max_tool_calls=settings.max_tool_calls,
+    from app.config import settings
+
+    max_iter = settings.showcase_max_iterations if settings.showcase_mode else max(settings.max_iterations, 6)
+    budget = Budget(
         max_tokens=settings.max_input_tokens,
-        max_iterations=settings.max_iterations,
+        max_iterations=max_iter,
     )
+    return configure_budget_pools(budget, "deep")
 
 
 def _advisory_key(run_id: str) -> int:
@@ -428,6 +438,8 @@ async def _stream_locked(req) -> AsyncIterator[dict[str, Any]]:
                 "query": req.query,
                 "thread_id": run_id,
                 "last_execution_id": execution_id,
+                "org_id": getattr(req, "org_id", None) or None,
+                "user_id": getattr(req, "user_id", None) or None,
                 "evidence": [],
                 "traces": [],
                 "budget": new_budget().model_dump(mode="json"),
@@ -853,6 +865,10 @@ def _next_node_after_resume(run: dict[str, Any], decision: dict[str, Any]) -> st
     action = (decision or {}).get("action") or "start"
     if interrupt.get("type") == "research_brief":
         return "briefing" if action == "cancel" else "planner"
+    if interrupt.get("type") == "plan_review":
+        return "plan_gate" if action == "cancel" else "search"
+    if interrupt.get("type") == "memo_draft":
+        return "critic" if action == "revise_critic" else "memo_gate"
     if action == "revise":
         return "planner"
     return "report"
@@ -879,6 +895,24 @@ def _annotate(run: dict[str, Any]) -> dict[str, Any]:
         current = "hitl"
     elif "briefing" in nxt or (status == "awaiting_human" and (out.get("interrupt") or {}).get("type") == "research_brief"):
         current = "briefing"
+    elif "plan_gate" in nxt or (status == "awaiting_human" and (out.get("interrupt") or {}).get("type") == "plan_review"):
+        current = "plan_gate"
+    elif "memo_gate" in nxt or (status == "awaiting_human" and (out.get("interrupt") or {}).get("type") == "memo_draft"):
+        current = "memo_gate"
+    elif any(n in nxt for n in ("search", "scholar", "docs", "collector", "enrich", "retrieve", "extract")):
+        rt = _research_trace(values, traces)
+        active = rt.get("active_agent") or ""
+        if active in PIPELINE:
+            current = active
+        else:
+            for name in ("search", "scholar", "docs", "collector", "enrich", "retrieve", "extract"):
+                if name in nxt:
+                    current = name
+                    break
+    elif current in {"plan_gate", "planner"} and traces:
+        last = traces[-1].get("node")
+        if last in PIPELINE and last not in {"plan_gate", "planner", "briefing"}:
+            current = last
     elif status == "awaiting_human" and (out.get("interrupt") or {}).get("type") == "credits_exhausted":
         # Stay on the node that was running when credits ran out.
         current = nxt[0] if nxt else (traces[-1].get("node") if traces else current) or "planner"
@@ -888,6 +922,10 @@ def _annotate(run: dict[str, Any]) -> dict[str, Any]:
             itype = interrupt.get("type")
             if itype == "research_brief":
                 current = "briefing"
+            elif itype == "plan_review":
+                current = "plan_gate"
+            elif itype == "memo_draft":
+                current = "memo_gate"
             elif itype == "credits_exhausted":
                 current = nxt[0] if nxt else "planner"
             else:
@@ -921,7 +959,22 @@ def _annotate(run: dict[str, Any]) -> dict[str, Any]:
     else:
         out["hint"] = NODE_HINTS.get(current, "Working…")
     out["eta_s"] = int(NODE_ETA_S.get(current, 15) + remaining * 0.65)
+    out["research_trace"] = _research_trace(values, traces)
     return out
+
+
+def _research_trace(values: dict[str, Any], traces: list[dict[str, Any]]) -> dict[str, Any]:
+    recent = [t for t in traces if isinstance(t, dict)][-12:]
+    last = recent[-1] if recent else {}
+    tiers = [t.get("source_tier") for t in recent if t.get("source_tier")]
+    return {
+        "active_sub_query": last.get("active_sub_query") or last.get("question"),
+        "active_agent": last.get("active_agent") or last.get("node"),
+        "source_tier": last.get("source_tier") or (tiers[-1] if tiers else None),
+        "recent": recent,
+        "total_nodes": len(traces),
+        "status": values.get("status"),
+    }
 
 
 def _interrupt_from_exc(exc: GraphInterrupt) -> Any:

@@ -191,6 +191,8 @@ class Claim(BaseModel):
 
 class CriticVerdict(BaseModel):
     status: str = "insufficient"  # sufficient | insufficient | contradicted
+    gate_reason: str = ""  # sufficient | insufficient_coverage | insufficient_budget | contradicted
+    coverage_gate: dict = Field(default_factory=dict)
     reasons: list[str] = Field(default_factory=list)
     followup_queries: list[SubQuery] = Field(default_factory=list)
     claimed_unsupported: list[str] = Field(default_factory=list)
@@ -201,15 +203,31 @@ class CriticVerdict(BaseModel):
 
 class Budget(BaseModel):
     max_tool_calls: int = 24
+    max_retrieval_calls: int = 28
+    max_enrich_calls: int = 20
     max_tokens: int = 80_000
     max_iterations: int = 5
     used_tool_calls: int = 0
+    used_retrieval_calls: int = 0
+    used_enrich_calls: int = 0
     used_tokens: int = 0
     iterations: int = 0
 
+    def sync_totals(self) -> None:
+        self.used_tool_calls = self.used_retrieval_calls + self.used_enrich_calls
+
+    @property
+    def remaining_retrieval_calls(self) -> int:
+        return max(0, self.max_retrieval_calls - self.used_retrieval_calls)
+
+    @property
+    def remaining_enrich_calls(self) -> int:
+        return max(0, self.max_enrich_calls - self.used_enrich_calls)
+
     @property
     def remaining_calls(self) -> int:
-        return max(0, self.max_tool_calls - self.used_tool_calls)
+        """Search/scholar/planner loops use the retrieval pool."""
+        return self.remaining_retrieval_calls
 
     @property
     def remaining_tokens(self) -> int:
@@ -222,7 +240,7 @@ class Budget(BaseModel):
     @property
     def exhausted(self) -> bool:
         return (
-            self.remaining_calls <= 0
+            (self.remaining_retrieval_calls <= 0 and self.remaining_enrich_calls <= 0)
             or self.remaining_tokens <= 0
             or self.remaining_iterations <= 0
         )
@@ -250,7 +268,7 @@ class ResearchBrief(BaseModel):
     sources_priority: list[str] = Field(default_factory=list)
     out_of_scope: list[str] = Field(default_factory=list)
     deliverable: str = "Cited decision memo with claims, quotes, and contradictions"
-    depth: str = "standard"  # quick | standard | deep
+    depth: str = "deep"  # quick | standard | deep (pipeline forces deep)
     assumptions: list[str] = Field(default_factory=list)
     hypotheses: list[str] = Field(default_factory=list)
     subquestions: list[str] = Field(default_factory=list)
@@ -277,4 +295,5 @@ class Report(BaseModel):
     method_notes: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
     decision_rule: str = ""
+    at_a_glance: str = ""
     metrics: dict = Field(default_factory=dict)

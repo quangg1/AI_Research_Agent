@@ -219,30 +219,51 @@ class LLMClient:
         self._dead.add(self._slot_index)
 
     def _advance(self) -> bool:
-        self._mark_dead()
+        return self._failover(set(), permanent=True)
+
+    def _failover(self, tried: set[int], *, permanent: bool) -> bool:
+        """Rotate to the next configured key. Tries every slot before giving up."""
+        if permanent:
+            self._mark_dead()
+        if not self._slots:
+            return False
+        tried.add(self._slot_index)
         from_name = self.provider or self.mode
-        nxt = self._slot_index + 1
-        while nxt < len(self._slots):
-            if nxt in self._dead:
-                nxt += 1
+        for step in range(1, len(self._slots) + 1):
+            nxt = (self._slot_index + step) % len(self._slots)
+            if nxt in tried or nxt in self._dead:
                 continue
             slot = self._slots[nxt]
             self._slot_index = nxt
-            nxt += 1
             logger.warning(
-                "llm_failover from=%s to=%s slot=%s/%s",
+                "llm_failover from=%s to=%s slot=%s/%s permanent=%s",
                 from_name,
                 slot.provider,
                 self._slot_index + 1,
                 len(self._slots),
+                permanent,
             )
             self._activate(slot)
             if self.available:
                 return True
             logger.warning("llm_slot_unavailable provider=%s", slot.provider)
-            self._mark_dead()
+            if permanent:
+                self._mark_dead()
+            tried.add(nxt)
             from_name = slot.provider
         return False
+
+    def _raise_slots_exhausted(
+        self, exc: SlotFailed | None = None, *, saw_credits: bool = False
+    ) -> None:
+        tried = list(self._tried or ([exc.provider] if exc else [self.provider or self.mode]))
+        provider = (exc.provider if exc else None) or self.provider or self.mode or "gemini"
+        raise CreditsExhaustedError(
+            provider,
+            self.source,
+            tried=tried,
+            fallback_failed=bool(saw_credits and exc and not exc.credits),
+        ) from exc
 
     def generate(
         self, prompt: str, system: str = "", max_tokens: int = 2048, json_mode: bool = False
@@ -269,9 +290,10 @@ class LLMClient:
         self.last_error = None
         self.last_call_ok = False
         saw_credits = False
-        # Skip keys that already failed earlier in this run.
+        tried: set[int] = set()
+        # Skip keys that already failed permanently earlier in this run.
         while self._slot_index in self._dead or not self.available:
-            if not self._advance():
+            if not self._failover(tried, permanent=True):
                 break
         while True:
             try:
@@ -280,17 +302,19 @@ class LLMClient:
                 if getattr(self, "_http", None):
                     return self._generate_chat(prompt, system, max_tokens, json_mode)
                 self.last_error = "no_llm_client"
-                if self._advance():
+                if self._failover(tried, permanent=True):
                     continue
-                if saw_credits:
-                    raise CreditsExhaustedError(
-                        self.provider or "gemini",
-                        self.source,
-                        tried=list(self._tried),
-                    )
+                if self._slots:
+                    self._raise_slots_exhausted()
                 return ""
             except SlotFailed as exc:
                 saw_credits = saw_credits or exc.credits
+                permanent = exc.credits or exc.reason in {
+                    "dead_key",
+                    "empty_response",
+                    "generate_failed",
+                    "credits",
+                }
                 logger.warning(
                     "llm_slot_failed provider=%s credits=%s reason=%s slot=%s/%s",
                     exc.provider,
@@ -299,25 +323,19 @@ class LLMClient:
                     self._slot_index + 1,
                     len(self._slots),
                 )
-                if self._advance():
+                if self._failover(tried, permanent=permanent):
                     continue
-                tried = list(self._tried or [exc.provider])
-                if saw_credits or exc.credits:
-                    raise CreditsExhaustedError(
-                        exc.provider,
-                        exc.source,
-                        tried=tried,
-                        fallback_failed=bool(saw_credits and not exc.credits),
-                    ) from exc
+                if self._slots:
+                    self._raise_slots_exhausted(exc, saw_credits=saw_credits)
                 return ""
             except CreditsExhaustedError as exc:
-                if self._advance():
+                if self._failover(tried, permanent=True):
                     continue
-                tried = list(self._tried or [exc.provider])
+                tried_providers = list(self._tried or [exc.provider])
                 raise CreditsExhaustedError(
                     exc.provider,
                     exc.source,
-                    tried=tried,
+                    tried=tried_providers,
                     fallback_failed=exc.fallback_failed,
                 ) from exc
 

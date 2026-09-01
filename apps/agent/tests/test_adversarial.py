@@ -4,6 +4,7 @@ from app.domain.adversarial import (
     extract_quantitative_rows,
     falsification_queries,
     normalize_kind,
+    numeric_evidence_score,
     overclaim_reasons,
     publication_status,
     quality_band,
@@ -44,6 +45,32 @@ def test_quality_band_does_not_promote_arxiv_to_s():
     assert quality_band("peer_reviewed") == "A"
     assert quality_band("official_regulation") == "S"
     assert quality_band("news_analysis") == "C"
+
+
+def test_numeric_evidence_score_prefers_benchmark_snippets():
+    survey = {
+        "title": "A survey of LLM agents",
+        "snippet": "This paper reviews orchestration patterns without new experiments.",
+    }
+    bench = {
+        "title": "SWE-bench evaluation",
+        "snippet": "Our agent achieves 62.4% on SWE-bench Verified with 120 ms latency.",
+    }
+    assert numeric_evidence_score(bench) > numeric_evidence_score(survey)
+
+
+def test_numeric_rank_weight_prefers_analytical_for_architecture_query():
+    from app.domain.adversarial import numeric_evidence_score, numeric_rank_weight, retrieval_rank_score
+
+    q = "Which architecture should we choose for multi-tenant LoRA serving and why?"
+    assert numeric_rank_weight(q) < numeric_rank_weight("SWE-bench accuracy latency benchmark numbers")
+    ev_survey = {"title": "Survey of serving", "snippet": "trade-offs between batching strategies"}
+    ev_bench = {
+        "title": "Benchmark",
+        "snippet": "achieves 62.4% on SWE-bench with 120 ms latency",
+    }
+    assert retrieval_rank_score(ev_bench, q) > retrieval_rank_score(ev_survey, q) * 0.5
+    assert numeric_evidence_score(ev_bench) > numeric_evidence_score(ev_survey)
 
 
 def test_extracts_percentages_without_inventing():

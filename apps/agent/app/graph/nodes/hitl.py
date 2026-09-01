@@ -16,14 +16,18 @@ REVISE_MAX_TOOL_CALLS_CAP = 40
 
 def hitl_node(state: ResearchState) -> dict:
     retrieved = state.get("retrieved") or state.get("evidence") or []
+    critic = state.get("critic") or {}
     payload = pythonize(
         {
             "type": "approve_report",
             "query": state.get("query"),
             "query_type": state.get("query_type"),
             "plan": state.get("plan"),
-            "critic": state.get("critic"),
+            "critic": critic,
             "budget": state.get("budget"),
+            "coverage_gate": critic.get("coverage_gate") or {},
+            "coverage_slots": (critic.get("coverage") or {}).get("slots") or [],
+            "gate_message": (critic.get("coverage_gate") or {}).get("message") or "",
             "llm_mode": state.get("llm_mode"),
         }
     )

@@ -9,6 +9,8 @@ import {
 import { InjectQueue } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
 import { randomBytes, randomUUID } from "crypto";
+import { mkdir, writeFile } from "fs/promises";
+import { join } from "path";
 import type { Response } from "express";
 import { AgentExecutionClient } from "./agent-execution.client";
 import { ResumeResearchDto } from "./dto/resume-research.dto";
@@ -21,6 +23,13 @@ import type { AuthContext } from "../auth/auth.types";
 import { isOrgAdmin } from "../auth/auth.types";
 import { AuthService } from "../auth/auth.service";
 import { BillingService } from "../billing/billing.service";
+
+export type CorpusUploadFile = {
+  buffer: Buffer;
+  originalname: string;
+  mimetype: string;
+  size: number;
+};
 
 @Injectable()
 export class ResearchService {
@@ -104,6 +113,7 @@ export class ResearchService {
       notes: body.notes || "",
       extra_questions: body.extra_questions || [],
       brief: body.brief || {},
+      plan: body.plan || {},
     };
     if (body.action === "approve" || body.action === "start") {
       this.auth.trackEvent(auth.orgId, auth.userId, "brief_approved", { runId: id });
@@ -313,40 +323,111 @@ export class ResearchService {
     return { id, archived };
   }
 
-  async corpus() {
+  async corpus(auth: AuthContext) {
     const result = await this.repository.query(
       `SELECT * FROM corpus_documents WHERE active=TRUE
+       AND (org_id IS NULL OR org_id = $1)
        ORDER BY indexed_at DESC NULLS LAST, fetched_at DESC`,
+      [auth.orgId],
+    );
+    const uploads = await this.repository.query(
+      `SELECT id, original_name, filename, size_bytes, status, created_at
+       FROM corpus_uploads WHERE org_id=$1 ORDER BY created_at DESC LIMIT 50`,
+      [auth.orgId],
     );
     const hosts: Record<string, number> = {};
     const tiers: Record<string, number> = {};
+    let orgDocuments = 0;
+    let globalDocuments = 0;
     for (const row of result.rows) {
+      if (row.org_id) orgDocuments += 1;
+      else globalDocuments += 1;
       if (row.host) hosts[String(row.host)] = (hosts[String(row.host)] || 0) + 1;
       if (row.tier) tiers[String(row.tier)] = (tiers[String(row.tier)] || 0) + 1;
     }
-    return { documents: result.rows.length, items: result.rows, hosts, tiers };
+    return {
+      documents: result.rows.length,
+      org_documents: orgDocuments,
+      global_documents: globalDocuments,
+      org_id: auth.orgId,
+      items: result.rows,
+      hosts,
+      tiers,
+      uploads: uploads.rows,
+    };
+  }
+
+  private corpusUploadRoot(): string {
+    return process.env.CORPUS_UPLOAD_DIR || join(process.cwd(), "data", "corpus", "orgs");
+  }
+
+  async uploadCorpus(file: CorpusUploadFile | undefined, auth: AuthContext) {
+    if (!isOrgAdmin(auth.role)) {
+      throw new ForbiddenException("Organization admin role required to upload corpus");
+    }
+    if (!file?.buffer?.length) {
+      throw new BadRequestException("Missing file upload");
+    }
+    const originalName = file.originalname || "upload.md";
+    if (!/\.(md|txt|markdown)$/i.test(originalName)) {
+      throw new BadRequestException("Only .md and .txt uploads are supported");
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      throw new BadRequestException("Upload exceeds 5 MB limit");
+    }
+    const safeName = originalName.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const uploadId = randomUUID();
+    const orgDir = join(this.corpusUploadRoot(), auth.orgId);
+    await mkdir(orgDir, { recursive: true });
+    const storedName = safeName.toLowerCase().endsWith(".md") ? safeName : `${safeName}.md`;
+    const filename = `${uploadId}_${storedName}`;
+    const target = join(orgDir, filename);
+    await writeFile(target, file.buffer);
+    await this.repository.query(
+      `INSERT INTO corpus_uploads
+         (id, org_id, filename, original_name, content_type, size_bytes, status, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, 'ready', $7)`,
+      [uploadId, auth.orgId, filename, originalName, file.mimetype || "text/markdown", file.size, auth.userId],
+    );
+    const response = await this.agent.fetch("/v1/corpus/refresh", {
+      method: "POST",
+      body: JSON.stringify({ orgId: auth.orgId }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const refresh = (await response.json()) as Record<string, unknown>;
+    const corpus = await this.corpus(auth);
+    return {
+      ...refresh,
+      upload_id: uploadId,
+      filename,
+      persisted_documents: corpus.documents,
+      org_documents: corpus.org_documents,
+    };
   }
 
   async refreshCorpus(auth: AuthContext) {
     if (!isOrgAdmin(auth.role)) {
       throw new ForbiddenException("Organization admin role required to refresh corpus");
     }
-    const response = await this.agent.fetch("/v1/corpus/refresh", { method: "POST" });
+    const response = await this.agent.fetch("/v1/corpus/refresh", {
+      method: "POST",
+      body: JSON.stringify({ orgId: auth.orgId }),
+    });
     if (!response.ok) throw new Error(await response.text());
     const refresh = (await response.json()) as Record<string, unknown>;
-    const corpus = await this.corpus();
-    return { ...refresh, persisted_documents: corpus.documents };
+    const corpus = await this.corpus(auth);
+    return { ...refresh, persisted_documents: corpus.documents, org_documents: corpus.org_documents };
   }
 
-  async knowledgeStats() {
-    const response = await this.agent.fetch("/v1/knowledge");
+  async knowledgeStats(auth: AuthContext) {
+    const response = await this.agent.fetch(`/v1/knowledge?orgId=${encodeURIComponent(auth.orgId)}`);
     if (!response.ok) throw new Error(await response.text());
     return response.json();
   }
 
-  async knowledgeMatch(query: string) {
+  async knowledgeMatch(query: string, auth: AuthContext) {
     const response = await this.agent.fetch(
-      `/v1/knowledge/match?query=${encodeURIComponent(query)}`,
+      `/v1/knowledge/match?query=${encodeURIComponent(query)}&orgId=${encodeURIComponent(auth.orgId)}`,
     );
     if (!response.ok) throw new Error(await response.text());
     return response.json();

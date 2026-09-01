@@ -10,6 +10,8 @@ from app.graph.nodes.docs import docs_node
 from app.graph.nodes.enrich import enrich_node
 from app.graph.nodes.extract import extract_node
 from app.graph.nodes.hitl import hitl_node
+from app.graph.nodes.memo_gate import memo_gate_node, memo_gate_node_auto
+from app.graph.nodes.plan_gate import plan_gate_node, plan_gate_node_auto
 from app.graph.nodes.planner import planner_node
 from app.graph.nodes.report import report_node
 from app.graph.nodes.scholar import scholar_node
@@ -23,17 +25,22 @@ def after_briefing(state: ResearchState) -> str:
     return "planner"
 
 
-def after_planner(state: ResearchState) -> list[str] | str:
+def after_planner(state: ResearchState) -> str:
     if state.get("out_of_scope"):
         return "report"
     if state.get("reuse_mode") == "cached" and state.get("prior_knowledge"):
-        # A stored answer already covers this question; skip retrieval entirely.
+        return "report"
+    return "plan_gate"
+
+
+def after_plan_gate(state: ResearchState) -> list[str] | str:
+    if state.get("out_of_scope") or state.get("status") == "cancelled":
+        return "report"
+    if state.get("reuse_mode") == "cached" and state.get("prior_knowledge"):
         return "report"
     agents = state.get("agents_to_run") or []
     if not agents:
         return "collector"
-    # Always enter the three research nodes so the join at collector is well-defined.
-    # Nodes that are not selected return immediately (adaptive skip).
     return ["search", "scholar", "docs"]
 
 
@@ -58,10 +65,21 @@ def after_critic_eval(state: ResearchState) -> str:
 
 def after_hitl(state: ResearchState) -> str:
     decision = state.get("human_decision") or {}
-    # Dig further always re-enters the planner; hitl_node already grants revise headroom.
     if decision.get("action") == "revise":
         return "planner"
     return "report"
+
+
+def after_memo_gate(state: ResearchState) -> str:
+    if state.get("status") == "revising":
+        return "critic"
+    return END
+
+
+def after_report(state: ResearchState) -> str:
+    if state.get("status") == "integrity_research":
+        return "planner"
+    return "memo_gate"
 
 
 def build_graph(checkpointer=None, enable_hitl: bool = True, *, allow_memory: bool = False):
@@ -72,6 +90,7 @@ def build_graph(checkpointer=None, enable_hitl: bool = True, *, allow_memory: bo
     builder = StateGraph(ResearchState)
     builder.add_node("briefing", briefing_node if enable_hitl else briefing_node_auto)
     builder.add_node("planner", planner_node)
+    builder.add_node("plan_gate", plan_gate_node if enable_hitl else plan_gate_node_auto)
     builder.add_node("search", search_node)
     builder.add_node("scholar", scholar_node)
     builder.add_node("docs", docs_node)
@@ -81,6 +100,7 @@ def build_graph(checkpointer=None, enable_hitl: bool = True, *, allow_memory: bo
     builder.add_node("extract", extract_node)
     builder.add_node("critic", critic_node)
     builder.add_node("report", report_node)
+    builder.add_node("memo_gate", memo_gate_node if enable_hitl else memo_gate_node_auto)
 
     builder.add_edge(START, "briefing")
     builder.add_conditional_edges(
@@ -91,6 +111,11 @@ def build_graph(checkpointer=None, enable_hitl: bool = True, *, allow_memory: bo
     builder.add_conditional_edges(
         "planner",
         after_planner,
+        {"plan_gate": "plan_gate", "report": "report"},
+    )
+    builder.add_conditional_edges(
+        "plan_gate",
+        after_plan_gate,
         {"search": "search", "scholar": "scholar", "docs": "docs", "collector": "collector", "report": "report"},
     )
     builder.add_edge(["search", "scholar", "docs"], "collector")
@@ -104,7 +129,12 @@ def build_graph(checkpointer=None, enable_hitl: bool = True, *, allow_memory: bo
         builder.add_conditional_edges("hitl", after_hitl, {"planner": "planner", "report": "report"})
     else:
         builder.add_conditional_edges("critic", after_critic_eval, {"planner": "planner", "report": "report"})
-    builder.add_edge("report", END)
+    builder.add_conditional_edges("memo_gate", after_memo_gate, {"critic": "critic", END: END})
+    builder.add_conditional_edges(
+        "report",
+        after_report,
+        {"planner": "planner", "memo_gate": "memo_gate"},
+    )
     return builder.compile(checkpointer=checkpointer)
 
 

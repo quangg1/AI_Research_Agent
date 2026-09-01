@@ -10,12 +10,15 @@ import {
   Post,
   Query,
   Res,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from "@nestjs/common";
+import { FileInterceptor } from "@nestjs/platform-express";
 import type { Response } from "express";
 import { ResumeResearchDto } from "./dto/resume-research.dto";
 import { DuplicateResearchDto, StartResearchDto } from "./dto/start-research.dto";
-import { ResearchService } from "./research.service";
+import { ResearchService, type CorpusUploadFile } from "./research.service";
 import { AuthGuard, OrgAdminGuard } from "../auth/auth.guard";
 import { CurrentAuth, type AuthContext } from "../auth/auth.types";
 import { AuthService } from "../auth/auth.service";
@@ -175,8 +178,19 @@ export class ResearchController {
 
   @UseGuards(AuthGuard)
   @Get("/v1/corpus")
-  corpus() {
-    return this.research.corpus();
+  corpus(@CurrentAuth() auth: AuthContext) {
+    return this.research.corpus(auth);
+  }
+
+  @UseGuards(AuthGuard, OrgAdminGuard)
+  @Post("/v1/corpus/upload")
+  @UseInterceptors(
+    FileInterceptor("file", {
+      limits: { fileSize: 5 * 1024 * 1024 },
+    }),
+  )
+  uploadCorpus(@UploadedFile() file: CorpusUploadFile, @CurrentAuth() auth: AuthContext) {
+    return this.research.uploadCorpus(file, auth);
   }
 
   @UseGuards(AuthGuard, OrgAdminGuard)
@@ -187,14 +201,14 @@ export class ResearchController {
 
   @UseGuards(AuthGuard)
   @Get("/v1/knowledge")
-  knowledge() {
-    return this.research.knowledgeStats();
+  knowledge(@CurrentAuth() auth: AuthContext) {
+    return this.research.knowledgeStats(auth);
   }
 
   @UseGuards(AuthGuard)
   @Get("/v1/knowledge/match")
-  knowledgeMatch(@Query("query") query: string) {
-    return this.research.knowledgeMatch(query || "");
+  knowledgeMatch(@Query("query") query: string, @CurrentAuth() auth: AuthContext) {
+    return this.research.knowledgeMatch(query || "", auth);
   }
 
   @UseGuards(AuthGuard)

@@ -52,6 +52,8 @@ export class ResearchRepository {
       runId,
       executionId,
       executionVersion: 1,
+      orgId,
+      userId,
       query,
       fresh,
       ...(llmProvider ? { llmProvider } : {}),
@@ -225,11 +227,16 @@ export class ResearchRepository {
     llmModel?: string,
   ) {
     return this.transaction(async (client) => {
-      const selected = await client.query<{ status: string; execution_version: number; error: string | null }>(
+      const selected = await client.query<{
+        status: string;
+        execution_version: number;
+        error: string | null;
+        created_by: string | null;
+      }>(
         orgId
-          ? `SELECT status, execution_version, error FROM research_runs
+          ? `SELECT status, execution_version, error, created_by FROM research_runs
              WHERE id=$1 AND org_id=$2 AND deleted_at IS NULL FOR UPDATE`
-          : `SELECT status, execution_version, error FROM research_runs WHERE id=$1 FOR UPDATE`,
+          : `SELECT status, execution_version, error, created_by FROM research_runs WHERE id=$1 FOR UPDATE`,
         orgId ? [runId, orgId] : [runId],
       );
       if (!selected.rowCount) throw new NotFoundException("run not found");
@@ -252,6 +259,8 @@ export class ResearchRepository {
         runId,
         executionId,
         executionVersion,
+        orgId: orgId || undefined,
+        userId: selected.rows[0].created_by || undefined,
         decision,
         ...(llmProvider ? { llmProvider } : {}),
         ...(llmModel ? { llmModel } : {}),
@@ -278,6 +287,15 @@ export class ResearchRepository {
       );
       return { id: runId, status: "queued" as const, executionVersion, executionId };
     });
+  }
+
+  async getRunTenancy(runId: string): Promise<{ orgId: string; userId: string | null } | null> {
+    const result = await this.pool.query<{ org_id: string; created_by: string | null }>(
+      `SELECT org_id, created_by FROM research_runs WHERE id=$1 AND deleted_at IS NULL`,
+      [runId],
+    );
+    if (!result.rowCount) return null;
+    return { orgId: result.rows[0].org_id, userId: result.rows[0].created_by };
   }
 
   async setCurrentJob(payload: ExecuteJobPayload, jobId: string): Promise<boolean> {
@@ -329,6 +347,24 @@ export class ResearchRepository {
               ?.report?.metrics as Record<string, unknown> | undefined)
           : undefined);
 
+      const interruptPayload = persistInterruptPayload(frame, snapshot);
+      const activeResearchNodes = new Set([
+        "search",
+        "scholar",
+        "docs",
+        "collector",
+        "enrich",
+        "retrieve",
+        "extract",
+        "critic",
+        "report",
+      ]);
+      const clearInterrupt =
+        (frame.type === "heartbeat" || frame.type === "update") &&
+        snapshot != null &&
+        snapshot.status === "running" &&
+        activeResearchNodes.has(String(snapshot.current_node || ""));
+
       const result = await client.query(
         `UPDATE research_runs SET
            status=COALESCE($4, status),
@@ -336,6 +372,7 @@ export class ResearchRepository {
            last_heartbeat_at=NOW(),
            result_json=CASE WHEN $6::jsonb IS NOT NULL THEN $6::jsonb ELSE result_json END,
            interrupt_payload=CASE
+             WHEN $10 THEN NULL
              WHEN $7::jsonb IS NOT NULL THEN $7::jsonb
              WHEN $5 THEN NULL
              ELSE interrupt_payload
@@ -351,9 +388,10 @@ export class ResearchRepository {
           status,
           terminal,
           snapshot ? JSON.stringify(snapshot) : null,
-          persistInterruptPayload(frame, snapshot),
+          interruptPayload,
           metrics ? JSON.stringify(metrics) : null,
           frame.type === "error" ? String(frame.error || "execution error").slice(0, 4000) : null,
+          clearInterrupt,
         ],
       );
       if (!result.rowCount) return false;

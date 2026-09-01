@@ -5,9 +5,9 @@ import hmac
 import json
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app import runtime
 from app.config import settings
@@ -134,25 +134,31 @@ async def checkpoints(thread_id: str):
     return {"thread_id": thread_id, "checkpoints": await runtime.list_checkpoints(thread_id)}
 
 
+class CorpusRefreshRequest(BaseModel):
+    org_id: str | None = Field(default=None, alias="orgId")
+
+
 @app.get("/v1/corpus")
-async def corpus():
-    return corpus_stats()
+async def corpus(org_id: str | None = Query(default=None, alias="orgId")):
+    return corpus_stats(org_id)
 
 
 @app.post("/v1/corpus/refresh")
-async def corpus_refresh():
-    count = await asyncio.to_thread(ingest_corpus)
-    return {"ok": True, "documents": count, **{k: v for k, v in corpus_stats().items() if k != "items"}}
+async def corpus_refresh(body: CorpusRefreshRequest | None = None):
+    org_id = body.org_id if body else None
+    count = await asyncio.to_thread(ingest_corpus, org_id)
+    stats = corpus_stats(org_id)
+    return {"ok": True, "documents": count, **{k: v for k, v in stats.items() if k != "items"}}
 
 
 @app.get("/v1/knowledge")
-async def knowledge_stats():
-    return await asyncio.to_thread(knowledge.stats)
+async def knowledge_stats(org_id: str | None = Query(default=None, alias="orgId")):
+    return await asyncio.to_thread(knowledge.stats, org_id)
 
 
 @app.get("/v1/knowledge/match")
-async def knowledge_match(query: str):
-    hit = await asyncio.to_thread(knowledge.lookup, query)
+async def knowledge_match(query: str, org_id: str | None = Query(default=None, alias="orgId")):
+    hit = await asyncio.to_thread(knowledge.lookup, query, org_id)
     if not hit:
         return {"match": False}
     return {

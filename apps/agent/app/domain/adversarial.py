@@ -10,6 +10,7 @@ import re
 from typing import Any
 
 from app.domain.schema import AgentName, SubQuery
+from app.domain.scholar_query import compact_retrieval_query, is_orchestration_topic, topic_terms_from_goal
 from app.domain.textutil import user_goal
 
 KIND_ALIASES = {
@@ -251,28 +252,61 @@ def falsification_queries(query: str, brief: dict | None = None) -> list[SubQuer
     goal = user_goal(query) or (query or "").strip()
     hyps = (brief or {}).get("hypotheses") or competing_hypotheses(query)
     h1 = hyps[0] if hyps else "the default thesis"
-    return [
+    core = " ".join(topic_terms_from_goal(goal, 5)) or goal[:80]
+    subs = [
         SubQuery(
             agent=AgentName.SCHOLAR,
-            question=f"{goal} contrary findings OR counterexample OR fails to",
+            question=compact_retrieval_query(
+                f"{core} counter-evidence falsification",
+                goal=goal,
+                agent="scholar",
+            ),
             rationale="Collect evidence that could falsify the convenient thesis.",
         ),
         SubQuery(
             agent=AgentName.SEARCH,
-            question=f"evidence against: {h1[:140]}",
+            question=compact_retrieval_query(
+                f"evidence against {h1[:100]}",
+                goal=goal,
+                agent="search",
+            ),
             rationale="Explicit counter-hypothesis search.",
         ),
         SubQuery(
             agent=AgentName.SCHOLAR,
-            question=f"{goal} benchmark results success rate comparison",
+            question=compact_retrieval_query(
+                f"{core} benchmark evaluation metrics",
+                goal=goal,
+                agent="scholar",
+            ),
             rationale="Prefer measured numbers over qualitative survey language.",
         ),
-        SubQuery(
-            agent=AgentName.SCHOLAR,
-            question=f"{goal} failure modes OR ablation OR when FSM OR rollback fails",
-            rationale="Strongest contradicting regime for orchestration/control claims.",
-        ),
     ]
+    if is_orchestration_topic(goal):
+        subs.append(
+            SubQuery(
+                agent=AgentName.SCHOLAR,
+                question=compact_retrieval_query(
+                    f"{core} failure modes ablation study",
+                    goal=goal,
+                    agent="scholar",
+                ),
+                rationale="Strongest contradicting regime for orchestration/control claims.",
+            )
+        )
+    else:
+        subs.append(
+            SubQuery(
+                agent=AgentName.SCHOLAR,
+                question=compact_retrieval_query(
+                    f"{core} limitations distribution shift",
+                    goal=goal,
+                    agent="scholar",
+                ),
+                rationale="Find boundary conditions and generalization limits.",
+            )
+        )
+    return subs
 
 
 BENCHMARK_RE = re.compile(
@@ -285,6 +319,54 @@ BENCHMARK_RE = re.compile(
     r")\b",
     re.I,
 )
+
+
+def numeric_evidence_score(ev: dict) -> float:
+    """Boost sources whose excerpts contain measured benchmarks or outcome numbers."""
+    blob = " ".join(
+        str(ev.get(key) or "")
+        for key in ("title", "snippet", "quote")
+    ) + " " + str(ev.get("full_text") or "")[:3500]
+    if not blob.strip():
+        return 0.0
+    score = 0.0
+    matches = list(QUANT_RE.finditer(blob))
+    score += min(3.0, len(matches) * 0.55)
+    if BENCHMARK_RE.search(blob):
+        score += 2.0
+    if MEASURED_RE.search(blob):
+        score += 1.0
+    if re.search(r"\b(survey|systematic review|literature review|overview)\b", blob, re.I) and not matches:
+        score -= 1.25
+    return max(0.0, score)
+
+
+def retrieval_rank_score(ev: dict, query: str = "") -> float:
+    from app.domain.research_intent import authority_score
+
+    weight = numeric_rank_weight(query)
+    return authority_score(ev) + numeric_evidence_score(ev) * weight
+
+
+def numeric_rank_weight(query: str = "") -> float:
+    """Lower numeric boost for architecture/why questions; higher for benchmark-heavy asks."""
+    if not (query or "").strip():
+        return 0.7
+    low = query.lower()
+    if re.search(
+        r"benchmark|accuracy|latency|throughput|%\s|\bms\b|tok/s|swe-bench|evaluat|numbers?",
+        low,
+    ):
+        return 1.0
+    from app.domain.decompose import derive_slots
+
+    slot_ids = {str(s.get("id") or "") for s in derive_slots(query, use_llm=False)}
+    analytical = {"mechanism", "constraints", "scalability", "direct_answer", "comparison"}
+    if "quantitative" in slot_ids and not slot_ids.intersection(analytical - {"comparison"}):
+        return 1.0
+    if slot_ids.intersection(analytical):
+        return 0.35
+    return 0.7
 
 
 def extract_quantitative_rows(evidence: list[dict], citations: list[dict] | None = None) -> list[dict[str, Any]]:

@@ -22,7 +22,15 @@ export class ResearchProcessor extends WorkerHost {
 
   async process(job: Job<ExecuteJobPayload>): Promise<void> {
     if (job.name !== "execute") throw new Error(`Unsupported research job: ${job.name}`);
-    const active = await this.repository.setCurrentJob(job.data, String(job.id));
+    const payload: ExecuteJobPayload = { ...job.data };
+    if (!payload.orgId) {
+      const tenancy = await this.repository.getRunTenancy(payload.runId);
+      if (tenancy) {
+        payload.orgId = tenancy.orgId;
+        payload.userId = payload.userId || tenancy.userId || undefined;
+      }
+    }
+    const active = await this.repository.setCurrentJob(payload, String(job.id));
     if (!active) return;
 
     const userLlm = this.llmVault.peek(job.data.executionId);
@@ -42,19 +50,19 @@ export class ResearchProcessor extends WorkerHost {
     const attempt = job.attemptsMade + 1;
     let finished = false;
     try {
-      for await (const frame of this.agent.execute(job.data, llm)) {
+      for await (const frame of this.agent.execute(payload, llm)) {
         if (frame.type === "error") {
           if (frame.retryable !== false) {
             throw new Error(frame.error || "Agent execution failed");
           }
           await this.repository.failExecution(
-            job.data,
+            payload,
             scrubText(frame.error || "Agent execution failed"),
           );
           finished = true;
           break;
         }
-        const applied = await this.repository.applyExecutionFrame(job.data, frame, attempt);
+        const applied = await this.repository.applyExecutionFrame(payload, frame, attempt);
         if (!applied) return;
         if (frame.type === "heartbeat" || frame.type === "update") {
           await job.updateProgress({

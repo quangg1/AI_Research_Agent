@@ -101,6 +101,27 @@ describe("kiln web smoke", () => {
     expect(fixed.indexOf("```text")).toBeLessThan(fixed.indexOf("[Step 1:"));
   });
 
+  it("does not fence markdown horizontal rules as ascii diagrams", async () => {
+    const { fenceAsciiDiagrams } = await import("../components/MemoMarkdown");
+    const raw = "Paragraph one.\n\n---\n\n## Source quality\n\nBand A.";
+    const fixed = fenceAsciiDiagrams(raw);
+    expect(fixed).not.toContain("```text");
+    expect(fixed).toContain("---");
+    expect(fixed).toContain("## Source quality");
+  });
+
+  it("does not fence list bullets that contain katex html", async () => {
+    const { fenceAsciiDiagrams, prepMemoMarkdown } = await import("../components/MemoMarkdown");
+    const raw =
+      "* **Working Memory**: Active context buffer holding the current system prompt [7].\n" +
+      "* **Episodic & Semantic store**: AriGraph knowledge graph storing entity relations " +
+      "(e.g., 'Dataset A' $\\mapsto$ 'Property B') [6].\n";
+    const fixed = fenceAsciiDiagrams(prepMemoMarkdown(raw));
+    expect(fixed).not.toContain("```text");
+    expect(fixed).toContain('class="katex"');
+    expect(fixed).toContain("Episodic & Semantic store");
+  });
+
   it("strips epistemic debug tags from memo prose", () => {
     const raw =
       "[DIRECT] Claim one [1]. [INFERRED] Claim two. DIRECT: Claim three.\n";

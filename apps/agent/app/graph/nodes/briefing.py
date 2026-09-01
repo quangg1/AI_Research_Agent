@@ -6,6 +6,7 @@ import re
 from langgraph.types import interrupt
 
 from app.domain.adversarial import competing_hypotheses, research_subquestions
+from app.domain.research_depth import apply_forced_depth, effective_depth
 from app.domain.routing_policy import classify_query, out_of_scope
 from app.domain.coverage import must_answer_for
 from app.domain.research_intent import is_comparison_query, is_mechanism_query, must_cover_for
@@ -43,7 +44,8 @@ async def briefing_node(state: ResearchState) -> dict:
             "traces": [{"node": "briefing", "decision": "out_of_scope"}],
         }
 
-    brief = await asyncio.to_thread(_resolve_brief, query)
+    raw = await asyncio.to_thread(_resolve_brief, query)
+    brief = ResearchBrief.model_validate(apply_forced_depth(dump(raw)))
     payload = pythonize(
         {
             "type": "research_brief",
@@ -93,7 +95,7 @@ def briefing_node_auto(state: ResearchState) -> dict:
             "brief_confirmed": True,
             "traces": [{"node": "briefing", "decision": "out_of_scope"}],
         }
-    brief = _llm_brief(query) or _heuristic_brief(query)
+    brief = ResearchBrief.model_validate(apply_forced_depth(dump(_llm_brief(query) or _heuristic_brief(query))))
     return {
         "brief": dump(brief),
         "brief_confirmed": True,
@@ -115,7 +117,7 @@ def _heuristic_brief(query: str) -> ResearchBrief:
     stack = stack_m.group(0) if stack_m else ""
     mechanism = is_mechanism_query(query)
     comparison = is_comparison_query(query)
-    depth = "deep" if (qtype == QueryType.OPEN_RESEARCH or mechanism) else "standard"
+    depth = "deep"
     must = must_cover_for(query)
     if mechanism:
         decision = "Explain how it works and where the explanation stops being sourced"
@@ -182,7 +184,7 @@ def _llm_brief(query: str) -> ResearchBrief | None:
             "and 6-8 falsifiable subquestions, including one that seeks counter-evidence.\n"
             "JSON keys: goal, query_type (factual|comparison|open_research), sector, geography, "
             "time_horizon, decision_type, constraints (list), must_cover (list), sources_priority (list), "
-            "out_of_scope (list), deliverable, depth (quick|standard|deep), assumptions (list), "
+            "out_of_scope (list), deliverable, depth (always deep), assumptions (list), "
             "hypotheses (list of 2 strings), subquestions (list)."
         ),
         system="You prepare editable research briefs for Kiln, a general research agent.",
@@ -197,6 +199,7 @@ def _llm_brief(query: str) -> ResearchBrief | None:
         brief.hypotheses = competing_hypotheses(query)
     if not brief.subquestions:
         brief.subquestions = research_subquestions(query, brief.hypotheses)
+    brief.depth = effective_depth()
     return brief
 
 
@@ -215,7 +218,7 @@ def _brief_rows(brief: ResearchBrief) -> list[dict]:
         {"key": "geography", "label": "Runtime", "value": brief.geography, "editable": True, "kind": "text"},
         {"key": "time_horizon", "label": "Time horizon", "value": brief.time_horizon, "editable": True, "kind": "text"},
         {"key": "decision_type", "label": "Decision type", "value": brief.decision_type, "editable": True, "kind": "text"},
-        {"key": "depth", "label": "Depth", "value": brief.depth, "editable": True, "kind": "select", "options": ["quick", "standard", "deep"]},
+        {"key": "depth", "label": "Depth", "value": "deep", "editable": False, "kind": "select", "options": ["deep"]},
         {"key": "query_type", "label": "Query class", "value": brief.query_type, "editable": True, "kind": "select", "options": ["factual", "comparison", "open_research"]},
         {"key": "must_cover", "label": "Must cover", "value": brief.must_cover, "editable": True, "kind": "list"},
         {"key": "must_answer", "label": "Must-answer claims", "value": [m.get("label") or m.get("id") for m in (brief.must_answer or [])], "editable": False, "kind": "list"},
@@ -236,9 +239,13 @@ def _merge_brief(base: ResearchBrief, patch: dict) -> ResearchBrief:
             if key in data and value is not None:
                 data[key] = value
     try:
-        return ResearchBrief.model_validate(data)
+        merged = ResearchBrief.model_validate(apply_forced_depth(data))
     except Exception:
-        return base
+        merged = base
+        merged.depth = effective_depth()
+    else:
+        merged.depth = effective_depth()
+    return merged
 
 
 def _compose_query(original: str, brief: ResearchBrief) -> str:

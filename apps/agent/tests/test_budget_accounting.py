@@ -2,11 +2,12 @@ from app.domain.schema import Budget
 from app.graph.nodes import search
 from app.graph.nodes.collector import collector_node
 from app.tools import cache
+from app.tools import tavily_client
 
 
 def test_search_cached_hit_reports_zero_external_calls(monkeypatch):
     cache._STORE.clear()
-    monkeypatch.setattr(search.settings, "tavily_api_key", "")
+    monkeypatch.setattr(tavily_client.settings, "tavily_api_key", "")
     monkeypatch.setattr(
         search,
         "_ddg",
@@ -37,7 +38,7 @@ def test_collector_charges_latest_external_calls_only():
         "query": "test",
         "evidence": [],
         "agents_to_run": ["search", "scholar", "docs", "enrich"],
-        "budget": Budget(used_tool_calls=2).model_dump(),
+        "budget": Budget(used_retrieval_calls=2).model_dump(),
         "traces": [
             {"node": "search", "external_calls": 5},
             {"node": "search", "external_calls": 0},
@@ -48,7 +49,9 @@ def test_collector_charges_latest_external_calls_only():
 
     result = collector_node(state)
 
+    assert result["budget"]["used_retrieval_calls"] == 4
     assert result["budget"]["used_tool_calls"] == 4
+    assert result["budget"]["used_enrich_calls"] == 0
     assert result["traces"][0]["agents_ran"] == ["search", "scholar", "docs"]
 
 
@@ -63,4 +66,5 @@ def test_collector_falls_back_to_planned_tool_agents():
 
     result = collector_node(state)
 
+    assert result["budget"]["used_retrieval_calls"] == 2
     assert result["budget"]["used_tool_calls"] == 2

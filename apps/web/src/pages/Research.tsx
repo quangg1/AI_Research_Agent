@@ -16,7 +16,7 @@ import { RunHistoryPanel } from "../components/RunHistoryPanel";
 import { SourcesPanel } from "../components/SourcesPanel";
 import { openAuthedEventStream } from "../lib/sse";
 
-const PIPELINE = ["briefing", "planner", "docs", "scholar", "search", "collector", "enrich", "retrieve", "extract", "critic", "hitl", "report"];
+const PIPELINE = ["briefing", "planner", "plan_gate", "docs", "scholar", "search", "collector", "enrich", "retrieve", "extract", "critic", "hitl", "report", "memo_gate"];
 
 const EXAMPLES = [
   { tag: "RAG", text: "Should we fine-tune a 8B model on weekly runbooks, or use RAG over the same docs?" },
@@ -28,6 +28,7 @@ const EXAMPLES = [
 const STEP_COPY: Record<string, { title: string; hint: string; wait: string }> = {
   briefing: { title: "brief", hint: "Confirm research plan", wait: "Usually a few seconds" },
   planner: { title: "planner", hint: "Decompose the question", wait: "Waiting on your model — often 1–3 min" },
+  plan_gate: { title: "plan", hint: "Review agent plan", wait: "Waiting on you" },
   docs: { title: "docs", hint: "Primary docs & frameworks", wait: "A few seconds" },
   scholar: { title: "scholar", hint: "Systems papers", wait: "A few seconds" },
   search: { title: "search", hint: "Current web sources", wait: "Web search can take 5–15s" },
@@ -38,6 +39,7 @@ const STEP_COPY: Record<string, { title: string; hint: string; wait: string }> =
   critic: { title: "critic", hint: "Conflict check", wait: "Waiting on your model — often 30s–2 min" },
   hitl: { title: "review", hint: "Human approval", wait: "Waiting on you" },
   report: { title: "report", hint: "Write the long memo", wait: "Compress notes then write — often 2–6 min" },
+  memo_gate: { title: "publish", hint: "Review memo draft", wait: "Waiting on you" },
 };
 
 const TIER_LABEL: Record<string, string> = {
@@ -124,6 +126,11 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
   const [inspect, setInspect] = useState<any | null>(null);
   const [followup, setFollowup] = useState("");
   const [briefDraft, setBriefDraft] = useState<Record<string, any>>({});
+  const [planDraft, setPlanDraft] = useState<{ sub_queries: any[]; agents_to_run: string[] }>({
+    sub_queries: [],
+    agents_to_run: [],
+  });
+  const [draftNotes, setDraftNotes] = useState("");
   const [tick, setTick] = useState(Date.now());
   const [shareMsg, setShareMsg] = useState("");
   const [byok, setByok] = useState<ByokState>(() => loadByok());
@@ -185,10 +192,9 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
         const failText = String(data.agent?.error || data.error || "");
         const typed = data as Run;
         const st = typed.status === "awaiting_brief" ? "awaiting_human" : (typed.status || typed.agent?.status);
-        const waiting = st === "awaiting_human";
-        const intr = waiting
-          ? unwrapInterrupt(typed.agent?.interrupt) || unwrapInterrupt(typed.interrupt_payload)
-          : undefined;
+        const intr =
+          unwrapInterrupt(typed.agent?.interrupt) || unwrapInterrupt(typed.interrupt_payload);
+        const waiting = st === "awaiting_human" || intr?.type === "plan_review" || intr?.type === "research_brief" || intr?.type === "memo_draft";
         const creditsPause =
           intr?.type === "credits_exhausted" || isCreditsExhaustedMessage(failText) || isCreditsExhaustedMessage(String(intr?.message || ""));
         if (creditsPause) {
@@ -200,6 +206,17 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
         }
         if (intr?.type === "research_brief" && intr.brief) {
           setBriefDraft((prev) => (Object.keys(prev).length ? prev : { ...intr.brief }));
+        }
+        if (intr?.type === "plan_review") {
+          setPlanDraft((prev) => {
+            const incoming = intr.sub_queries || intr.plan?.sub_queries || [];
+            if (!incoming.length) return prev;
+            if (prev.sub_queries.length) return prev;
+            return {
+              sub_queries: incoming,
+              agents_to_run: intr.agents_to_run || intr.plan?.agents_to_run || [],
+            };
+          });
         }
         // Keep the key panel open when credits forced this poll; otherwise collapse on brief/done.
         if (st === "completed" || st === "awaiting_human") {
@@ -255,12 +272,12 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
   const rowStatus = run?.status === "awaiting_brief" ? "awaiting_human" : run?.status || "";
   const gateInterrupt =
     unwrapInterrupt(run?.agent?.interrupt) || unwrapInterrupt(run?.interrupt_payload);
+  const gateInterruptType = String(gateInterrupt?.type || "");
   const parkedGate =
     rowStatus === "awaiting_human" ||
-    Boolean(gateInterrupt?.type) ||
-    (rowStatus === "running" &&
-      (run?.agent?.current_node === "hitl" || run?.agent?.current_node === "briefing") &&
-      Boolean(run?.interrupt_payload));
+    ["research_brief", "plan_review", "memo_draft", "approve_report", "credits_exhausted"].includes(
+      gateInterruptType,
+    );
   const executing = (rowStatus === "queued" || rowStatus === "running") && !parkedGate;
   const status = parkedGate
     ? "awaiting_human"
@@ -277,14 +294,23 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
     (String(values?.status || "") === "approved" ||
       nextNodes.includes("report") ||
       (rowStatus === "running" && traces.some((t) => t?.node === "hitl" && t?.action === "approve")));
+  const researchTrace = run?.agent?.research_trace || run?.research_trace;
+  const RESEARCH_NODES = ["search", "scholar", "docs", "collector", "enrich", "retrieve", "extract"];
+  const activeResearch =
+    researchTrace?.active_agent && PIPELINE.includes(String(researchTrace.active_agent))
+      ? String(researchTrace.active_agent)
+      : nextNodes.find((n) => RESEARCH_NODES.includes(n));
   const currentNode =
     (writingReport ? "report" : undefined) ||
+    (executing && activeResearch ? activeResearch : undefined) ||
     run?.agent?.current_node ||
     (traces.at(-1)?.node as string | undefined);
   const waitingHuman = status === "awaiting_human";
   const gateType =
     rawInterrupt?.type ||
     (waitingHuman && currentNode === "briefing" ? "research_brief" : undefined) ||
+    (waitingHuman && currentNode === "plan_gate" ? "plan_review" : undefined) ||
+    (waitingHuman && currentNode === "memo_gate" ? "memo_draft" : undefined) ||
     (waitingHuman && (currentNode === "hitl" || nextNodes.includes("hitl")) ? "approve_report" : undefined) ||
     (waitingHuman && rawInterrupt?.brief ? "research_brief" : undefined) ||
     (waitingHuman ? "approve_report" : undefined);
@@ -292,7 +318,9 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
   const report = values?.report;
   const budget = values?.budget || interrupt?.budget;
   const awaitingBrief = waitingHuman && gateType === "research_brief";
+  const awaitingPlan = waitingHuman && gateType === "plan_review";
   const awaitingMemo = waitingHuman && gateType === "approve_report";
+  const awaitingDraft = waitingHuman && gateType === "memo_draft";
   const failedCredits =
     status === "failed" && isCreditsExhaustedMessage(String(run?.error || run?.agent?.error || error || ""));
   const awaitingCredits =
@@ -308,16 +336,16 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
         Number(budget.used_tool_calls || 0) >= Number(budget.max_tool_calls || 0)),
   );
   const done = status === "completed" && report;
-  const running = Boolean(runId && status && !awaitingBrief && !awaitingMemo && !done && status !== "failed");
+  const running = Boolean(runId && status && !awaitingBrief && !awaitingPlan && !awaitingMemo && !awaitingDraft && !done && status !== "failed");
   const critic = (done ? values?.critic : interrupt?.critic) || values?.critic || {};
   const claims: any[] = done
     ? report.claims || []
-    : !awaitingBrief
+    : !awaitingBrief && !awaitingPlan
       ? interrupt?.claims_preview || values?.claims || []
       : [];
   const evidence: any[] = done
     ? report.evidence || []
-    : !awaitingBrief
+    : !awaitingBrief && !awaitingPlan
       ? interrupt?.evidence_preview || values?.retrieved || values?.evidence || []
       : [];
   const citations: any[] = done ? report.citations || [] : [];
@@ -329,6 +357,26 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
   const coverageSlots: CoverageSlot[] = done
     ? (metrics.must_answer as CoverageSlot[]) || (critic.coverage?.slots as CoverageSlot[]) || []
     : [];
+  const gateReason =
+    interrupt?.gate_reason ||
+    interrupt?.coverage_gate?.gate_reason ||
+    interrupt?.critic?.gate_reason ||
+    interrupt?.critic?.coverage_gate?.gate_reason ||
+    critic?.gate_reason ||
+    critic?.coverage_gate?.gate_reason ||
+    metrics?.gate_reason;
+  const gateMessage =
+    interrupt?.gate_message ||
+    interrupt?.coverage_gate?.message ||
+    critic?.coverage_gate?.message ||
+    metrics?.coverage_gate?.message ||
+    "";
+  const coverageSlotsAtGate: CoverageSlot[] = done
+    ? coverageSlots
+    : (interrupt?.coverage_slots as CoverageSlot[]) ||
+      (interrupt?.critic?.coverage?.slots as CoverageSlot[]) ||
+      (critic.coverage?.slots as CoverageSlot[]) ||
+      [];
   const compact = Boolean(runId) && !searchOpen && !awaitingBrief;
   const startedAt = run?.agent?.started_at;
   const elapsed = startedAt ? Math.max(0, tick / 1000 - startedAt) : Number(run?.agent?.elapsed_s || 0);
@@ -336,6 +384,14 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
     Math.min(100, Math.max(2, (run?.agent?.progress ?? (PIPELINE.indexOf(currentNode || "planner") + 0.35) / PIPELINE.length) * 100)),
   );
   const stepMeta = STEP_COPY[currentNode || "planner"] || STEP_COPY.planner;
+  const planSubQueries =
+    planDraft.sub_queries.length > 0
+      ? planDraft.sub_queries
+      : interrupt?.sub_queries || interrupt?.plan?.sub_queries || [];
+  const planAgents =
+    planDraft.agents_to_run.length > 0
+      ? planDraft.agents_to_run
+      : interrupt?.agents_to_run || interrupt?.plan?.agents_to_run || [];
 
   useEffect(() => {
     if (!running && status !== "queued") return;
@@ -436,13 +492,13 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
     await startResearch(query);
   }
 
-  async function resume(action: string, extra?: { brief?: Record<string, any> }) {
+  async function resume(action: string, extra?: { brief?: Record<string, any>; plan?: Record<string, any> }) {
     if (!runId) return;
     setBusy(true);
     setError("");
     // Optimistic: leave the brief gate immediately so polling cannot flash it back
     // while the resume job is still clearing the LangGraph interrupt.
-    if (action === "start" || action === "approve" || action === "revise") {
+    if (action === "start" || action === "approve" || action === "revise" || action === "publish" || action === "revise_critic") {
       setRun((prev) =>
         prev
           ? {
@@ -462,6 +518,7 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
         notes,
         extra_questions: notes ? [notes] : [],
         brief: extra?.brief || briefDraft,
+        plan: extra?.plan || planDraft,
         llm: llmPayload(byok),
       });
     } catch (err: any) {
@@ -632,7 +689,9 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
     const ev = step.event;
     if (step.id === "critic" && (ev?.status === "contradicted" || critic.status === "contradicted")) return "warn";
     if (awaitingBrief && step.id === "briefing") return "now";
+    if (awaitingPlan && step.id === "plan_gate") return "now";
     if (awaitingMemo && step.id === "hitl") return "now";
+    if (awaitingDraft && step.id === "memo_gate") return "now";
     if (currentNode === step.id && !done) return ev?.skipped ? "skip" : "now";
     if (ev?.skipped) return "skip";
     if (ev || (done && step.id !== "report")) return "done";
@@ -971,6 +1030,56 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
               </section>
             )}
 
+            {awaitingPlan && (
+              <section className="panel brief-panel plan-panel">
+                <div className="summary-head">
+                  <div>
+                    <h2>{interrupt.title || "Agent plan"}</h2>
+                    <p className="brief-sub">
+                      {interrupt.subtitle || "Review sub-queries and agents before Kiln searches."}
+                    </p>
+                  </div>
+                </div>
+                <p className="sub">
+                  Agents: {(planAgents || []).join(", ") || "search"}
+                </p>
+                <ol className="plan-subqueries">
+                  {(planSubQueries || []).map((sq: any, i: number) => (
+                    <li key={i}>
+                      <span className="plan-agent">{sq.agent}</span>
+                      <textarea
+                        className="plan-subquery-input"
+                        value={sq.question || ""}
+                        rows={Math.min(8, Math.max(3, Math.ceil((sq.question || "").length / 90)))}
+                        onChange={(e) => {
+                          const base = planDraft.sub_queries.length ? planDraft.sub_queries : planSubQueries;
+                          const next = [...base];
+                          next[i] = { ...sq, question: e.target.value };
+                          setPlanDraft({
+                            sub_queries: next,
+                            agents_to_run: planAgents,
+                          });
+                        }}
+                      />
+                    </li>
+                  ))}
+                </ol>
+                <div className="btn-row brief-actions">
+                  <button
+                    className="btn primary"
+                    type="button"
+                    onClick={() => resume("start", { plan: planDraft })}
+                    disabled={busy || !submitReady}
+                  >
+                    Start searching
+                  </button>
+                  <button className="btn" type="button" onClick={() => resume("cancel")} disabled={busy}>
+                    Cancel
+                  </button>
+                </div>
+              </section>
+            )}
+
             {awaitingCredits && (
               <section className="panel review-box">
                 <div className="hero-kicker">Credits pause</div>
@@ -1092,16 +1201,33 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                 {done && (
                   <DecisionCard
                     decisionRule={report?.decision_rule}
+                    atAGlance={report?.at_a_glance}
                     executiveSummary={
                       report?.executive_summary ||
                       (bodyMd.match(/^##\s+Executive summary\s*\n+([\s\S]*?)(?=\n##\s|\n#\s|$)/i)?.[1] || synthesized)
                     }
                     confidence={metrics.depth_score != null ? Number(metrics.depth_score) : null}
                     confidenceLabel={metrics.depth_label ? String(metrics.depth_label) : undefined}
+                    confidenceBreakdown={metrics.confidence_breakdown}
                   />
                 )}
                 {awaitingMemo && (
                   <div className="review-box">
+                    {(gateReason === "insufficient_budget" || gateReason === "insufficient_coverage") && (
+                      <div className="coverage-gate-warn" role="alert">
+                        <strong>Coverage gate: {gateReason.replace(/_/g, " ")}</strong>
+                        <p>{gateMessage || "Open must-answer slots remain — review before approving."}</p>
+                      </div>
+                    )}
+                    {coverageSlotsAtGate.length > 0 && (
+                      <div className="coverage-grid coverage-grid-gate">
+                        {coverageSlotsAtGate.map((s) => (
+                          <span key={s.id || s.label} className={`coverage-chip ${s.status || "open"}`}>
+                            {s.status === "covered" ? "✓" : s.status === "weak" ? "⚠" : "✗"} {s.label || s.id}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     <p className="sub">
                       This is the review gate (step 11/12), not the memo yet. Approve writes the report. Dig further sends the agent back to search again.
                     </p>
@@ -1269,7 +1395,7 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
               </section>
             )}
 
-            {!awaitingBrief && !awaitingMemo && !awaitingCredits && !done && status && status !== "queued" && (
+            {!awaitingBrief && !awaitingPlan && !awaitingMemo && !awaitingCredits && !done && status && status !== "queued" && (
               <section className="panel progress-panel">
                 <div className="progress-head">
                   <span className="pulse" />
@@ -1336,13 +1462,84 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                     </button>
                   </div>
                 )}
+                {researchTrace?.active_agent && (
+                  <div className="research-trace" aria-live="polite">
+                    <div className="research-trace-head">Live trace</div>
+                    <p>
+                      <strong>{researchTrace.active_agent}</strong>
+                      {researchTrace.source_tier ? ` · ${researchTrace.source_tier}` : ""}
+                    </p>
+                    {researchTrace.active_sub_query && (
+                      <p className="sub trace-query">{researchTrace.active_sub_query}</p>
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
+            {awaitingDraft && (
+              <section className="panel review-box draft-panel">
+                <div className="hero-kicker">Memo draft</div>
+                <h2>{interrupt?.title || "Review before publishing"}</h2>
+                {(gateReason === "insufficient_budget" ||
+                  interrupt?.synthesis_status === "terminal_fallback") && (
+                  <div className="coverage-gate-warn" role="alert">
+                    <strong>Budget-limited memo</strong>
+                    <p>
+                      {gateMessage ||
+                        "Some must-answer dimensions were not fully verified before the research budget was exhausted."}
+                    </p>
+                  </div>
+                )}
+                {coverageSlotsAtGate.length > 0 && (
+                  <div className="coverage-grid coverage-grid-gate">
+                    {coverageSlotsAtGate.map((s) => (
+                      <span key={s.id || s.label} className={`coverage-chip ${s.status || "open"}`}>
+                        {s.status === "covered" ? "✓" : s.status === "weak" ? "⚠" : "✗"} {s.label || s.id}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <p className="sub">
+                  {interrupt?.subtitle || "Publish as-is or send back to the critic for another evidence pass."}
+                </p>
+                {(interrupt?.report?.executive_summary || values?.report?.executive_summary) && (
+                  <article className="memo md draft-preview">
+                    <MemoMarkdown citations={[]}>
+                      {interrupt?.report?.body_markdown?.slice(0, 4000) ||
+                        values?.report?.body_markdown?.slice(0, 4000) ||
+                        interrupt?.report?.executive_summary ||
+                        values?.report?.executive_summary}
+                    </MemoMarkdown>
+                  </article>
+                )}
+                <textarea
+                  placeholder="Optional notes if sending back to critic"
+                  value={draftNotes}
+                  onChange={(e) => setDraftNotes(e.target.value)}
+                />
+                <div className="btn-row">
+                  <button className="btn primary" type="button" onClick={() => resume("publish")} disabled={busy}>
+                    Publish memo
+                  </button>
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={() => {
+                      setNotes(draftNotes);
+                      void resume("revise_critic");
+                    }}
+                    disabled={busy}
+                  >
+                    Send back to critic
+                  </button>
+                </div>
               </section>
             )}
             {status === "queued" && (
               <p className="idle"><span className="pulse" /> Queued — starting the agent…</p>
             )}
 
-            {!!evidence.length && !awaitingBrief && !awaitingCredits && !done && (
+            {!!evidence.length && !awaitingBrief && !awaitingPlan && !awaitingCredits && !done && (
               <section>
                 <div className="filters">
                   {[

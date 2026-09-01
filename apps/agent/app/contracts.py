@@ -14,6 +14,7 @@ class ResumeDecision(ContractModel):
     notes: str = ""
     extra_questions: list[str] = Field(default_factory=list)
     brief: dict[str, Any] = Field(default_factory=dict)
+    plan: dict[str, Any] = Field(default_factory=dict)
 
 
 class LlmKeys(ContractModel):
@@ -35,6 +36,8 @@ class StartExecutionRequest(ContractModel):
     execution_id: str = Field(alias="executionId", min_length=1)
     query: str = Field(min_length=8, max_length=4000)
     fresh: bool = False
+    org_id: str | None = Field(default=None, alias="orgId", max_length=128)
+    user_id: str | None = Field(default=None, alias="userId", max_length=128)
     llm: LlmCredential | None = None
 
 
@@ -43,6 +46,8 @@ class ResumeExecutionRequest(ContractModel):
     run_id: str = Field(alias="runId", min_length=1)
     execution_id: str = Field(alias="executionId", min_length=1)
     decision: ResumeDecision
+    org_id: str | None = Field(default=None, alias="orgId", max_length=128)
+    user_id: str | None = Field(default=None, alias="userId", max_length=128)
     llm: LlmCredential | None = None
 
 

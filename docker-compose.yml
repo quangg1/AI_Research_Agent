@@ -45,7 +45,7 @@ services:
       AGENT_SHARED_KEY: ${AGENT_SHARED_KEY:-}
       LLM_BYOK_REQUIRED: ${LLM_BYOK_REQUIRED:-false}
     volumes:
-      - ./data/corpus:/app/data/corpus:ro
+      - ./data/corpus:/app/data/corpus
       - kiln_memory:/app/data/memory
     depends_on:
       migrate:
@@ -89,11 +89,14 @@ services:
       API_SHARED_KEY: ${API_SHARED_KEY:-}
       API_TO_AGENT_KEY: ${API_TO_AGENT_KEY:-}
       AGENT_SHARED_KEY: ${AGENT_SHARED_KEY:-}
+      CORPUS_UPLOAD_DIR: /app/data/corpus/orgs
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       STRIPE_PRICE_PRO: ${STRIPE_PRICE_PRO:-}
       LLM_BYOK_REQUIRED: ${LLM_BYOK_REQUIRED:-false}
+    volumes:
+      - ./data/corpus:/app/data/corpus
     depends_on:
       migrate:
         condition: service_completed_successfully

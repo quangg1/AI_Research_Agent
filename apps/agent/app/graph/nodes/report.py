@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 
-from app.domain.citations import bind_markdown_to_ledger, build_ledger
+from app.domain.citations import annotate_inline_citation_tiers, bind_markdown_to_ledger, build_ledger
 from app.domain.coverage import build_evidence_dossier
+from app.domain.coverage_gate import gate_from_critic
 from app.domain.grounding import verify_claims
 from app.domain.knowledge import mark_reused, save_answer
 from app.domain.research_intent import user_goal
@@ -25,9 +26,11 @@ from app.report.deep_write import (
     compress_max_tokens,
     compress_prompt,
     compress_system,
+    filter_dossier_for_writer,
     format_research_notes,
     notes_max_chars,
     parse_report_markdown,
+    prioritize_dossier_for_writer,
     report_max_tokens,
     should_skip_llm_compress,
     word_count,
@@ -44,12 +47,13 @@ async def report_node(state: ResearchState) -> dict:
 def _report_sync(state: ResearchState) -> dict:
     if state.get("reuse_mode") == "cached" and state.get("prior_knowledge"):
         return _reuse_stored_answer(state)
-    terminal_status = state.get("status") if state.get("status") in {"out_of_scope", "cancelled"} else "completed"
+    terminal_status = state.get("status") if state.get("status") in {"out_of_scope", "cancelled"} else "draft"
     retrieved = state.get("retrieved") or state.get("evidence") or []
     critic = state.get("critic") or {}
     budget = budget_from(state)
     citations = [c.model_dump(mode="json") for c in build_ledger(retrieved)] or list(state.get("citations") or [])
     metrics = _metrics(state, budget)
+    metrics["query_type"] = state.get("query_type") or (state.get("brief") or {}).get("query_type")
     seed_claims = None
     if state.get("claims"):
         try:
@@ -85,9 +89,28 @@ def _report_sync(state: ResearchState) -> dict:
         budget.used_tokens += llm.last_tokens
         report.metrics["tokens"] = budget.used_tokens
         report.metrics["usd_est"] = round(budget.used_tokens / 1_000_000 * 0.40, 4)
+    gate = gate_from_critic(critic) or gate_from_critic(report.metrics.get("critic") or {})
+    if gate:
+        report.metrics["coverage_gate"] = gate
+        report.metrics["gate_reason"] = gate.get("gate_reason")
+    if synthesis_status == "terminal_fallback":
+        report.metrics["synthesis_status"] = "terminal_fallback"
+        report.body_markdown = _ensure_budget_gap_notice(report.body_markdown or "", synthesis_status)
     report.citations = [CitationRef.model_validate(c) for c in citations]
     report.body_markdown = bind_markdown_to_ledger(report.body_markdown or "", citations)
+    from app.domain.fact_lite import verify_memo_citations
+
+    fact = verify_memo_citations(report.body_markdown or "", citations, retrieved)
+    report.metrics["fact_lite"] = fact
     report.decision_rule = _sanitize_decision_rule(state.get("query") or "", report.decision_rule or "", citations, critic)
+    integrity = _apply_integrity(report, citations, critic)
+    report.body_markdown = integrity["body_markdown"]
+    report.decision_rule = integrity["decision_rule"]
+    report.at_a_glance = integrity["at_a_glance"]
+    report.limitations = integrity["limitations"]
+    report.metrics = {**report.metrics, **integrity["metrics_patch"]}
+    report.body_markdown = annotate_inline_citation_tiers(report.body_markdown or "", citations)
+    report.decision_rule = annotate_inline_citation_tiers(report.decision_rule or "", citations)
     if "## Decision rule" in (report.body_markdown or "") and report.decision_rule:
         head, _, rest = report.body_markdown.partition("## Decision rule")
         after = rest.split("\n## ", 1)
@@ -106,28 +129,56 @@ def _report_sync(state: ResearchState) -> dict:
         report.claims = seed_claims
     else:
         report.claims = [Claim.model_validate(c) for c in (cleaned or verified)]
+    from app.domain.claim_quote_verify import enrich_claim_quotes_llm
+
+    report.claims, quote_stats = enrich_claim_quotes_llm(report.claims, retrieved, citations)
+    report.metrics["claim_quote_verify"] = quote_stats
     for claim in report.claims:
         allowed = {c.get("url") for c in citations}
         if claim.url and claim.url not in allowed:
             claim.url = next((c.get("url") or "" for c in citations if c.get("evidence_id") in (claim.support_ids or [])), "")
     _attach_evidence_graph(state, report, retrieved, citations, refetch=True)
-    grounded = bool(citations) and any(claim.grounded for claim in report.claims)
-    stored = (
-        save_answer(
-            state.get("query") or "",
-            dump(report),
-            critic.get("coverage") or {},
-            prior_id=state.get("prior_knowledge_id"),
-        )
-        if terminal_status == "completed" and grounded
-        else None
+
+    from app.domain.report_integrity import (
+        build_integrity_reloop_followups,
+        integrity_severity,
     )
-    if stored:
-        report.metrics["knowledge_id"] = stored.get("id")
-        report.metrics["knowledge_version"] = stored.get("version")
-        report.metrics["knowledge_sources"] = len(stored.get("citations") or [])
-        if state.get("reuse_mode") == "augment":
-            report.metrics["reuse_mode"] = "augment"
+
+    severity = integrity_severity(integrity["integrity_issues"], report.body_markdown or "")
+    report.metrics["integrity_severity"] = severity
+    retries = int(state.get("integrity_retries") or 0)
+    if (
+        severity == "critical"
+        and retries < 1
+        and budget.remaining_iterations > 0
+        and budget.remaining_calls >= 2
+        and terminal_status == "draft"
+    ):
+        followups = build_integrity_reloop_followups(state.get("query") or "", integrity["integrity_issues"])
+        event("report_integrity_reloop", severity=severity, retries=retries + 1)
+        return {
+            "report": dump(report),
+            "claims": [dump(c) for c in report.claims],
+            "budget": dump(budget),
+            "llm_mode": _effective_llm_mode(report.metrics.get("synthesis_status") or synthesis_status),
+            "status": "integrity_research",
+            "integrity_retries": retries + 1,
+            "followups": followups,
+            "plan_confirmed": True,
+            "traces": [
+                {
+                    "node": "report",
+                    "action": "integrity_reloop",
+                    "severity": severity,
+                    "retries": retries + 1,
+                    "claims": len(report.claims),
+                    "mode": llm.mode,
+                    "version": GRAPH_VERSION,
+                    "used_tokens_delta": llm.last_tokens or 0,
+                }
+            ],
+        }
+
     event(
         "report",
         claims=len(report.claims),
@@ -151,7 +202,7 @@ def _report_sync(state: ResearchState) -> dict:
                 "mode": llm.mode,
                 "version": GRAPH_VERSION,
                 "synthesis": report.metrics.get("synthesis_status"),
-                "knowledge_version": report.metrics.get("knowledge_version"),
+                "used_tokens_delta": llm.last_tokens or 0,
             }
         ],
     }
@@ -240,9 +291,41 @@ def _synthesis_status(state: ResearchState, critic: dict) -> str:
     if not llm.available:
         return "heuristic_no_key"
     budget = budget_from(state)
+    gate = gate_from_critic(critic)
+    gate_reason = gate.get("gate_reason") or critic.get("gate_reason")
+    if gate_reason == "insufficient_budget":
+        return "terminal_fallback"
     if critic.get("status") == "insufficient" and budget.remaining_iterations <= 0:
         return "terminal_fallback"
     return "gemini_pending"
+
+
+def _ensure_budget_gap_notice(body: str, synthesis_status: str) -> str:
+    if synthesis_status != "terminal_fallback":
+        return body
+    marker = "could not be verified within the research budget"
+    if marker in (body or "").lower():
+        return body
+    notice = (
+        "> **Note:** Some dimensions could not be verified within the research budget. "
+        "The analysis below reflects the strongest evidence collected; open items are listed "
+        "under Limitations.\n"
+    )
+    lines = (body or "").splitlines()
+    if not lines:
+        return notice.strip()
+    out: list[str] = []
+    inserted = False
+    for i, line in enumerate(lines):
+        out.append(line)
+        if not inserted and line.startswith("## Executive summary"):
+            if i + 1 < len(lines) and lines[i + 1].strip():
+                out.append("")
+                out.append(notice.rstrip())
+                inserted = True
+    if inserted:
+        return "\n".join(out)
+    return f"{notice}{body}"
 
 
 def _effective_llm_mode(synthesis_status: str) -> str:
@@ -259,10 +342,15 @@ def _metrics(state: ResearchState, budget) -> dict:
     critic = state.get("critic") or {}
     cov = critic.get("coverage") or {}
     depth = critic.get("depth_score") or {}
+    gate = gate_from_critic(critic)
     return {
         "sources": len(state.get("retrieved") or state.get("evidence") or []),
         "iterations": budget.iterations,
         "tool_calls": budget.used_tool_calls,
+        "used_retrieval_calls": budget.used_retrieval_calls,
+        "max_retrieval_calls": budget.max_retrieval_calls,
+        "used_enrich_calls": budget.used_enrich_calls,
+        "max_enrich_calls": budget.max_enrich_calls,
         "tokens": budget.used_tokens,
         "usd_est": round(budget.used_tokens / 1_000_000 * 0.40, 4),
         "version": GRAPH_VERSION,
@@ -272,10 +360,14 @@ def _metrics(state: ResearchState, budget) -> dict:
         "critical_fraction": cov.get("critical_fraction") or (depth.get("critical") or {}).get("fraction"),
         "depth_score": depth.get("score"),
         "depth_label": depth.get("label"),
+        "confidence_breakdown": depth.get("breakdown") or {},
         "has_implementation": cov.get("has_implementation"),
         "unique_sources": cov.get("unique_sources"),
         "critical_gaps": [g.get("id") for g in (cov.get("critical_gaps") or [])],
         "must_answer": cov.get("slots") or [],
+        "critic_status": critic.get("status"),
+        "gate_reason": gate.get("gate_reason") or critic.get("gate_reason"),
+        "coverage_gate": gate or critic.get("coverage_gate") or {},
         "quality": depth,
     }
 
@@ -294,10 +386,10 @@ def _llm_report(
     budget = budget_from(state)
     dossier = build_evidence_dossier(state.get("query") or "", evidence, critic.get("coverage") or {})
     terminal = synthesis_status == "terminal_fallback" or (
-        critic.get("status") == "insufficient" and budget.remaining_iterations <= 0
-    )
+        (gate_from_critic(critic).get("gate_reason") or critic.get("gate_reason")) == "insufficient_budget"
+    ) or (critic.get("status") == "insufficient" and budget.remaining_iterations <= 0)
 
-    if not llm.available:
+    if not llm.available and not (getattr(llm, "_slots", None) or []):
         return compose_terminal_synthesis(
             query=state.get("query") or "",
             evidence=evidence,
@@ -329,6 +421,10 @@ def _llm_report(
 
     depth = (state.get("brief") or {}).get("depth") or "standard"
     min_words = word_target(depth)
+    dossier = filter_dossier_for_writer(
+        prioritize_dossier_for_writer(dossier),
+        depth=depth,
+    )
     notes, notes_prep = _compress_notes(state, dossier, citations)
     metrics = {**metrics, "notes_prep": notes_prep}
     dimension_list = "\n".join(
@@ -368,23 +464,81 @@ def _llm_report(
         dimension_list=dimension_list,
         method_block=method_block,
     )
-    markdown = _generate_report_markdown(prompt, max_tokens=report_max_tokens(depth))
-    if word_count(markdown) < max(200, int(min_words * 0.28)):
-        shorter = writer_prompt(
-            query=user_goal(state.get("query") or ""),
-            brief=state.get("brief") or {},
-            notes=notes[:12_000],
-            citations=citations,
-            min_words=max(700, int(min_words * 0.6)),
-            comparison_rule=comparison_rule,
-            prior_note=prior_note,
-            dimension_list=dimension_list,
-            method_block=method_block,
-        )
-        retry = _generate_report_markdown(shorter, max_tokens=report_max_tokens("standard"))
-        if word_count(retry) > word_count(markdown):
-            markdown = retry
+    from app.report.race_write import (
+        criteria_block,
+        ensure_memo_depth,
+        generate_sectionwise_memo,
+        memo_looks_truncated,
+        polish_citations,
+        race_criteria,
+        repair_truncation,
+        rewrite_for_quality,
+    )
 
+    race = race_criteria(user_goal(state.get("query") or ""), state.get("brief") or {}, dossier)
+    prompt_with_race = f"{prompt}\n\n{criteria_block(race)}"
+    tok_total = report_max_tokens(depth)
+    tok_front = int(tok_total * 0.55) if str(depth).lower() == "deep" else tok_total
+    tok_back = max(8192, tok_total - tok_front)
+    markdown, write_mode = generate_sectionwise_memo(
+        prompt_with_race,
+        query=user_goal(state.get("query") or ""),
+        notes=notes,
+        citations=citations,
+        criteria=race,
+        comparison_rule=comparison_rule,
+        depth=depth,
+        max_tokens_front=tok_front,
+        max_tokens_back=tok_back,
+    )
+    if word_count(markdown) < max(200, int(min_words * 0.28)):
+        markdown = _generate_report_markdown(prompt_with_race, max_tokens=report_max_tokens(depth))
+        write_mode = "single_retry"
+    repaired = False
+    if memo_looks_truncated(markdown):
+        markdown, repaired = repair_truncation(
+            markdown,
+            query=user_goal(state.get("query") or ""),
+            notes=notes,
+            criteria=race,
+            max_tokens=max(4096, report_max_tokens(depth) // 2),
+        )
+    markdown = polish_citations(markdown)
+    expanded = False
+    expand_passes = 0
+    if word_count(markdown) < int(min_words * 0.92):
+        markdown, expand_passes = ensure_memo_depth(
+            markdown,
+            query=user_goal(state.get("query") or ""),
+            notes=notes,
+            criteria=race,
+            min_words=min_words,
+            max_tokens=max(8192, report_max_tokens(depth) // 2),
+            depth=depth,
+            max_passes=2,
+        )
+        expanded = expand_passes > 0
+        markdown = polish_citations(markdown)
+    if memo_looks_truncated(markdown):
+        failed = compose_terminal_synthesis(
+            query=state.get("query") or "",
+            evidence=evidence,
+            critic=critic,
+            plan=state.get("plan") or {},
+            brief=state.get("brief") or {},
+            budget=state.get("budget") or {},
+            llm_mode="truncated_unrepaired",
+            citations=citations,
+            claims=seed_claims,
+            metrics={
+                **metrics,
+                "llm_error": llm.last_error,
+                "truncation_repaired": repaired,
+            },
+            terminal_followups=terminal_followups,
+        )
+        failed.metrics["synthesis_status"] = "truncated_unrepaired"
+        return failed
     if not markdown.strip() or not memo_is_user_clean(markdown):
         failed = compose_terminal_synthesis(
             query=state.get("query") or "",
@@ -403,11 +557,21 @@ def _llm_report(
         failed.metrics["llm_error"] = llm.last_error
         return failed
 
-    from app.domain.report_audit import append_research_critic
+    from app.domain.report_audit import audit_memo
 
-    markdown, critic_notes = append_research_critic(
-        markdown, query=user_goal(state.get("query") or "")
-    )
+    audit_notes = audit_memo(markdown, query=user_goal(state.get("query") or ""))
+    rewritten = False
+    if audit_notes or int((critic.get("depth_score") or {}).get("score") or 0) < 65:
+        markdown, rewritten = rewrite_for_quality(
+            markdown,
+            query=user_goal(state.get("query") or ""),
+            audit_notes=audit_notes,
+            criteria=race,
+            critic=critic,
+            max_tokens=report_max_tokens(depth),
+        )
+        markdown = polish_citations(markdown)
+    critic_notes = audit_memo(markdown, query=user_goal(state.get("query") or "")) if rewritten else audit_notes
     parsed = parse_report_markdown(markdown)
     sidecar = _extract_report_sidecar(markdown, citations) or {}
     claims = seed_claims or base.claims
@@ -423,21 +587,30 @@ def _llm_report(
     open_questions = sidecar.get("open_questions") or base.open_questions
     if not isinstance(open_questions, list):
         open_questions = base.open_questions
+    final_status = synthesis_status if terminal else "gemini_success"
     report = base.model_copy(
         update={
             "title": sidecar.get("title") or parsed.get("title") or base.title,
             "executive_summary": sidecar.get("executive_summary")
             or parsed.get("executive_summary")
             or base.executive_summary,
-            "body_markdown": markdown,
+            "at_a_glance": sidecar.get("at_a_glance") or parsed.get("at_a_glance") or base.at_a_glance,
+            "body_markdown": _ensure_budget_gap_notice(markdown, synthesis_status)
+            if terminal
+            else markdown,
             "decision_rule": sidecar.get("decision_rule") or parsed.get("decision_rule") or base.decision_rule,
             "limitations": limitations,
             "open_questions": [str(x) for x in open_questions if str(x).strip()],
             "claims": claims,
             "metrics": {
                 **base.metrics,
-                "synthesis_status": "gemini_success",
+                "synthesis_status": final_status,
                 "writer": "markdown",
+                "write_mode": write_mode,
+                "truncation_repaired": repaired,
+                "expansion_pass": expanded,
+                "expansion_passes": expand_passes,
+                "quality_rewrite": rewritten,
                 "word_count": word_count(markdown),
                 "compressed_notes": notes_prep != "raw_dossier",
                 "notes_prep": notes_prep,
@@ -536,6 +709,28 @@ def _template_report(state: ResearchState, evidence: list[dict], critic: dict) -
         budget=state.get("budget") or {},
         llm_mode=state.get("llm_mode") or llm.mode,
     )
+
+
+def _apply_integrity(report: Report, citations: list[dict], critic: dict) -> dict:
+    from app.domain.report_integrity import enforce_report_integrity
+
+    out = enforce_report_integrity(
+        body_markdown=report.body_markdown or "",
+        executive_summary=report.executive_summary or "",
+        decision_rule=report.decision_rule or "",
+        at_a_glance=getattr(report, "at_a_glance", "") or "",
+        citations=citations,
+        critic=critic,
+        limitations=list(report.limitations or []),
+    )
+    return {
+        **out,
+        "metrics_patch": {
+            "confidence_breakdown": out["confidence_breakdown"],
+            "integrity_flags": out["integrity_flags"],
+            "integrity_issues": out["integrity_issues"],
+        },
+    }
 
 
 def _attach_evidence_graph(

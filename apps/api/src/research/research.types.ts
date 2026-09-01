@@ -34,6 +34,8 @@ export interface ExecuteJobPayload {
   runId: string;
   executionId: string;
   executionVersion: number;
+  orgId?: string;
+  userId?: string;
   query?: string;
   fresh?: boolean;
   decision?: Record<string, unknown>;

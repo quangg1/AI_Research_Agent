@@ -40,12 +40,16 @@ def merge_unique_evidence(left: list[dict], right: list[dict]) -> list[dict]:
 
 class ResearchState(TypedDict, total=False):
     query: str
+    org_id: str
+    user_id: str
     thread_id: str
     last_execution_id: Annotated[str, overwrite]
     started_at: float
     query_type: QueryType | str
     brief: dict[str, Any]
     brief_confirmed: bool
+    plan_confirmed: bool
+    memo_confirmed: bool
     plan: dict[str, Any]
     agents_to_run: list[str]
     evidence: Annotated[list[dict], merge_unique_evidence]
@@ -68,6 +72,9 @@ class ResearchState(TypedDict, total=False):
     reuse_age_days: float
     prior_knowledge: dict[str, Any]
     prior_knowledge_id: str
+    integrity_retries: int
+    depth_retries: int
+    gap_micro_retries: int
 
 
 def budget_from(state: ResearchState) -> Budget:

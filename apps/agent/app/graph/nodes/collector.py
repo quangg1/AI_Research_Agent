@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.domain.citations import is_citable_url
+from app.domain.retrieval_limits import QDRANT_TOP_K, RETRIEVE_TOP_K
 from app.domain.coverage import tag_evidence_roles
 from app.domain.research_intent import demote_secondary
 from app.graph.serde import dump, pythonize
@@ -20,8 +21,9 @@ def collector_node(state: ResearchState) -> dict:
     tool_agents = [a for a in ran if a in TOOL_AGENTS]
     external_calls = _latest_external_calls(state.get("traces") or [])
     charged_calls = sum(external_calls) if external_calls else len(tool_agents)
-    budget.used_tool_calls += charged_calls
-    event("collector", n=len(evidence), used_tool_calls=budget.used_tool_calls)
+    budget.used_retrieval_calls += charged_calls
+    budget.sync_totals()
+    event("collector", n=len(evidence), used_tool_calls=budget.used_tool_calls, used_retrieval=budget.used_retrieval_calls)
     return {
         "evidence": evidence,
         "status": "collected",
@@ -53,7 +55,7 @@ def _latest_external_calls(traces: list[dict]) -> list[int]:
 def retrieve_node(state: ResearchState) -> dict:
     query = state["query"]
     evidence = tag_evidence_roles(list(state.get("evidence") or []), query)
-    extra = search_qdrant(query, k=8) or []
+    extra = search_qdrant(query, k=QDRANT_TOP_K) or []
     seen = {e.get("id") for e in evidence}
     for hit in extra:
         blob = f"{hit.get('title', '')} {hit.get('snippet', '')}"
@@ -70,7 +72,7 @@ def retrieve_node(state: ResearchState) -> dict:
         hybrid_retrieve(
             query,
             pool,
-            k=min(14, max(6, len(pool))),
+            k=min(RETRIEVE_TOP_K, max(8, len(pool))),
             use_llm_reranker=llm.available,
         )
         if pool

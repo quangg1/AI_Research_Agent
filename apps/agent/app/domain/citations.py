@@ -182,6 +182,56 @@ def format_reference_list(citations: list) -> str:
     return "\n".join(lines)
 
 
+TIER_INLINE = {
+    "peer_reviewed": "peer",
+    "official_regulation": "primary",
+    "standard_body": "primary",
+    "intergovernmental": "primary",
+    "specialist_research": "specialist",
+    "industry_association": "industry",
+    "news_analysis": "news",
+    "vendor_or_consultancy": "vendor",
+}
+
+INLINE_TIER_WORDS = frozenset(TIER_INLINE.values()) | {"repo"}
+MULTI_CITE_RE = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
+
+
+def inline_tier_label(citation: dict) -> str:
+    url = (citation.get("url") or "").lower()
+    if "github.com" in url or "gitlab.com" in url:
+        return "repo"
+    tier = (citation.get("tier") or "").strip().lower()
+    return TIER_INLINE.get(tier, "")
+
+
+def annotate_inline_citation_tiers(md: str, citations: list) -> str:
+    """Transform [3] → [3 peer] using ledger tier metadata."""
+    by_n = {_as_dict(c).get("n"): _as_dict(c) for c in citations if _as_dict(c).get("n")}
+
+    def _annotate_inner(inner: str) -> str:
+        if re.search(r"\d+\s+(?:" + "|".join(INLINE_TIER_WORDS) + r")\b", inner, re.I):
+            return inner
+        parts: list[str] = []
+        for token in re.split(r"\s*,\s*", inner):
+            token = token.strip()
+            if not token.isdigit():
+                parts.append(token)
+                continue
+            n = int(token)
+            label = inline_tier_label(by_n.get(n) or {})
+            parts.append(f"{n} {label}" if label else str(n))
+        return ", ".join(parts)
+
+    def _repl(match: re.Match) -> str:
+        inner = match.group(1)
+        if "## References" in (md[max(0, match.start() - 80) : match.start()]):
+            return match.group(0)
+        return f"[{_annotate_inner(inner)}]"
+
+    return MULTI_CITE_RE.sub(_repl, md or "")
+
+
 def bind_markdown_to_ledger(md: str, citations: list) -> str:
     """Drop invented links and bind exactly one References section."""
     allowed = {( _as_dict(c).get("url") or "").strip() for c in citations}

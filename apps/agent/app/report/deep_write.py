@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import re
 
-WORD_TARGET = {"quick": 900, "standard": 1800, "deep": 3200}
-REPORT_MAX_TOKENS = {"quick": 6144, "standard": 10000, "deep": 12000}
+WORD_TARGET = {"quick": 900, "standard": 2400, "deep": 5500}
+REPORT_MAX_TOKENS = {"quick": 6144, "standard": 12000, "deep": 24000}
 # Depth-aware note budgets (deep keeps more operational detail for the writer).
-NOTES_MAX_CHARS = {"quick": 20_000, "standard": 32_000, "deep": 48_000}
-ITEMS_PER_DIMENSION = {"quick": 4, "standard": 8, "deep": 12}
-QUOTE_CHARS = {"quick": 700, "standard": 1200, "deep": 2000}
+NOTES_MAX_CHARS = {"quick": 20_000, "standard": 40_000, "deep": 64_000}
+ITEMS_PER_DIMENSION = {"quick": 4, "standard": 10, "deep": 16}
+QUOTE_CHARS = {"quick": 700, "standard": 1400, "deep": 2800}
 COMPRESS_MAX_TOKENS = {"quick": 6144, "standard": 8192, "deep": 12288}
 # Deep research: skip the LLM clean pass — raw dossier notes go to the writer.
 SKIP_LLM_COMPRESS_DEPTHS = frozenset({"deep"})
@@ -56,6 +56,48 @@ def should_skip_llm_compress(depth: str = "standard") -> bool:
 
 def word_count(text: str) -> int:
     return len(re.findall(r"\S+", text or ""))
+
+
+def filter_dossier_for_writer(dossier: list[dict], *, depth: str = "standard") -> list[dict]:
+    """Prefer open gaps first but keep enough covered evidence for a long memo."""
+    if (depth or "standard").lower() != "deep":
+        return list(dossier or [])
+    out: list[dict] = []
+    for dim in dossier or []:
+        row = dict(dim)
+        if row.get("status") == "covered" and not row.get("critical"):
+            items = list(row.get("items") or [])
+            row["items"] = items[:4]
+        out.append(row)
+    return out
+
+
+def narrative_mode_block(*, depth: str) -> str:
+    if (depth or "standard").lower() == "quick":
+        return ""
+    return (
+        "Narrative mode (deep research readability):\n"
+        "- Concise means no repetition — NOT a short memo. Use the full word budget on NEW evidence.\n"
+        "- ## At a glance and ## Executive summary must read as flowing prose for a C-level reader, "
+        "not bullet dumps.\n"
+        "- Open Executive summary with the direct answer in the first sentence.\n"
+        "- Each ### under Detailed analysis: 250–450 words when notes support it — mechanism steps, "
+        "named systems, quoted numbers, and at least two distinct [n] sources where available.\n"
+    )
+
+
+def wants_visual_artifacts(query: str, brief: dict | None = None) -> bool:
+    """Deprecated — visual/code appendix removed from memo pipeline."""
+    return False
+
+
+def prioritize_dossier_for_writer(dossier: list[dict]) -> list[dict]:
+    """Open/weak dimensions first so the writer closes gaps before covered slots."""
+    rank = {"open": 0, "weak": 1, "unknown": 2, "covered": 3}
+    return sorted(
+        list(dossier or []),
+        key=lambda d: (rank.get(str(d.get("status") or "unknown").lower(), 2), str(d.get("id") or "")),
+    )
 
 
 def format_research_notes(
@@ -164,10 +206,13 @@ def writer_system() -> str:
         "Write a modern deep-research memo in the Open Deep Research style: "
         "answer-first, analytical prose, not a literature survey or template dump. "
         "No self-reference, no process narration, no Research plan section, "
-        "no internal telemetry, no ASCII architecture diagrams. Stay on the asked question. "
+        "no internal telemetry, no ASCII art diagrams, no fenced code blocks, no mermaid diagrams. "
+        "Stay on the asked question. "
         "Invent nothing. "
         "Hold two competing hypotheses in tension, but argue them ONCE in "
-        "'Contradictions & debates' — do not restate H1/H2 in every section. "
+        "'## Contradictions & debates' — never duplicate under Detailed analysis. "
+        "Never invent universal numeric laws (e.g. '15% synthetic is always safe') — "
+        "thresholds need [n] + source domain + 're-benchmark on your workload'. "
         "Never convert benchmark failures into metaphysical claims "
         "('no autonomy', 'unconstrained problem-solving') unless a cited source uses those words. "
         "Write professional reader prose — NEVER prefix sentences with bracket tags like "
@@ -181,8 +226,8 @@ def writer_system() -> str:
         "ISL/OSL token lengths, 'N runs', batch size, prompt length) — those belong in "
         "prose or Worked example, not the metrics table. "
         "Never invent scaffold rows filled with 'not reported' / 'Not reported' for "
-        "Latency, FLOP, or Cost — put those asked-but-missing metrics under 'Metric gaps' "
-        "as bullets instead. "
+        "Latency, FLOP, or Cost — list those missing metrics once under "
+        "## Uncertainties & gaps (Measurement gaps), not a separate Metric gaps block. "
         "Never invent a before→after causal story from two differently conditioned percentages. "
         "When the question names Scalability separately from Latency/Cost, analyze it in its own "
         "### subsection (KV-cache limits, GPU memory bandwidth, multi-node/cluster behavior, "
@@ -232,6 +277,7 @@ def writer_prompt(
         f"User question:\n{query}\n\n"
         f"Research brief:\n{brief}\n\n"
         f"{prior_note}"
+        f"{narrative_mode_block(depth=depth)}"
         f"{method_section}"
         f"Dimensions this answer must cover (each gets a ### under Detailed analysis):\n"
         f"{dimension_list}\n\n"
@@ -239,51 +285,61 @@ def writer_prompt(
         f"Citation ledger (ONLY these [n] are legal):\n{ledger}\n\n"
         "Write a reader-facing deep-research memo that ANSWERS the question.\n"
         f"Target length: at least {min_words} words of substantive prose. "
-        "Spend tokens on evidence, numbers, contradictions, mechanisms, and one worked example — "
-        "not on repeating the same thesis across sections.\n"
+        "Concise ≠ short: avoid repeating the same thesis, but DO use the full budget to surface "
+        "every distinct fact, metric, and named study from the notes.\n"
         "Anti-redundancy (critical):\n"
         "- Say each load-bearing argument and each % / ms / FLOP figure ONCE. "
-        "Elsewhere refer back ('see Quantitative findings' / 'see Hybrid pipeline').\n"
-        "- The core architectural thesis (e.g. uncertainty-/entropy-gated routing) appears "
-        "ONCE in Executive summary OR Hybrid architecture — Key findings, Contradictions, "
-        "and Decision rule must NOT re-chew the same mechanism; Decision rule gives "
-        "cutoffs/heuristics only, Contradictions only the H1/H2 tension.\n"
+        "Elsewhere use one cross-reference ('see Contradictions & debates').\n"
+        "- FORBIDDEN inside ## Detailed analysis ### subsections: "
+        "Contradictions, Counter-evidence, Open questions, or #### Counter-evidence blocks. "
+        "Those live ONLY in ## Contradictions & debates.\n"
+        "- Do NOT duplicate missing-metric lists: one home under ## Uncertainties & gaps.\n"
+        "- The core architectural thesis appears ONCE (Executive summary OR one ### under Analysis). "
+        "Key findings = distinct claims; Contradictions = H1/H2 tension; Decision rule = cutoffs only.\n"
         "- Do NOT include ## Research plan, ## Scope as a long list, ## Findings "
         "(use Key findings), or ## Competing hypotheses as a second H1/H2 dump.\n"
-        "- Detailed analysis must be ANALYTICAL (conclusion → evidence → nuance → cross-link), "
-        "not a repeated Evidence / Counter-evidence / Inference / Confidence stencil for every subsection.\n"
+        "- Detailed analysis must be ANALYTICAL (conclusion → evidence → nuance). "
+        "Each ### must add facts NOT already stated in Executive summary / Key findings. "
+        "No Evidence/Counter-evidence/Inference stencil per subsection.\n"
         "Method:\n"
         "- Extract numeric rows BEFORE leaning H1 or H2.\n"
         "- Path: answer → key findings → analysis → measured table → worked example → "
         "contradictions → decision → gaps.\n"
         "- FORBIDDEN in the memo body: [DIRECT], [INFERRED], [DERIVED], [RECOMMENDATION], "
         "[SPECULATIVE] tags — prose only; claim kinds belong in the claim-register extract, not the narrative.\n"
-        "- Every factual sentence carries an inline [n] from the ledger.\n"
+        "- Every factual sentence carries an inline [n] from the ledger (prefer 1–2 cites, not stacks of 3–4).\n"
         "- When a dimension lacks evidence, one honest sentence — no speculation.\n"
         f"- {comparison_rule}"
         "- Exclude critic status, tool-call counts, iteration stats, and quality scores.\n"
         "Required sections, in order (omit unused optional ones entirely):\n"
         "# <title>\n"
+        "## At a glance\n"
+        "  (Exactly 1–2 sentences: the decision or lean + top caveat. "
+        "MUST differ from Executive summary — no copy-paste.)\n"
         "## Executive summary\n"
-        "  (2–5 sentences: answer first, confidence, top caveat — no process talk, no epistemic tags)\n"
+        "  (3–6 sentences: analytical answer, evidence weight, main tension — no process talk)\n"
         "## Key findings\n"
         "  (4–8 numbered insights ordered by importance; each is a distinct claim + [n], "
         "not a paraphrase of the Executive summary thesis)\n"
         "## Detailed analysis\n"
         "  (### one subsection per dimension above, in that order. "
-        "If Scalability is listed, keep it separate from Latency/Cost. "
-        "Cross-reference other subsections. Prefer quotes/numbers over taxonomy.)\n"
+        "Each ###: analytical prose with mechanism + implication + cited numbers; "
+        "250–450 words per subsection when notes allow. "
+        "Mine ALL relevant bullets from notes — do not stop after one source per dimension. "
+        "If Scalability is listed, keep it separate from Latency/Cost.)\n"
         "## Quantitative findings\n"
         "  Markdown table ONLY for measured outcome metrics found in notes:\n"
         "  Metric | Value | Benchmark | Condition | Baseline | Source [n]\n"
         "  Include: accuracy/error %, latency, FLOPs, throughput, cost deltas.\n"
         "  Exclude: N studies/papers, ISL/OSL token lengths, N runs, batch/prompt size.\n"
         "  Forbidden: padding with Latency/FLOP/Cost rows set to 'not reported'.\n"
-        "  After the table, optional ### Metric gaps — bullets for asked metrics missing from notes.\n"
+        "  Forbidden: qualitative mechanism claims (e.g. 'eliminates hallucinations') — those belong in Analysis.\n"
+        "  Do NOT add ### Metric gaps here — missing metrics go to Uncertainties & gaps.\n"
         "## Worked example\n"
         "  (Required for deep / comparisons when notes name ≥2 systems: concrete token-flow or "
         "runtime walkthrough. Setup sizes like ISL/OSL belong here if needed. "
-        "If notes lack enough detail, say so in 2 sentences and omit padding.)\n"
+        "If notes lack measured numbers, open with 'Illustrative only — no measured run in sources' "
+        "and do NOT invent token counts or % thresholds. Every factual claim needs [n].)\n"
         "## Comparison (only if applicable)\n"
         "## Contradictions & debates\n"
         "  (Single home for H1 vs H2 + vendor-vs-independent disagreements; resolve with evidence weight; "
@@ -292,15 +348,21 @@ def writer_prompt(
         "  ### Empirical cutoffs (sources only)\n"
         "  ### Engineering heuristics (AI suggestion — not from papers; no full re-architecture dump)\n"
         "## Uncertainties & gaps\n"
-        "  (Genuine field/measurement gaps — not restatements of run Limits)\n"
+        "  (Single home for field unknowns AND missing measurements from sources. "
+        "Use ### Measurement gaps for metrics not in notes; do not repeat under Quantitative.)\n"
         "## Limitations\n"
+        "  (This run's evidence limits only — not a second gap list)\n"
         "## Source quality\n"
+        "  (Max ~5 bullets: ONE bullet per band label; merge ALL sources in that band into one "
+        "citation group e.g. [1, 6, 8, 9 peer] — never repeat the same bullet title with different cites.)\n"
         "## References\n"
         f"{claim_appendix}"
-        "Decision rule: Empirical cutoffs need measured thresholds with [n], or "
-        "'Evidence-backed threshold: none.' Engineering heuristics are qualitative only — "
-        "FORBIDDEN to invent numeric cutoffs like '15 tool schemas' or '65% context' "
-        "unless a citation measured that exact threshold.\n"
+        "Decision rule: ### Empirical cutoffs — ONLY thresholds explicitly measured in a cited source "
+        "[n], with benchmark/domain named. Append 'Re-benchmark before applying elsewhere.' "
+        "If none: write 'Evidence-backed threshold: none.' "
+        "### Engineering heuristics — qualitative guidance only; NO numeric % cutoffs unless copied "
+        "from a citation with domain scope. FORBIDDEN: universal laws like 'synthetic data must stay "
+        "below 15%' without [n] and without naming the paper's experimental regime.\n"
         "Write markdown only. Do not wrap the memo in JSON. "
         "Math: wrap display equations in $$…$$ on their own lines; "
         "inline vars as $b$, $d_{head}$ — never leave an unclosed $ before prose."
@@ -313,13 +375,15 @@ def claims_prompt(body: str, citations: list[dict]) -> str:
         "Extract grounded claims from this memo. JSON only: "
         "{claims: [{id, text, quote, url, tier, support_ids, contradict_ids, confidence, caveats, "
         "kind, published, locator, quality_band, provenance}], "
-        "limitations: [str], open_questions: [str], decision_rule: str, title: str, executive_summary: str}.\n"
+        "limitations: [str], open_questions: [str], decision_rule: str, title: str, "
+        "executive_summary: str, at_a_glance: str}.\n"
         "kind is direct | derived | inferred | recommendation | speculative. "
         "provenance is measured | author_assumption | secondhand | unknown "
         "(author_assumption when the source uses estimate/assume/illustrative compute). "
         "locator is section/table/page if the memo states it. "
         "quality_band is S|A|B|C (GitHub awesome-lists = C). published is a year if present. "
         "Do not promote an inference to paper_says.\n"
+        "Each direct claim MUST include a verbatim quote (12+ chars) copied from the cited source.\n"
         f"Ledger:\n{ledger}\n\nMemo:\n{body[:12000]}"
     )
 
@@ -331,6 +395,7 @@ def parse_report_markdown(markdown: str) -> dict[str, str | list[str]]:
     if first.startswith("# "):
         title = first[2:].strip()
     exec_summary = _section(text, "Executive summary")
+    at_glance = _section(text, "At a glance")
     decision = _section(text, "Decision rule")
     limitations_raw = _section(text, "Limitations")
     limitations = [
@@ -340,6 +405,7 @@ def parse_report_markdown(markdown: str) -> dict[str, str | list[str]]:
     ]
     return {
         "title": title,
+        "at_a_glance": at_glance,
         "executive_summary": exec_summary,
         "decision_rule": decision,
         "limitations": limitations[:12],

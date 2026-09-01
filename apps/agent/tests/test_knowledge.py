@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.domain import knowledge
 from app.domain.schema import Budget
-from app.graph.builder import after_planner
+from app.graph.builder import after_plan_gate, after_planner
 from app.graph.nodes.planner import _knowledge_hit
 from app.main import app
 
@@ -144,7 +144,7 @@ def test_a_fresh_run_ignores_the_stored_answer():
 def test_cached_hit_routes_straight_to_report():
     state = {"reuse_mode": "cached", "prior_knowledge": {"id": "abc"}, "agents_to_run": []}
     assert after_planner(state) == "report"
-    assert after_planner({"reuse_mode": "augment", "agents_to_run": ["search"]}) == [
+    assert after_plan_gate({"reuse_mode": "augment", "agents_to_run": ["search"]}) == [
         "search",
         "scholar",
         "docs",

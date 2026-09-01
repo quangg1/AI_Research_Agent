@@ -28,9 +28,16 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection: str = "kiln_evidence"
 
-    max_tool_calls: int = 24
+    max_tool_calls: int = 52  # legacy env; pools set by configure_budget_pools("deep")
     max_input_tokens: int = 80_000
-    max_iterations: int = 5
+    max_iterations: int = 6
+
+    # Showcase / benchmark runs: higher pools so coverage gate rarely stops on budget.
+    showcase_mode: bool = False
+    showcase_retrieval_pool: int = 48
+    showcase_enrich_pool: int = 36
+    showcase_max_iterations: int = 10
+    showcase_reserve_calls: int = 3
 
     # Answer reuse: how close a past question must be before its memo is reused.
     knowledge_enabled: bool = True
@@ -65,6 +72,11 @@ class Settings(BaseSettings):
         if name == "grok":
             return self.grok_secret()
         return ""
+
+    def tavily_keys(self) -> list[str]:
+        from app.llm.providers import split_api_keys
+
+        return split_api_keys(self.tavily_api_key)
 
     def platform_keys(self, provider: str) -> list[str]:
         from app.llm.providers import split_api_keys

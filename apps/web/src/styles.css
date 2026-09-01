@@ -24,6 +24,11 @@ body {
   overflow-x: auto;
 }
 button, textarea, input, select { font: inherit; color: inherit; }
+textarea, input[type="text"], input[type="search"], input[type="email"], input[type="password"] {
+  background-color: #0b0d18;
+  color: var(--text);
+  border: 1px solid var(--line);
+}
 button { cursor: pointer; }
 a { color: var(--ember); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -199,6 +204,8 @@ a:hover { text-decoration: underline; }
 .btn.primary:disabled { opacity: 0.45; cursor: not-allowed; }
 .btn.primary.is-busy:disabled { cursor: wait; }
 .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.auth-gate { max-width: 640px; margin: 48px auto; text-align: center; }
+.auth-gate .btn-row { justify-content: center; margin-top: 16px; }
 
 .suggest { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .badge {
@@ -420,6 +427,13 @@ a:hover { text-decoration: underline; }
   word-break: break-word;
   white-space: normal;
   max-width: 100%;
+}
+.decision-confidence strong { display: block; }
+.decision-breakdown {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
 }
 .decision-revisit {
   min-width: 0;
@@ -951,6 +965,18 @@ a:hover { text-decoration: underline; }
 }
 .memo-metrics { margin: 0 0 16px; }
 .coverage-grid { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 16px; }
+.coverage-grid-gate { margin-bottom: 12px; }
+.coverage-gate-warn {
+  background: #3a2414;
+  border: 1px solid color-mix(in srgb, var(--warn) 55%, var(--line));
+  color: var(--warn);
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+.coverage-gate-warn p { margin: 6px 0 0; color: var(--ink); opacity: 0.92; }
+.coverage-gate-warn strong { color: var(--warn); }
 .coverage-chip {
   font-size: 11px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 4px;
   color: var(--muted); background: transparent;
@@ -1103,6 +1129,84 @@ sup.cite { color: var(--ember); font-size: 11px; font-weight: 600; vertical-alig
 }
 .brief-table select { height: 40px; }
 .brief-actions { margin-top: 16px; }
+
+.plan-subqueries {
+  list-style: decimal;
+  margin: 12px 0 0;
+  padding-left: 1.2em;
+  display: grid;
+  gap: 10px;
+}
+.plan-subqueries li { display: grid; gap: 6px; }
+.brief-panel,
+.plan-panel {
+  color-scheme: dark;
+}
+
+.plan-panel .plan-subqueries textarea,
+.plan-subquery-input,
+.plan-subqueries textarea {
+  width: 100%;
+  min-height: 72px;
+  background-color: #0b0d18 !important;
+  border: 1px solid var(--line-2) !important;
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: #eef1ff !important;
+  -webkit-text-fill-color: #eef1ff !important;
+  caret-color: #eef1ff !important;
+  resize: vertical;
+  line-height: 1.45;
+  opacity: 1;
+}
+.plan-panel .plan-subqueries textarea:disabled,
+.plan-subquery-input:disabled {
+  opacity: 0.85;
+  color: #eef1ff !important;
+  -webkit-text-fill-color: #eef1ff !important;
+}
+.plan-panel .plan-subqueries textarea:-webkit-autofill,
+.plan-panel .plan-subqueries textarea:-webkit-autofill:hover,
+.plan-panel .plan-subqueries textarea:-webkit-autofill:focus,
+.plan-subquery-input:-webkit-autofill,
+.plan-subquery-input:-webkit-autofill:hover,
+.plan-subquery-input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px #0b0d18 inset !important;
+  box-shadow: 0 0 0 1000px #0b0d18 inset !important;
+  -webkit-text-fill-color: #eef1ff !important;
+  caret-color: #eef1ff !important;
+  transition: background-color 99999s ease-out;
+}
+.plan-agent {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ember);
+}
+.research-trace {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+.research-trace-head {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.trace-query { margin: 4px 0 0; font-size: 12px; color: var(--text); }
+.research-trace .sub { color: var(--muted); }
+.draft-panel .draft-preview {
+  max-height: 320px;
+  overflow: auto;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.02);
+}
 
 .degraded-banner {
   position: sticky; top: 0; z-index: 25;

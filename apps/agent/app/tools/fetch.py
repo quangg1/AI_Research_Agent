@@ -10,25 +10,62 @@ import httpx
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
 
-from app.domain.citations import looks_like_nav_chrome
-from app.domain.schema import ALLOWED_DOC_HOSTS, AgentName
+import ipaddress
+
+from app.domain.citations import is_citable_url, looks_like_nav_chrome
+from app.domain.schema import AgentName
 from app.domain.credibility import credibility_score, host_of
 from app.observability.logging import logger
 
 TAG_RE = re.compile(r"<script[\s\S]*?</script>|<style[\s\S]*?</style>|<[^>]+>", re.I)
 SPACE_RE = re.compile(r"\s+")
+TABLE_ROW_RE = re.compile(r"^(\s*\S+(?:\s{2,}|\t|\|)\S+.*){2,}$")
+INJECTION_PATTERNS = (
+    re.compile(r"ignore\s+(all\s+)?(previous|prior)\s+instructions", re.I),
+    re.compile(r"disregard\s+(the\s+)?(above|system)\s+", re.I),
+    re.compile(r"<\s*/?\s*system\s*>", re.I),
+    re.compile(r"^\s*system\s*:\s*", re.I | re.M),
+    re.compile(r"you\s+are\s+now\s+(?:a|an)\s+", re.I),
+    re.compile(r"developer\s+message\s*:", re.I),
+)
 MAX_DOWNLOAD_BYTES = 5 * 1024 * 1024
 MAX_EXTRACTED_CHARS = 40_000
 MAX_PDF_PAGES = 40
 
 
-def is_allowed(url: str) -> bool:
+BLOCKED_FETCH_HOSTS = {
+    "localhost",
+    "127.0.0.1",
+    "0.0.0.0",
+    "::1",
+    "metadata.google.internal",
+}
+BLOCKED_FETCH_SUFFIXES = (".local", ".internal")
+
+
+def is_fetchable(url: str) -> bool:
+    """True for specific citable http(s) pages, excluding private/blocked hosts."""
+    if not is_citable_url(url):
+        return False
     host = host_of(url)
     if not host:
         return False
-    if host in ALLOWED_DOC_HOSTS:
-        return True
-    return any(host.endswith(f".{h}") or host == h for h in ALLOWED_DOC_HOSTS)
+    if host in BLOCKED_FETCH_HOSTS:
+        return False
+    if any(host.endswith(suffix) for suffix in BLOCKED_FETCH_SUFFIXES):
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+        if ip.is_private or ip.is_loopback or ip.is_link_local:
+            return False
+    except ValueError:
+        pass
+    return True
+
+
+def is_allowed(url: str) -> bool:
+    """Backward-compatible alias — any citable public URL may be fetched."""
+    return is_fetchable(url)
 
 
 def strip_html(raw: str) -> str:
@@ -40,6 +77,29 @@ def strip_html(raw: str) -> str:
     text = root.get_text(" ", strip=True)
     text = html.unescape(text)
     return SPACE_RE.sub(" ", text).strip()
+
+
+def sanitize_fetched_content(text: str) -> str:
+    """Strip common prompt-injection patterns from untrusted page text."""
+    if not text:
+        return ""
+    cleaned: list[str] = []
+    for line in text.splitlines():
+        if any(pattern.search(line) for pattern in INJECTION_PATTERNS):
+            cleaned.append("[filtered untrusted instruction]")
+            continue
+        cleaned.append(line)
+    return "\n".join(cleaned).strip()
+
+
+def _annotate_table_rows(text: str) -> str:
+    rows: list[str] = []
+    for line in text.splitlines():
+        if TABLE_ROW_RE.match(line.strip()):
+            rows.append(f"[table] {line.strip()}")
+        else:
+            rows.append(line)
+    return "\n".join(rows)
 
 
 def extract_content(raw: bytes, content_type: str = "") -> str:
@@ -57,7 +117,8 @@ def extract_content(raw: bytes, content_type: str = "") -> str:
                 chars += len(text)
                 if chars >= MAX_EXTRACTED_CHARS:
                     break
-            return SPACE_RE.sub(" ", " ".join(pages)).strip()[:MAX_EXTRACTED_CHARS]
+            body = SPACE_RE.sub(" ", " ".join(pages)).strip()[:MAX_EXTRACTED_CHARS]
+            return sanitize_fetched_content(_annotate_table_rows(body))
         except Exception as exc:
             logger.warning("pdf_extract_failed %s", exc)
             return ""
@@ -65,7 +126,7 @@ def extract_content(raw: bytes, content_type: str = "") -> str:
     match = re.search(r"charset=([\w-]+)", content_type, re.I)
     if match:
         encoding = match.group(1)
-    return strip_html(raw.decode(encoding, errors="replace"))[:MAX_EXTRACTED_CHARS]
+    return sanitize_fetched_content(strip_html(raw.decode(encoding, errors="replace"))[:MAX_EXTRACTED_CHARS])
 
 
 def fetch_url(url: str, timeout: float = 12.0) -> str:

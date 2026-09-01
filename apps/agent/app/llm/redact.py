@@ -19,7 +19,7 @@ _SECRET_KEYS = {
 
 _KEY_SHAPE = re.compile(
     r"(?i)(sk-[A-Za-z0-9_-]{10,}|AIza[A-Za-z0-9_-]{10,}|xai-[A-Za-z0-9_-]{10,}"
-    r"|hf_[A-Za-z0-9_-]{10,}|Bearer\s+\S+)"
+    r"|tvly-[A-Za-z0-9_-]{10,}|hf_[A-Za-z0-9_-]{10,}|Bearer\s+\S+)"
 )
 
 
@@ -30,6 +30,7 @@ def platform_secrets() -> tuple[str, ...]:
         settings.openai_api_key,
         settings.xai_api_key,
         settings.grok_api_key,
+        settings.tavily_api_key,
     ):
         secrets.extend(split_api_keys(raw))
     return tuple(secrets)

@@ -2,6 +2,8 @@
 .env
 .env.local
 *.pem
+infra/oracle/retry.env
+infra/oracle/retry-*.log
 
 # python
 __pycache__/

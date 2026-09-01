@@ -44,6 +44,7 @@ export const ResumeResearchRequestSchema = z.object({
   notes: z.string().optional(),
   extra_questions: z.array(z.string()).optional(),
   brief: z.record(z.unknown()).optional(),
+  plan: z.record(z.unknown()).optional(),
   llm: LlmRequestSchema.optional(),
 });
 export type ResumeResearchRequest = z.infer<typeof ResumeResearchRequestSchema>;
@@ -125,9 +126,13 @@ export type CorpusItem = z.infer<typeof CorpusItemSchema>;
 
 export const CorpusStatsSchema = z.object({
   documents: z.number(),
+  org_documents: z.number().optional(),
+  global_documents: z.number().optional(),
+  org_id: z.string().optional(),
   hosts: z.record(z.number()).optional(),
   tiers: z.record(z.number()).optional(),
   items: z.array(CorpusItemSchema).optional(),
+  uploads: z.array(z.record(z.unknown())).optional(),
   generation: z.number().optional(),
 });
 export type CorpusStats = z.infer<typeof CorpusStatsSchema>;

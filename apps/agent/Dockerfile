@@ -19,9 +19,10 @@ COPY infra/postgres/migrations/002_knowledge_corpus.sql /app/migrations/002_know
 COPY infra/postgres/migrations/003_tenancy.sql /app/migrations/003_tenancy.sql
 COPY infra/postgres/migrations/004_evidence_graph.sql /app/migrations/004_evidence_graph.sql
 COPY infra/postgres/migrations/005_parent_run.sql /app/migrations/005_parent_run.sql
+COPY infra/postgres/migrations/006_corpus_tenancy.sql /app/migrations/006_corpus_tenancy.sql
 
 COPY apps/agent/scripts/render-start.sh /app/render-start.sh
-RUN chmod +x /app/render-start.sh
+RUN sed -i 's/\r$//' /app/render-start.sh && chmod +x /app/render-start.sh
 
 EXPOSE 8000
 # Render injects PORT; local compose still works via same entrypoint.

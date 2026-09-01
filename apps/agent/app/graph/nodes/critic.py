@@ -9,6 +9,8 @@ from app.domain.coverage import (
     score_must_answer,
     tag_evidence_roles,
 )
+from app.domain.coverage_gate import compute_coverage_gate
+from app.domain.research_depth import effective_depth
 from app.domain.research_intent import topic_leakage_reasons, user_goal
 from app.domain.schema import CriticVerdict
 from app.graph.serde import dump
@@ -22,6 +24,8 @@ def critic_node(state: ResearchState) -> dict:
     retrieved = tag_evidence_roles(state.get("retrieved") or state.get("evidence") or [], query)
     budget = budget_from(state)
     brief = state.get("brief") or {}
+    depth = effective_depth(brief)
+    gap_limit = {"quick": 2, "standard": 3, "deep": 4}.get(depth, 3)
     slots = brief.get("must_answer") or must_answer_for(query)
     coverage = score_must_answer(query, retrieved, slots)
 
@@ -82,7 +86,7 @@ def critic_node(state: ResearchState) -> dict:
     if not ok:
         verdict.status = "insufficient" if verdict.status != "contradicted" else verdict.status
         if can_loop:
-            verdict.followup_queries = followups_for_gaps(query, coverage, limit=2)
+            verdict.followup_queries = followups_for_gaps(query, coverage, limit=gap_limit)
     elif verdict.status == "sufficient" and not can_loop:
         pass
     elif ok and verdict.status != "contradicted":
@@ -91,7 +95,7 @@ def critic_node(state: ResearchState) -> dict:
 
     if not can_loop:
         # Budget exhausted: preserve follow-up intent for terminal synthesis
-        pending = verdict.followup_queries or (followups_for_gaps(query, coverage, limit=2) if not ok else [])
+        pending = verdict.followup_queries or (followups_for_gaps(query, coverage, limit=gap_limit) if not ok else [])
         stored_followups = [dump(q) for q in pending]
         verdict.followup_queries = []
         if not ok and verdict.status == "sufficient":
@@ -99,11 +103,21 @@ def critic_node(state: ResearchState) -> dict:
     else:
         stored_followups = []
 
+    gate = compute_coverage_gate(
+        coverage_ok=ok,
+        critic_status=verdict.status,
+        budget=budget,
+        can_loop=can_loop,
+    )
+    verdict.gate_reason = gate["gate_reason"]
+    verdict.coverage_gate = gate
+
     claims = state.get("claims") or claims_from_must_answer(coverage, retrieved)
 
     event(
         "critic",
         status=verdict.status,
+        gate_reason=gate["gate_reason"],
         followups=len(verdict.followup_queries),
         iteration=budget.iterations,
         coverage=coverage.get("ratio"),
@@ -126,6 +140,7 @@ def critic_node(state: ResearchState) -> dict:
                 "coverage_ratio": coverage.get("ratio"),
                 "depth_score": (coverage.get("depth_score") or {}).get("score"),
                 "depth_label": (coverage.get("depth_score") or {}).get("label"),
+                "gate_reason": gate["gate_reason"],
                 "gaps": [g.get("id") for g in (coverage.get("critical_gaps") or [])],
             }
         ],

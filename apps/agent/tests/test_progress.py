@@ -52,6 +52,49 @@ def test_annotate_brief_interrupt_stays_on_briefing():
     assert out["current_node"] == "briefing"
 
 
+def test_resume_after_plan_goes_to_search():
+    nxt = _next_node_after_resume({"interrupt": {"type": "plan_review"}}, {"action": "start"})
+    assert nxt == "search"
+
+
+def test_resume_after_memo_draft():
+    assert _next_node_after_resume({"interrupt": {"type": "memo_draft"}}, {"action": "publish"}) == "memo_gate"
+    assert _next_node_after_resume({"interrupt": {"type": "memo_draft"}}, {"action": "revise_critic"}) == "critic"
+
+
+def test_annotate_includes_research_trace():
+    out = _annotate(
+        {
+            "status": "running",
+            "values": {
+                "traces": [
+                    {"node": "search", "active_sub_query": "vLLM batching", "active_agent": "search", "source_tier": "official_regulation"}
+                ]
+            },
+        }
+    )
+    assert out["research_trace"]["active_agent"] == "search"
+    assert "vLLM" in out["research_trace"]["active_sub_query"]
+
+
+def test_annotate_parallel_research_nodes():
+    out = _annotate(
+        {
+            "status": "running",
+            "current_node": "plan_gate",
+            "next": ["search", "scholar", "docs"],
+            "values": {
+                "traces": [
+                    {"node": "plan_gate", "skipped": True},
+                    {"node": "scholar", "active_sub_query": "MoE routing latency", "active_agent": "scholar"},
+                ]
+            },
+        }
+    )
+    assert out["current_node"] == "scholar"
+    assert "MoE" in out["research_trace"]["active_sub_query"]
+
+
 def test_annotate_after_approve_shows_report_not_review():
     out = _annotate(
         {

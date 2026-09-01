@@ -259,9 +259,14 @@ def score_must_answer(query: str, evidence: list[dict], slots: list[dict] | None
             slot["evidence_type"] = ""
             continue
         best = hits[0]
+        ev_type = evidence_type_of(best, query)
+        is_primary = ev_type in {"primary_paper", "official_repo", "official_docs"}
         strong = (
             best.get("_aspect", 0) >= 1
-            and best.get("_topic", 0) >= 2
+            and (
+                best.get("_topic", 0) >= 2
+                or (is_primary and best.get("_topic", 0) >= 1)
+            )
             and not is_secondary_host(best.get("url") or "")
         )
         slot["status"] = "covered" if strong else "weak"
@@ -274,6 +279,7 @@ def score_must_answer(query: str, evidence: list[dict], slots: list[dict] | None
     total = max(1, len(slots))
     critical_slots = [s for s in slots if s.get("critical")]
     crit_covered = sum(1 for s in critical_slots if s["status"] == "covered")
+    crit_weak = sum(1 for s in critical_slots if s["status"] == "weak")
     crit_total = max(1, len(critical_slots))
     critical_gaps = [s for s in critical_slots if s["status"] != "covered"]
 
@@ -292,6 +298,7 @@ def score_must_answer(query: str, evidence: list[dict], slots: list[dict] | None
         open_n=open_n,
         total=total,
         crit_covered=crit_covered,
+        crit_weak=crit_weak,
         crit_total=crit_total,
         official_impls=len(official_impls),
         primary_n=primary_n,
@@ -342,6 +349,7 @@ def _research_quality(
     open_n: int,
     total: int,
     crit_covered: int,
+    crit_weak: int,
     crit_total: int,
     official_impls: int,
     primary_n: int,
@@ -350,7 +358,8 @@ def _research_quality(
     critical_gaps: list,
 ) -> dict[str, Any]:
     must_pct = int(round(100 * covered / max(1, total)))
-    crit_pct = int(round(100 * crit_covered / max(1, crit_total)))
+    crit_effective = crit_covered + 0.5 * crit_weak
+    crit_pct = int(round(100 * crit_effective / max(1, crit_total)))
     primary_pct = int(round(100 * min(1.0, primary_n / max(3, total // 2))))
     cross_pct = int(round(100 * min(1.0, covered / 4)))
     diversity_pct = int(round(100 * min(1.0, unique_hosts / 4)))

@@ -267,6 +267,39 @@ def test_is_credits_error_detects_quota_not_generic_rate_limit():
     assert is_retryable_slot_error(429, "429 RESOURCE_EXHAUSTED. Please try again later.")
 
 
+def test_retryable_429_tries_every_gemini_key_before_pause(monkeypatch):
+    monkeypatch.setattr("app.llm.client.settings.google_api_key", "")
+    monkeypatch.setattr("app.llm.client.settings.openai_api_key", "")
+    monkeypatch.setattr("app.llm.client.settings.xai_api_key", "")
+    monkeypatch.setattr("app.llm.client.settings.grok_api_key", "")
+    seen: list[str] = []
+
+    def fake_init(self, api_key):
+        self._gemini = object()
+        self.mode = "gemini"
+
+    def fake_gemini(self, *args, **kwargs):
+        self._note_attempt()
+        seen.append(self._api_key)
+        raise self._slot_failed(credits=False, reason="retryable")
+
+    monkeypatch.setattr(LLMClient, "_init_gemini", fake_init)
+    monkeypatch.setattr(LLMClient, "_generate_gemini", fake_gemini)
+    client = LLMClient(
+        provider="gemini",
+        api_key="AIza-first-xxxxxxxx;AIza-second-yyyyyyyy;AIza-third-zzzzzzzz",
+        use_env=False,
+    )
+    with pytest.raises(CreditsExhaustedError):
+        client.generate("hello")
+    assert seen == [
+        "AIza-first-xxxxxxxx",
+        "AIza-second-yyyyyyyy",
+        "AIza-third-zzzzzzzz",
+    ]
+    client.close()
+
+
 def test_gemini_second_key_is_called_after_first_credits(monkeypatch):
     monkeypatch.setattr("app.llm.client.settings.google_api_key", "")
     monkeypatch.setattr("app.llm.client.settings.openai_api_key", "")

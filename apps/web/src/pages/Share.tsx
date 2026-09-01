@@ -55,12 +55,14 @@ export function SharedMemoView({ run }: { run: any }) {
     <>
       <DecisionCard
         decisionRule={report?.decision_rule}
+        atAGlance={report?.at_a_glance}
         executiveSummary={
           report?.executive_summary ||
           (bodyMd.match(/^##\s+Executive summary\s*\n+([\s\S]*?)(?=\n##\s|\n#\s|$)/i)?.[1] || "")
         }
         confidence={metrics.depth_score != null ? Number(metrics.depth_score) : null}
         confidenceLabel={metrics.depth_label ? String(metrics.depth_label) : undefined}
+        confidenceBreakdown={metrics.confidence_breakdown}
       />
       <div className={`memo-layout share-memo has-sources${citeOpen != null ? " has-drawer" : ""}`}>
         <MemoToc markdown={tocSource} onJump={jumpToc} />

@@ -97,26 +97,45 @@ def _row_to_record(row: dict[str, Any]) -> dict[str, Any]:
     return answer
 
 
-def load_records() -> list[dict[str, Any]]:
+def load_records(org_id: str | None = None) -> list[dict[str, Any]]:
     if _backend() == "memory":
         with _STORE_LOCK:
-            return [
+            rows = [
                 dict(row) for row in _MEMORY if row.get("status", "active") == "active"
             ]
+            if org_id:
+                rows = [row for row in rows if row.get("org_id") == org_id]
+            return rows
     try:
         with transaction() as conn:
-            rows = conn.execute(
-                """
-                SELECT id, goal, answer, citations, embedding, embedding_model,
-                       fingerprint, queries, depth_score, reuse_count, status,
-                       version, active, last_reused_at, created_at, updated_at
-                FROM knowledge_records
-                WHERE active = TRUE AND status = 'active'
-                ORDER BY updated_at DESC
-                LIMIT %s
-                """,
-                (int(settings.knowledge_max_records),),
-            ).fetchall()
+            if org_id:
+                rows = conn.execute(
+                    """
+                    SELECT id, goal, answer, citations, embedding, embedding_model,
+                           fingerprint, queries, depth_score, reuse_count, status,
+                           version, active, last_reused_at, created_at, updated_at,
+                           org_id, created_by
+                    FROM knowledge_records
+                    WHERE active = TRUE AND status = 'active' AND org_id = %s
+                    ORDER BY updated_at DESC
+                    LIMIT %s
+                    """,
+                    (org_id, int(settings.knowledge_max_records)),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT id, goal, answer, citations, embedding, embedding_model,
+                           fingerprint, queries, depth_score, reuse_count, status,
+                           version, active, last_reused_at, created_at, updated_at,
+                           org_id, created_by
+                    FROM knowledge_records
+                    WHERE active = TRUE AND status = 'active'
+                    ORDER BY updated_at DESC
+                    LIMIT %s
+                    """,
+                    (int(settings.knowledge_max_records),),
+                ).fetchall()
         return [_row_to_record(row) for row in rows]
     except Exception:
         if settings.persistence_required:
@@ -125,7 +144,50 @@ def load_records() -> list[dict[str, Any]]:
         return []
 
 
-def lookup(query: str) -> KnowledgeHit | None:
+FRESHNESS_DAYS_BY_TYPE = {
+    "factual": 21,
+    "comparison": 14,
+    "open_research": 7,
+}
+
+
+def _fresh_days_for(record: dict[str, Any]) -> float:
+    qtype = str(record.get("query_type") or record.get("answer", {}).get("query_type") or "factual")
+    return float(FRESHNESS_DAYS_BY_TYPE.get(qtype, settings.knowledge_fresh_days))
+
+
+def partial_evidence(record: dict[str, Any]) -> list[dict[str, Any]]:
+    """Seed augment runs with high-confidence prior claims plus citations."""
+    out = seed_evidence(record)
+    seen = {e.get("url") for e in out}
+    for claim in record.get("claims") or []:
+        if not isinstance(claim, dict):
+            continue
+        if float(claim.get("confidence") or 0) < 0.65:
+            continue
+        url = claim.get("url") or ""
+        if url and url in seen:
+            continue
+        out.append(
+            {
+                "id": f"kclaim-{claim.get('slot_id') or len(out)}",
+                "title": (claim.get("text") or "Prior claim")[:200],
+                "url": url,
+                "snippet": (claim.get("quote") or claim.get("text") or "")[:800],
+                "quote": (claim.get("quote") or "")[:400],
+                "tier": claim.get("tier") or "unknown",
+                "credibility": float(claim.get("confidence") or 0.65),
+                "source_agent": "search",
+                "source_kind": "knowledge_partial",
+                "reused_from": record.get("id"),
+            }
+        )
+        if url:
+            seen.add(url)
+    return out[:16]
+
+
+def lookup(query: str, org_id: str | None = None) -> KnowledgeHit | None:
     if not settings.knowledge_enabled:
         return None
     goal = user_goal(query) or (query or "")
@@ -135,7 +197,7 @@ def lookup(query: str) -> KnowledgeHit | None:
     vector = _embed(goal)
     model = _embedding_model()
     best: tuple[float, float, dict[str, Any]] | None = None
-    for row in load_records():
+    for row in load_records(org_id):
         stored = row.get("embedding") or []
         same_model = (row.get("embedding_model") or "") == model
         sim = cosine(vector, stored) if vector and stored and same_model else 0.0
@@ -148,9 +210,8 @@ def lookup(query: str) -> KnowledgeHit | None:
     score, overlap, row = best
     age_days = max(0.0, (time.time() - _timestamp(row.get("updated_at"))) / 86400.0)
     if score >= float(settings.knowledge_reuse_similarity) and overlap >= 0.5:
-        mode = (
-            "cached" if age_days <= float(settings.knowledge_fresh_days) else "augment"
-        )
+        fresh_days = _fresh_days_for(row)
+        mode = "cached" if age_days <= fresh_days else "augment"
         return KnowledgeHit(row, round(score, 4), mode, round(age_days, 2))
     if score >= float(settings.knowledge_augment_similarity):
         return KnowledgeHit(row, round(score, 4), "augment", round(age_days, 2))
@@ -191,6 +252,9 @@ def save_answer(
     report: dict[str, Any],
     coverage: dict[str, Any] | None = None,
     prior_id: str | None = None,
+    *,
+    org_id: str | None = None,
+    user_id: str | None = None,
 ) -> dict[str, Any] | None:
     if not settings.knowledge_enabled:
         return None
@@ -202,6 +266,10 @@ def save_answer(
     ).strip():
         return None
     fresh = _record_from_report(goal, report, coverage)
+    if org_id:
+        fresh["org_id"] = org_id
+    if user_id:
+        fresh["created_by"] = user_id
     if _backend() == "memory":
         return _memory_save(fresh, prior_id)
     try:
@@ -229,7 +297,7 @@ def save_answer(
                     """,
                     (prior_id,),
                 )
-            _insert(conn, record)
+            _insert(conn, record, org_id=org_id, user_id=user_id)
             return record
     except Exception:
         if settings.persistence_required:
@@ -255,7 +323,13 @@ def _memory_save(fresh: dict[str, Any], prior_id: str | None) -> dict[str, Any]:
         return dict(record)
 
 
-def _insert(conn, record: dict[str, Any]) -> None:
+def _insert(
+    conn,
+    record: dict[str, Any],
+    *,
+    org_id: str | None = None,
+    user_id: str | None = None,
+) -> None:
     answer = {
         key: value
         for key, value in record.items()
@@ -283,10 +357,10 @@ def _insert(conn, record: dict[str, Any]) -> None:
         INSERT INTO knowledge_records
             (id, goal, answer, citations, embedding, embedding_model, fingerprint,
              queries, depth_score, reuse_count, status, version, active,
-             last_reused_at, created_at, updated_at)
+             last_reused_at, created_at, updated_at, org_id, created_by)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE,
                 CASE WHEN %s > 0 THEN to_timestamp(%s) ELSE NULL END,
-                to_timestamp(%s), to_timestamp(%s))
+                to_timestamp(%s), to_timestamp(%s), %s, %s)
         """,
         (
             record["id"],
@@ -305,6 +379,8 @@ def _insert(conn, record: dict[str, Any]) -> None:
             _timestamp(record.get("last_reused_at")),
             record.get("created_at") or time.time(),
             record.get("updated_at") or time.time(),
+            org_id or record.get("org_id"),
+            user_id or record.get("created_by"),
         ),
     )
 
@@ -376,10 +452,11 @@ def mark_reused(record_id: str) -> None:
         logger.exception("knowledge_mark_reused_failed")
 
 
-def stats() -> dict[str, Any]:
-    records = load_records()
+def stats(org_id: str | None = None) -> dict[str, Any]:
+    records = load_records(org_id)
     return {
         "records": len(records),
+        "org_id": org_id,
         "backend": _backend(),
         "total_reuse": sum(int(r.get("reuse_count") or 0) for r in records),
         "avg_depth": round(
@@ -428,6 +505,7 @@ def _record_from_report(
         "citations": _slim_citations(report.get("citations") or []),
         "slots": _slim_slots((coverage or {}).get("slots") or []),
         "depth_score": depth,
+        "query_type": metrics.get("query_type") or report.get("query_type") or "factual",
         "version": 1,
         "reuse_count": 0,
         "status": "active",

@@ -42,6 +42,8 @@ export class AgentExecutionClient {
             executionId: payload.executionId,
             query: payload.query,
             fresh: payload.fresh === true,
+            ...(payload.orgId ? { orgId: payload.orgId } : {}),
+            ...(payload.userId ? { userId: payload.userId } : {}),
             ...(llm ? { llm: agentLlmPayload(llm) } : {}),
           }
         : {
@@ -49,6 +51,8 @@ export class AgentExecutionClient {
             runId: payload.runId,
             executionId: payload.executionId,
             decision: payload.decision || {},
+            ...(payload.orgId ? { orgId: payload.orgId } : {}),
+            ...(payload.userId ? { userId: payload.userId } : {}),
             ...(llm ? { llm: agentLlmPayload(llm) } : {}),
           };
     const controller = new AbortController();

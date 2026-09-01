@@ -122,6 +122,29 @@ def audit_memo(text: str, *, query: str = "") -> list[str]:
         notes.append(
             "Drop reader-facing Research plan — process narration belongs in diagnostics, not the memo."
         )
+    if _nested_contradictions_in_analysis(blob):
+        notes.append(
+            "Structural redundancy: Contradictions or Counter-evidence appears inside "
+            "Detailed analysis AND as ## Contradictions & debates. Keep debate content "
+            "in the top-level section only."
+        )
+    if _metric_gaps_duplicated(blob):
+        notes.append(
+            "Structural redundancy: missing metrics are listed under Metric gaps AND "
+            "Uncertainties & gaps. Use Uncertainties & gaps as the single home."
+        )
+    if _universal_threshold_without_scope(blob):
+        notes.append(
+            "Decision rule overreach: numeric % thresholds read like universal laws. "
+            "Each cutoff needs [n], the source's benchmark/domain, and 're-benchmark on your workload' — "
+            "or move to Engineering heuristics without numbers."
+        )
+    if _template_padding(blob):
+        notes.append(
+            "Information density: the same themes (e.g. sandbox filtering, model collapse) "
+            "repeat across many sections without new facts. Cut repetition; add named sources/metrics "
+            "from notes instead."
+        )
     if _redundant_hypothesis_restatement(blob):
         notes.append(
             "Structural redundancy: H1/H2 or the same failure taxonomy is restated across "
@@ -140,6 +163,12 @@ def audit_memo(text: str, *, query: str = "") -> list[str]:
                 "and/or multi-node behavior as its own subsection — not only latency/cost."
             )
     notes.extend(audit_memo_causal_deltas(blob))
+    try:
+        from app.domain.report_integrity import audit_memo_integrity
+
+        notes.extend(audit_memo_integrity(blob))
+    except Exception:
+        pass
     if re.search(r"band\s*a.{0,80}awesome|awesome.{0,80}band\s*a", blob, re.I | re.S):
         notes.append(
             "Source quality: GitHub Awesome-lists are tertiary aggregators (Band C), "
@@ -276,6 +305,78 @@ def _redundant_gated_routing(text: str) -> bool:
         if body and GATED_ROUTING_RE.search(body):
             sections_with += 1
     return sections_with >= 3
+
+
+def _nested_contradictions_in_analysis(text: str) -> bool:
+    if not _section(text, "Contradictions & debates"):
+        return False
+    analysis = _section(text, "Detailed analysis")
+    return bool(
+        re.search(
+            r"^#{3,4}\s+.*(?:contradict|counter-evidence|counter evidence|open questions?)\s*$",
+            analysis or "",
+            re.I | re.M,
+        )
+    )
+
+
+def _metric_gaps_duplicated(text: str) -> bool:
+    quant = _section(text, "Quantitative findings")
+    unc = _section(text, "Uncertainties & gaps")
+    if not quant or not unc:
+        return bool(re.search(r"^#{3}\s+Metric gaps\s*$", quant or "", re.I | re.M))
+    if re.search(r"^#{3}\s+Metric gaps\s*$", quant, re.I | re.M):
+        return True
+    gap_terms = ("not reported", "missing metric", "measurement gap", "no measured", "absent in source")
+    q_gaps = any(t in quant.lower() for t in gap_terms)
+    u_gaps = any(t in unc.lower() for t in gap_terms)
+    return q_gaps and u_gaps
+
+
+def _universal_threshold_without_scope(text: str) -> bool:
+    rule = _section(text, "Decision rule")
+    if not rule:
+        return False
+    for line in rule.splitlines():
+        if not re.search(r"\d+(?:\.\d+)?\s*%", line):
+            continue
+        low = line.lower()
+        if re.search(r"heuristic|re-benchmark|rebenchmark|based on\s*\[\d+|engineering heuristic", low):
+            continue
+        if re.search(r"(?:universal|always|must|never|absolute|every model|all domains)", low):
+            return True
+        if re.search(r"\d+(?:\.\d+)?\s*%\s*(?:-|–|to)\s*\d+(?:\.\d+)?\s*%", line) and not re.search(
+            r"\[\d+", line
+        ):
+            return True
+    return False
+
+
+def _template_padding(text: str) -> bool:
+    """Same distinctive phrase in 4+ top-level sections → likely template overfitting."""
+    phrases = re.findall(r"\b[a-z][a-z0-9-]{4,}\b", (text or "").lower())
+    if not phrases:
+        return False
+    from collections import Counter
+
+    counts = Counter(phrases)
+    for phrase, n in counts.most_common(8):
+        if n < 12 or phrase in {"which", "their", "these", "sources", "models", "system", "research"}:
+            continue
+        sections_hit = 0
+        for heading in (
+            "Executive summary",
+            "Key findings",
+            "Detailed analysis",
+            "Contradictions & debates",
+            "Decision rule",
+        ):
+            body = _section(text, heading).lower()
+            if phrase in body:
+                sections_hit += 1
+        if sections_hit >= 4:
+            return True
+    return False
 
 
 def _redundant_hypothesis_restatement(text: str) -> bool:

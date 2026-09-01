@@ -94,6 +94,9 @@ def compose_report(
 
     body, critic_notes = append_research_critic(body, query=user_goal(query))
     summary = _user_exec_summary(query, ledger, brief, dossier)
+    rule = decision_rule_for(query, ledger, critic)
+    from app.domain.report_integrity import _derive_at_a_glance
+
     diag = compose_diagnostics_payload(
         query=query,
         ledger=ledger,
@@ -127,7 +130,8 @@ def compose_report(
         open_questions=_user_open_questions(critic, terminal_followups),
         method_notes=diag.get("method_notes") or [],
         limitations=_limitations(ledger, critic, llm_mode, terminal_followups) + critic_notes,
-        decision_rule=decision_rule_for(query, ledger, critic),
+        decision_rule=rule,
+        at_a_glance=_derive_at_a_glance(summary, rule, critic),
         metrics=merged_metrics,
     )
 
@@ -222,6 +226,8 @@ def compose_diagnostics_payload(
         "synthesis_status": synthesis_status,
         "generator": llm_mode,
         "critic_status": critic.get("status"),
+        "gate_reason": (critic.get("coverage_gate") or {}).get("gate_reason") or critic.get("gate_reason"),
+        "coverage_gate": critic.get("coverage_gate") or {},
         "unresolved_gaps": unresolved[:8],
         "diagnostics_markdown": _diagnostics_markdown(
             query, ledger, evidence, critic, plan, brief, budget, llm_mode, claims, dossier, synthesis_status
@@ -247,6 +253,8 @@ def memo_is_user_clean(body: str) -> bool:
         stripped = line.strip().lstrip("#*|>-").strip().lower()
         if stripped.startswith(markers):
             return False
+    if re.search(r"\[\?\]", body or ""):
+        return False
     return True
 
 
@@ -653,9 +661,11 @@ Synthesis: **{synthesis_status}** · Generator: **{llm_mode}** · Graph: `{GRAPH
 | --- | --- |
 | Query class | {qtype} |
 | Agents | {agents} |
-| Depth | {brief.get("depth") or "standard"} |
-| Iterations | {budget.get("iterations") or 1} / {budget.get("max_iterations") or 4} |
-| Tool calls | {budget.get("used_tool_calls") or 0} / {budget.get("max_tool_calls") or 18} |
+| Depth | {brief.get("depth") or "deep"} |
+| Iterations | {budget.get("iterations") or 1} / {budget.get("max_iterations") or 6} |
+| Retrieval calls | {budget.get("used_retrieval_calls") or 0} / {budget.get("max_retrieval_calls") or 28} |
+| Enrich calls | {budget.get("used_enrich_calls") or 0} / {budget.get("max_enrich_calls") or 24} |
+| Tool calls (total) | {budget.get("used_tool_calls") or 0} / {budget.get("max_tool_calls") or 52} |
 | Tokens (est.) | {budget.get("used_tokens") or 0} |
 
 ## Evidence dossier (by must-answer dimension)

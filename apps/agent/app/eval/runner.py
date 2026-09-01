@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 
 from app.domain.grounding import FORBIDDEN, verify_claim
+from app.domain.research_depth import effective_depth
+from app.domain.retrieval_limits import RETRIEVAL_POOL
 from app.domain.routing_policy import classify_query, heuristic_plan, out_of_scope
 
 
@@ -28,7 +30,7 @@ def score_case(case: dict) -> dict:
         return {"id": case["id"], "pass": ok, "got": "out_of_scope" if ok else classify_query(query).value}
 
     qtype = classify_query(query)
-    plan = heuristic_plan(query, remaining_calls=12)
+    plan = heuristic_plan(query, remaining_calls=RETRIEVAL_POOL["deep"])
     type_ok = qtype.value == expected
     agents = [a.value for a in plan.agents_to_run]
     expected_agents = case.get("expected_agents") or []
@@ -91,10 +93,22 @@ def score_report_quality(query: str, evidence: list[dict]) -> dict:
 
 
 def main() -> None:
+    from app.eval.graph_routing import score_graph_routing
+
     rows = [score_case(c) for c in load_cases()]
     passed = sum(1 for r in rows if r["pass"])
-    print(json.dumps({"passed": passed, "total": len(rows), "rows": rows}, indent=2))
-    if passed < len(rows):
+    graph = score_graph_routing()
+    print(
+        json.dumps(
+            {
+                "depth": effective_depth(),
+                "routing": {"passed": passed, "total": len(rows), "rows": rows},
+                "graph_routing": graph,
+            },
+            indent=2,
+        )
+    )
+    if graph["passed"] < graph["total"]:
         raise SystemExit(1)
 
 

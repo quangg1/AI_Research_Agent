@@ -185,6 +185,20 @@ export const endpoints = {
   corpus: () => api("/v1/corpus", CorpusStatsSchema) as Promise<CorpusStats>,
   refreshCorpus: () =>
     api("/v1/corpus/refresh", UnknownObjectSchema, { method: "POST" }),
+  uploadCorpus: async (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${API}/v1/corpus/upload`, {
+      method: "POST",
+      headers: await authHeaders(),
+      body: form,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new ApiClientError(res.status, data, res.statusText || "Upload failed");
+    }
+    return data;
+  },
   knowledge: () => api("/v1/knowledge", KnowledgeStatsSchema) as Promise<KnowledgeStats>,
   knowledgeMatch: (query: string) =>
     api(

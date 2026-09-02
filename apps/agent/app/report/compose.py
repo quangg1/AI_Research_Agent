@@ -642,6 +642,19 @@ def _user_memo_markdown(
     ]
     memo = "\n\n".join(p.strip() for p in parts if (p or "").strip()) + "\n"
     
+    # Clean template/prompt leakage from headings
+    # Remove meta-instructions like "Then we address", "And discuss", etc.
+    template_leak_patterns = [
+        (r":\s*then we (address|discuss|examine|analyze)", ": ", re.I),
+        (r":\s*and (discuss|examine|analyze|address)", ": ", re.I),
+        (r":\s*we (will|now|then) (address|discuss)", ": ", re.I),
+        (r"\bthen (address|discuss|examine)", "", re.I),
+        (r"\band (discuss|examine)", "", re.I),
+    ]
+    
+    for pattern, replacement, flags in template_leak_patterns:
+        memo = re.sub(pattern, replacement, memo, flags=flags)
+    
     # Soften overclaim language
     from app.domain.overclaim import soften_overclaims
     from app.observability.logging import logger

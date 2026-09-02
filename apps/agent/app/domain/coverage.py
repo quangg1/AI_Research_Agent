@@ -539,7 +539,13 @@ def build_evidence_dossier(
     evidence: list[dict],
     coverage: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Evidence grouped by must-answer dimension, ordered as the question implies."""
+    """Evidence grouped by must-answer dimension, ordered as the question implies.
+    
+    Each dimension gets evidence reranked by dimension-specific relevance,
+    not just the global top-k pool.
+    """
+    from app.retrieval.passage import select_best_excerpts_per_dimension
+    
     slots = (coverage or {}).get("slots") or must_answer_for(query)
     by_id = {e.get("id"): e for e in evidence if e.get("id")}
     anchors = _anchors(query)
@@ -547,35 +553,60 @@ def build_evidence_dossier(
     for slot in slots:
         items: list[dict] = []
         seen: set[str] = set()
+        
+        # First, get pre-assigned evidence IDs from coverage
         for eid in slot.get("evidence_ids") or []:
             ev = by_id.get(eid)
             if ev and eid not in seen:
                 items.append(ev)
                 seen.add(eid)
-        if not items:
+        
+        # If we don't have enough, rerank entire pool by dimension-specific patterns
+        if len(items) < 3:
             patterns = [p for p in (slot.get("patterns") or []) if p]
             topic_terms = [t for t in (slot.get("topic_terms") or anchors) if t]
+            dim_label = slot.get("label") or ""
+            
+            # Score all evidence by relevance to THIS dimension
+            dim_scored: list[tuple[float, dict]] = []
             for ev in evidence:
                 eid = ev.get("id") or ""
                 if eid in seen:
                     continue
                 blob = _blob(ev)
-                if any(re.search(p, blob, re.I) for p in patterns) and _anchor_hits(blob, topic_terms) >= 1:
+                
+                # Dimension-specific scoring
+                aspect_hits = sum(1 for p in patterns if re.search(p, blob, re.I))
+                topic_hits = _anchor_hits(blob, topic_terms)
+                
+                # Require at least some relevance to this dimension
+                if aspect_hits == 0 and topic_hits < 2:
+                    continue
+                
+                score = aspect_hits * 3 + topic_hits
+                dim_scored.append((score, ev))
+            
+            # Take top items for this dimension
+            dim_scored.sort(key=lambda x: (x[0], float(x[1].get("credibility") or 0)), reverse=True)
+            for _, ev in dim_scored[:3 - len(items)]:
+                eid = ev.get("id") or ""
+                if eid and eid not in seen:
                     items.append(ev)
-                    if eid:
-                        seen.add(eid)
-                    if len(items) >= 2:
-                        break
+                    seen.add(eid)
+        
         dossier.append(
             {
                 "id": slot.get("id"),
                 "label": slot.get("label") or slot_label(slot.get("id") or ""),
                 "critical": bool(slot.get("critical")),
                 "status": slot.get("status") or ("covered" if items else "open"),
-                "items": items[:3],
+                "items": items[:3],  # Max 3 per dimension
             }
         )
-    return dossier
+    
+    # Now apply passage-level selection within each dimension's evidence
+    dossier_with_passages = select_best_excerpts_per_dimension(dossier, evidence)
+    return dossier_with_passages
 
 
 def entities_with_evidence(query: str, evidence: list[dict], limit: int = 4) -> list[str]:

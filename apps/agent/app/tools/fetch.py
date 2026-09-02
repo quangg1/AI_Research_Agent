@@ -158,17 +158,92 @@ def evidence_from_url(url: str, title: str = "", body: str = "") -> dict | None:
     text = body or fetch_url(url)
     if len(text) < 80 or looks_like_nav_chrome(text[:800]):
         return None
+    
+    # Chunk the text to avoid title pages becoming the quote
+    # Take a middle chunk that's more likely to have substance
     tier, score = credibility_score(url)
     eid = "ev_" + hashlib.sha1(url.encode()).hexdigest()[:10]
+    
+    # Split into rough chunks and skip obvious title pages
+    chunks = _chunk_text_for_evidence(text)
+    
+    # Select best chunk for quote (prefer substantive content over title page)
+    quote_chunk = _select_best_quote_chunk(chunks)
+    snippet_text = text[:1600] if len(chunks) <= 1 else chunks[0][:1600]
+    
     return {
         "id": eid,
         "title": title or urlparse(url).path.rsplit("/", 1)[-1] or url,
         "url": url,
-        "snippet": text[:1600],
-        "quote": text[:500],
+        "snippet": snippet_text,
+        "quote": quote_chunk,
         "source_agent": AgentName.DOCS.value,
         "tier": tier.value,
         "credibility": score,
         "published": "",
         "full_text": text[:MAX_EXTRACTED_CHARS],
     }
+
+
+def _chunk_text_for_evidence(text: str, chunk_size: int = 900) -> list[str]:
+    """Split text into overlapping chunks, similar to corpus notes."""
+    if len(text) <= chunk_size:
+        return [text]
+    
+    # Split on paragraph boundaries when possible
+    paragraphs = text.split('\n\n')
+    chunks: list[str] = []
+    current = ""
+    
+    for para in paragraphs:
+        if len(current) + len(para) > chunk_size and current:
+            chunks.append(current.strip())
+            # Keep some overlap
+            current = para
+        else:
+            current += "\n\n" + para if current else para
+    
+    if current:
+        chunks.append(current.strip())
+    
+    return chunks
+
+
+def _select_best_quote_chunk(chunks: list[str]) -> str:
+    """Select best chunk for quote, avoiding title pages."""
+    if not chunks:
+        return ""
+    
+    if len(chunks) == 1:
+        return chunks[0][:500]
+    
+    # Score chunks by substantiveness (prefer chunks with full sentences and verbs)
+    scored: list[tuple[float, str]] = []
+    for i, chunk in enumerate(chunks[:5]):  # Check first 5 chunks
+        # Penalize first chunk (likely title page)
+        position_penalty = 0.3 if i == 0 else 0.0
+        
+        # Check for title page indicators
+        lower = chunk.lower()
+        is_title_page = (
+            'abstract' in lower[:200] or
+            'keywords:' in lower[:200] or
+            'authors:' in lower[:200] or
+            lower.count('\n') > len(chunk) / 30  # Many short lines = metadata
+        )
+        title_penalty = 0.5 if is_title_page else 0.0
+        
+        # Prefer chunks with verbs and full sentences
+        verb_indicators = ['is', 'are', 'was', 'were', 'show', 'demonstrate', 'achieve', 'improve']
+        verb_score = sum(1 for v in verb_indicators if f' {v} ' in chunk.lower()) / 10.0
+        
+        # Prefer chunks with numbers and specifics
+        has_numbers = bool(re.search(r'\d+(?:\.\d+)?%|\d+\s*(?:ms|tokens?|parameters?)', chunk))
+        number_score = 0.2 if has_numbers else 0.0
+        
+        score = verb_score + number_score - position_penalty - title_penalty
+        scored.append((score, chunk))
+    
+    # Return best chunk, truncated
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return scored[0][1][:500] if scored else chunks[0][:500]

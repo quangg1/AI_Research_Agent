@@ -392,16 +392,12 @@ def _relevant_sentences(ev: dict, patterns: list[str], topic_terms: list[str], l
 
 def _analysis_sections(query: str, dossier: list[dict], ledger: list[Citation], slots: list[dict]) -> str:
     """One evidence-grounded section per must-answer dimension."""
-    from app.retrieval.passage import select_best_excerpts_per_dimension
-    
     anchors = distinctive_terms(user_goal(query), limit=10)
     by_id = {s.get("id"): s for s in slots}
     
-    # First, rerank passages per dimension for better excerpts
-    dossier_with_passages = select_best_excerpts_per_dimension(dossier, [])
-    
+    # Dossier already has per-dimension evidence with selected passages from coverage.py
     blocks: list[str] = []
-    for dim in _dimensions(dossier_with_passages):
+    for dim in _dimensions(dossier):
         slot = by_id.get(dim.get("id")) or {}
         patterns = [p for p in (slot.get("patterns") or []) if p]
         topic_terms = [t for t in (slot.get("topic_terms") or anchors) if t]

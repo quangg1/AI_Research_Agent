@@ -342,3 +342,80 @@ def test_no_false_positives_for_good_memo():
     assert quality["citation_stacking_count"] == 0
     assert quality["empty_filler_count"] == 0
     assert quality["template_placeholder_count"] == 0
+
+
+def test_per_dimension_retrieve_prevents_duplicate_excerpts():
+    """Per-dimension retrieval: two unrelated dimensions must not share the same top excerpt.
+    
+    Simulates retrieve_node per-dimension logic: each slot gets its own hybrid_retrieve
+    with slot-specific query, not global top-k reuse.
+    """
+    # Two papers with distinct content for different dimensions
+    evidence = [
+        {
+            "id": "latency_paper",
+            "title": "Serving Latency Study",
+            "snippet": "P50 latency is 45ms on inference workloads with GPU batching.",
+            "quote": "Our system achieves P50 latency of 45ms on HumanEval inference tasks.",
+            "url": "https://arxiv.org/abs/2024.latency",
+            "full_text": (
+                "Abstract: We study inference serving latency. "
+                "Our optimized system achieves P50 latency of 45ms on HumanEval inference tasks "
+                "using GPU batching and KV cache. No accuracy metrics were measured in this work."
+            ),
+        },
+        {
+            "id": "accuracy_paper",
+            "title": "Accuracy Benchmark Results",
+            "snippet": "Model achieves 82.3% accuracy on HumanEval code generation tasks.",
+            "quote": "The model scored 82.3% pass@1 on HumanEval.",
+            "url": "https://arxiv.org/abs/2024.accuracy",
+            "full_text": (
+                "Abstract: We benchmark code generation accuracy. "
+                "The model scored 82.3% pass@1 accuracy on HumanEval code generation tasks. "
+                "Latency was not a focus of this study."
+            ),
+        },
+    ]
+    
+    # Two unrelated dimensions: latency vs accuracy
+    dimensions = [
+        {
+            "id": "latency",
+            "label": "Latency",
+            "patterns": [r"\blatency\b", r"\bms\b", r"p50", r"p95"],
+            "topic_terms": ["latency", "ms", "serving", "inference"],
+            "status": "open",
+        },
+        {
+            "id": "accuracy",
+            "label": "Accuracy",
+            "patterns": [r"\baccuracy\b", r"pass@1", r"success rate"],
+            "topic_terms": ["accuracy", "benchmark", "pass@1"],
+            "status": "open",
+        },
+    ]
+    
+    # Simulate per-dimension retrieve (what retrieve_node now does)
+    from app.retrieval.hybrid import hybrid_retrieve
+    
+    retrieved_by_dimension = {}
+    for dim in dimensions:
+        dim_query = f"{dim['label']} {' '.join(dim['patterns'][:2])}"
+        slot_results = hybrid_retrieve(dim_query, evidence, k=1, use_llm_reranker=False)
+        retrieved_by_dimension[dim["id"]] = slot_results
+    
+    # Verify: latency dimension should retrieve latency_paper, accuracy should get accuracy_paper
+    latency_results = retrieved_by_dimension["latency"]
+    accuracy_results = retrieved_by_dimension["accuracy"]
+    
+    assert len(latency_results) > 0, "Latency dimension got no results"
+    assert len(accuracy_results) > 0, "Accuracy dimension got no results"
+    
+    latency_top_id = latency_results[0].get("id")
+    accuracy_top_id = accuracy_results[0].get("id")
+    
+    # KEY TEST: different dimensions should retrieve different papers
+    assert latency_top_id == "latency_paper", f"Latency dimension should retrieve latency_paper, got {latency_top_id}"
+    assert accuracy_top_id == "accuracy_paper", f"Accuracy dimension should retrieve accuracy_paper, got {accuracy_top_id}"
+    assert latency_top_id != accuracy_top_id, "Two unrelated dimensions must not share the same top excerpt"

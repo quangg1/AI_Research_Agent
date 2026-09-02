@@ -72,6 +72,107 @@ QUANT_RE = re.compile(
     r"\b(\d+(?:\.\d+)?)\s*(?:×|x)\s*(?:faster|speedup|improvement|throughput)?\b",
     re.I,
 )
+
+# Patterns for validating grounded quantitative claims
+BENCHMARK_RE = re.compile(
+    r"\b(on|in)\s+([A-Z][A-Za-z0-9-]+(?:\s+[A-Z][A-Za-z0-9-]+)?)\b",
+    re.I,
+)
+CONDITION_RE = re.compile(
+    r"\b(with|using|when|for|given|under|on|in)\s+([^,\.]{10,80})",
+    re.I,
+)
+BASELINE_RE = re.compile(
+    r"\b(vs\.?|versus|compared to|from|baseline)\s+(\d+(?:\.\d+)?%?)",
+    re.I,
+)
+METRIC_NAME_RE = re.compile(
+    r"\b(accuracy|precision|recall|F1|BLEU|ROUGE|perplexity|latency|throughput|"
+    r"speedup|improvement|gain|loss|error|FLOP(?:s)?|tokens?/s|req/s)\b",
+    re.I,
+)
+
+
+def validate_quantitative_claim(text: str, strict: bool = True) -> dict:
+    """Validate if a quantitative claim is properly grounded.
+    
+    Args:
+        text: Text containing the quantitative claim
+        strict: If True, requires metric + condition + (benchmark OR baseline)
+                If False, requires only metric + (condition OR benchmark)
+    
+    Returns:
+        dict with:
+        - is_valid: bool
+        - has_metric: bool
+        - has_benchmark: bool
+        - has_condition: bool
+        - has_baseline: bool
+        - confidence: "empirical" | "reported" | "weak"
+        - issues: list of missing elements
+    """
+    # Check for numeric value
+    has_number = bool(QUANT_RE.search(text))
+    
+    # Check for metric name
+    metric_match = METRIC_NAME_RE.search(text)
+    has_metric = bool(metric_match)
+    
+    # Check for benchmark/dataset
+    benchmark_match = BENCHMARK_RE.search(text)
+    has_benchmark = bool(benchmark_match)
+    
+    # Check for condition
+    condition_match = CONDITION_RE.search(text)
+    has_condition = bool(condition_match)
+    
+    # Check for baseline comparison
+    baseline_match = BASELINE_RE.search(text)
+    has_baseline = bool(baseline_match)
+    
+    # Determine validity
+    issues = []
+    
+    if not has_number:
+        issues.append("Missing numeric value")
+    
+    if not has_metric:
+        issues.append("Missing metric name (accuracy, latency, etc.)")
+    
+    if strict:
+        # Strict: requires metric + condition + (benchmark OR baseline)
+        if not has_condition:
+            issues.append("Missing condition (with X, using Y, when Z)")
+        if not (has_benchmark or has_baseline):
+            issues.append("Missing benchmark/dataset OR baseline comparison")
+        
+        is_valid = has_number and has_metric and has_condition and (has_benchmark or has_baseline)
+    else:
+        # Moderate: requires metric + (condition OR benchmark)
+        if not (has_condition or has_benchmark):
+            issues.append("Missing either condition OR benchmark")
+        
+        is_valid = has_number and has_metric and (has_condition or has_benchmark)
+    
+    # Determine confidence level
+    if has_baseline:
+        confidence = "empirical"  # Has comparison to baseline
+    elif has_benchmark and has_condition:
+        confidence = "reported"  # Well-specified finding
+    else:
+        confidence = "weak"  # Incomplete grounding
+    
+    return {
+        "is_valid": is_valid,
+        "has_metric": has_metric,
+        "has_benchmark": has_benchmark,
+        "has_condition": has_condition,
+        "has_baseline": has_baseline,
+        "confidence": confidence,
+        "issues": issues,
+    }
+
+
 # Back-compat alias used by older imports/tests.
 PCT_RE = QUANT_RE
 ABSOLUTE_RE = re.compile(

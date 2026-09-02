@@ -178,12 +178,16 @@ def _openalex(query: str) -> list[dict]:
 def _semantic_scholar(query: str) -> list[dict]:
     global _last_s2_call_time, _s2_is_rate_limited, _s2_rate_limit_until
     
-    # Rate limiting: ensure at least 1.2 seconds between calls (conservative)
+    # Rate limiting: S2 allows 1 req/sec cumulative
+    # Use 2.0s to be VERY conservative and avoid 429s
+    min_interval = 2.0  # Increased from 1.2s
+    
     with _s2_rate_limit_lock:
         now = time.time()
         elapsed = now - _last_s2_call_time
-        if elapsed < 1.2:
-            sleep_time = 1.2 - elapsed
+        if elapsed < min_interval:
+            sleep_time = min_interval - elapsed
+            logger.info(f"semantic_scholar_rate_limit_wait: sleeping {sleep_time:.2f}s")
             time.sleep(sleep_time)
         _last_s2_call_time = time.time()
     
@@ -223,17 +227,17 @@ def _semantic_scholar(query: str) -> list[dict]:
             if exc.response.status_code == 429:
                 # Rate limited! Set cooldown period
                 _s2_is_rate_limited = True
-                _s2_rate_limit_until = time.time() + 60  # 60 second cooldown
+                _s2_rate_limit_until = time.time() + 120  # 120 second cooldown (doubled)
                 
                 if attempt < max_retries - 1:
-                    # Retry after delay
-                    backoff = 2 ** attempt  # 1s, 2s
+                    # More aggressive backoff: 3s → 6s
+                    backoff = 3 * (2 ** attempt)  # 3s, 6s
                     logger.warning(f"semantic_scholar_429_retry: attempt {attempt + 1}, waiting {backoff}s")
                     time.sleep(backoff)
                     continue
                 else:
                     # Give up after retries
-                    logger.warning(f"semantic_scholar_429_failed: rate limited after {max_retries} attempts, entering 60s cooldown")
+                    logger.warning(f"semantic_scholar_429_failed: rate limited after {max_retries} attempts, entering 120s cooldown")
                     return []
             else:
                 logger.warning("semantic_scholar_failed %s", exc)

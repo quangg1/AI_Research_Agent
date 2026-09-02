@@ -104,12 +104,19 @@ def _scholar_search(query: str) -> tuple[list[dict], int]:
         logger.info(f"semantic_scholar_skipped: in rate-limit cooldown for {cooldown_remaining}s, using OpenAlex only")
         return openalex, calls
     
+    # TEMPORARY: Skip Semantic Scholar entirely while API key activation is pending
+    # OpenAlex provides sufficient coverage (8 results typically) without rate limits
+    # TODO: Re-enable S2 once API key is confirmed active (24-48 hours)
+    # Original condition: if len(openalex) < 5
+    logger.info(f"semantic_scholar_skipped: temporarily disabled, using OpenAlex only (got {len(openalex)} results)")
+    return openalex, calls
+    
     # Augment thin OpenAlex result sets without making a second call routinely.
-    semantic: list[dict] = []
-    if len(openalex) < 5:
-        semantic = _semantic_scholar(q)
-        calls += 1
-    return _dedupe_papers(openalex + semantic), calls
+    # semantic: list[dict] = []
+    # if len(openalex) < 5:
+    #     semantic = _semantic_scholar(q)
+    #     calls += 1
+    # return _dedupe_papers(openalex + semantic), calls
 
 
 def _openalex_query(query: str) -> str:

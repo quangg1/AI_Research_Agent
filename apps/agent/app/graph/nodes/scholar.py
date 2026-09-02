@@ -194,8 +194,13 @@ def _semantic_scholar(query: str) -> list[dict]:
             # Use API key if available to avoid rate limits
             headers = {"User-Agent": "kiln-research-agent/0.1"}
             api_key = os.getenv("S2_API_KEY") or os.getenv("SEMANTIC_SCHOLAR_API_KEY")
+            
+            # DEBUG: Log key status
             if api_key:
+                logger.info(f"semantic_scholar_using_api_key: key_length={len(api_key)}, key_prefix={api_key[:8]}...")
                 headers["x-api-key"] = api_key
+            else:
+                logger.warning("semantic_scholar_no_api_key: S2_API_KEY not found in environment")
             
             with httpx.Client(timeout=15) as client:
                 response = client.get(

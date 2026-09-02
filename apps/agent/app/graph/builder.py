@@ -71,8 +71,12 @@ def after_hitl(state: ResearchState) -> str:
 
 
 def after_memo_gate(state: ResearchState) -> str:
-    if state.get("status") == "revising":
+    status = state.get("status")
+    if status == "revising":
         return "critic"
+    if status == "revising_quality":
+        # Quality issues detected - go back to report to rewrite from notes
+        return "report"
     return END
 
 
@@ -129,7 +133,7 @@ def build_graph(checkpointer=None, enable_hitl: bool = True, *, allow_memory: bo
         builder.add_conditional_edges("hitl", after_hitl, {"planner": "planner", "report": "report"})
     else:
         builder.add_conditional_edges("critic", after_critic_eval, {"planner": "planner", "report": "report"})
-    builder.add_conditional_edges("memo_gate", after_memo_gate, {"critic": "critic", END: END})
+    builder.add_conditional_edges("memo_gate", after_memo_gate, {"critic": "critic", "report": "report", END: END})
     builder.add_conditional_edges(
         "report",
         after_report,

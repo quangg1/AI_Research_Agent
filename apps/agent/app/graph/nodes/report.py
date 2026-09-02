@@ -47,6 +47,11 @@ async def report_node(state: ResearchState) -> dict:
 def _report_sync(state: ResearchState) -> dict:
     if state.get("reuse_mode") == "cached" and state.get("prior_knowledge"):
         return _reuse_stored_answer(state)
+    
+    # Quality regeneration path: rewrite from existing notes with quality feedback
+    if state.get("status") == "revising_quality" and state.get("quality_gate_issues"):
+        return _regenerate_for_quality(state)
+    
     terminal_status = state.get("status") if state.get("status") in {"out_of_scope", "cancelled"} else "draft"
     retrieved = state.get("retrieved") or state.get("evidence") or []
     critic = state.get("critic") or {}
@@ -754,3 +759,198 @@ def _attach_evidence_graph(
     )
     report.metrics["evidence_graph"] = compact_graph(graph)
     persist_evidence_graph(str(state.get("thread_id") or ""), graph)
+
+
+def _regenerate_for_quality(state: ResearchState) -> dict:
+    """
+    Quality-triggered regeneration: rewrite the memo from existing dimension-filtered notes
+    with quality issues as additional instructions. Does NOT trigger new search.
+    """
+    from app.observability.logging import event
+    
+    event("report_quality_regenerate", issues="; ".join(state.get("quality_gate_issues", [])[:3]))
+    
+    # Get existing report and evidence
+    prior_report = state.get("report") or {}
+    retrieved = state.get("retrieved") or state.get("evidence") or []
+    critic = state.get("critic") or {}
+    budget = budget_from(state)
+    
+    # Build quality feedback prompt
+    issues = state.get("quality_gate_issues") or []
+    quality_instructions = "\n".join(f"- {issue}" for issue in issues[:5])
+    quality_note = (
+        f"\n\nQUALITY REQUIREMENTS - The previous draft had these issues:\n"
+        f"{quality_instructions}\n"
+        f"Fix these issues in the new draft. Use DIFFERENT passages for different dimensions. "
+        f"Ensure every number has a clear metric and experimental condition.\n"
+    )
+    
+    # Rebuild dossier and citations (they're already dimension-filtered from first pass)
+    citations = [c.model_dump(mode="json") for c in build_ledger(retrieved)] or list(state.get("citations") or [])
+    metrics = _metrics(state, budget)
+    metrics["regeneration_trigger"] = "quality_gate"
+    metrics["quality_issues"] = issues
+    
+    # Get seed claims from prior report
+    seed_claims = None
+    if prior_report.get("claims"):
+        try:
+            from app.domain.schema import Claim
+            seed_claims = [Claim.model_validate(c) for c in prior_report["claims"]]
+        except Exception:
+            pass
+    
+    # Generate new report with quality feedback
+    dossier = build_evidence_dossier(state.get("query") or "", retrieved, critic.get("coverage") or {})
+    depth = (state.get("brief") or {}).get("depth") or "standard"
+    min_words = word_target(depth)
+    
+    dossier = filter_dossier_for_writer(
+        prioritize_dossier_for_writer(dossier),
+        depth=depth,
+    )
+    notes, notes_prep = _compress_notes(state, dossier, citations)
+    metrics = {**metrics, "notes_prep": notes_prep}
+    
+    dimension_list = "\n".join(
+        f"- {d.get('label')} (status: {d.get('status')})" for d in dossier if d.get("label")
+    ) or "- Answer the question directly"
+    
+    subjects = _comparison_subjects(state.get("query") or "", retrieved)
+    comparison_rule = (
+        "Include a '## Comparison' table with one column per subject: "
+        + ", ".join(subjects)
+        + ". Every cell must come from a source that names that subject; otherwise write "
+        "'Not established in collected sources'. Never repeat the same passage across columns.\n"
+        if len(subjects) >= 2
+        else "Omit the Comparison section — the question does not compare named subjects.\n"
+    )
+    
+    method_block = method_notes_for_writer(
+        user_goal(state.get("query") or ""),
+        state.get("brief") or {},
+        retrieved,
+        citations,
+    )
+    
+    # Inject quality feedback into writer prompt
+    prompt = writer_prompt(
+        query=user_goal(state.get("query") or ""),
+        brief=state.get("brief") or {},
+        notes=notes,
+        citations=citations,
+        min_words=min_words,
+        comparison_rule=comparison_rule,
+        prior_note="",
+        dimension_list=dimension_list,
+        method_block=method_block,
+    ) + quality_note
+    
+    from app.report.race_write import (
+        criteria_block,
+        generate_sectionwise_memo,
+        polish_citations,
+        race_criteria,
+    )
+    
+    race = race_criteria(user_goal(state.get("query") or ""), state.get("brief") or {}, dossier)
+    prompt_with_race = f"{prompt}\n\n{criteria_block(race)}"
+    
+    tok_total = report_max_tokens(depth)
+    tok_front = int(tok_total * 0.55) if str(depth).lower() == "deep" else tok_total
+    tok_back = max(8192, tok_total - tok_front)
+    
+    markdown, write_mode = generate_sectionwise_memo(
+        prompt_with_race,
+        query=user_goal(state.get("query") or ""),
+        notes=notes,
+        citations=citations,
+        criteria=race,
+        comparison_rule=comparison_rule,
+        depth=depth,
+        max_tokens_front=tok_front,
+        max_tokens_back=tok_back,
+    )
+    
+    markdown = polish_citations(markdown)
+    
+    # Build new report
+    from app.domain.schema import Report, CitationRef
+    
+    parsed = parse_report_markdown(markdown)
+    sidecar = _extract_report_sidecar(markdown, citations) or {}
+    
+    claims = seed_claims or []
+    if isinstance(sidecar.get("claims"), list) and sidecar["claims"]:
+        try:
+            from app.domain.schema import Claim
+            claims = [Claim.model_validate(c) for c in sidecar["claims"]]
+        except Exception:
+            pass
+    
+    limitations = sidecar.get("limitations") or parsed.get("limitations") or []
+    if not isinstance(limitations, list):
+        limitations = []
+    
+    open_questions = sidecar.get("open_questions") or []
+    if not isinstance(open_questions, list):
+        open_questions = []
+    
+    report = Report(
+        title=sidecar.get("title") or parsed.get("title") or user_goal(state.get("query") or ""),
+        executive_summary=sidecar.get("executive_summary") or parsed.get("executive_summary") or "",
+        at_a_glance=sidecar.get("at_a_glance") or parsed.get("at_a_glance") or [],
+        body_markdown=markdown,
+        decision_rule=sidecar.get("decision_rule") or parsed.get("decision_rule") or "",
+        limitations=[str(x) for x in limitations if str(x).strip()],
+        open_questions=[str(x) for x in open_questions if str(x).strip()],
+        claims=claims,
+        citations=[CitationRef.model_validate(c) for c in citations],
+        metrics={
+            **metrics,
+            "synthesis_status": "quality_regenerated",
+            "writer": "markdown",
+            "write_mode": f"{write_mode}_quality_regen",
+            "word_count": word_count(markdown),
+        },
+    )
+    
+    if llm.last_tokens:
+        budget.used_tokens += llm.last_tokens
+        report.metrics["tokens"] = budget.used_tokens
+        report.metrics["usd_est"] = round(budget.used_tokens / 1_000_000 * 0.40, 4)
+    
+    # Apply integrity checks
+    integrity = _apply_integrity(report, citations, critic)
+    report.body_markdown = integrity["body_markdown"]
+    report.decision_rule = integrity["decision_rule"]
+    report.at_a_glance = integrity["at_a_glance"]
+    report.limitations = integrity["limitations"]
+    report.metrics = {**report.metrics, **integrity["metrics_patch"]}
+    
+    # Bind citations
+    report.body_markdown = bind_markdown_to_ledger(report.body_markdown or "", citations)
+    report.body_markdown = annotate_inline_citation_tiers(report.body_markdown or "", citations)
+    report.decision_rule = annotate_inline_citation_tiers(report.decision_rule or "", citations)
+    
+    event("report_quality_regenerated", word_count=word_count(markdown))
+    
+    # Return to normal memo_gate flow (status=draft so it goes to memo_gate, not back to quality loop)
+    return {
+        "report": dump(report),
+        "claims": [dump(c) for c in report.claims],
+        "budget": dump(budget),
+        "llm_mode": llm.mode,
+        "status": "draft",  # Clear revising_quality status
+        "quality_gate_issues": [],  # Clear issues after regeneration
+        "traces": [
+            {
+                "node": "report",
+                "action": "quality_regenerate",
+                "issues_fixed": len(issues),
+                "word_count": word_count(markdown),
+                "used_tokens_delta": llm.last_tokens or 0,
+            }
+        ],
+    }

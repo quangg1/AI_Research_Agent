@@ -567,6 +567,9 @@ def build_evidence_dossier(
             topic_terms = [t for t in (slot.get("topic_terms") or anchors) if t]
             dim_label = slot.get("label") or ""
             
+            # Build dimension query for embedding similarity
+            dim_query = f"{dim_label}. {'. '.join(patterns[:3])}" if patterns else dim_label
+            
             # Score all evidence by relevance to THIS dimension
             dim_scored: list[tuple[float, dict]] = []
             for ev in evidence:
@@ -575,15 +578,27 @@ def build_evidence_dossier(
                     continue
                 blob = _blob(ev)
                 
-                # Dimension-specific scoring
+                # Dimension-specific scoring: patterns + topic terms + embeddings
                 aspect_hits = sum(1 for p in patterns if re.search(p, blob, re.I))
                 topic_hits = _anchor_hits(blob, topic_terms)
                 
+                # Add embedding similarity if available (0-1 scale)
+                embedding_score = 0.0
+                if dim_query and blob:
+                    try:
+                        from app.retrieval.embed import semantic_similarity
+                        embedding_score = semantic_similarity(dim_query, blob)
+                    except Exception:
+                        pass
+                
                 # Require at least some relevance to this dimension
-                if aspect_hits == 0 and topic_hits < 2:
+                # Lower threshold if we have strong embedding similarity
+                if aspect_hits == 0 and topic_hits < 2 and embedding_score < 0.4:
                     continue
                 
-                score = aspect_hits * 3 + topic_hits
+                # Combined score: pattern hits (weighted high) + topic hits + embedding similarity
+                # Embedding similarity on 0-1 scale, so multiply by 3 to make it comparable to aspect hits
+                score = aspect_hits * 3 + topic_hits + (embedding_score * 3)
                 dim_scored.append((score, ev))
             
             # Take top items for this dimension

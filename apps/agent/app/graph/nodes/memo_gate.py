@@ -28,32 +28,25 @@ def memo_gate_node(state: ResearchState) -> dict:
     evidence = state.get("retrieved") or state.get("evidence") or []
     quality_check = check_memo_quality(body_markdown, evidence=evidence)
     
-    # If quality issues detected, trigger automatic revision
+    # If quality issues detected, trigger report rewrite from notes (not new search)
     if quality_check["should_regenerate"]:
         from app.domain.schema import AgentName, SubQuery
         
         issue_summary = "; ".join(quality_check["issues"][:3])
         event("memo_gate_quality_regenerate", issues=issue_summary)
         
-        # Create followup to regenerate with quality feedback
-        followup = dump(SubQuery(
-            agent=AgentName.SEARCH,
-            question=state.get("query") or "",
-            rationale=f"Quality gate: {issue_summary}"
-        ))
-        
+        # Trigger report rewrite with quality issues as feedback
+        # Do NOT create new search - rewrite from existing dimension-filtered notes
+        # The report node will regenerate using the same dossier + quality feedback
         return {
-            "status": "revising",
+            "status": "revising_quality",
             "memo_confirmed": False,
-            "followups": [followup],
             "quality_gate_issues": quality_check["issues"],
             "traces": [{
                 "node": "memo_gate",
                 "action": "quality_regenerate",
                 "issues": quality_check["issues"],
-                "duplicate_ratio": quality_check["duplicate_quote_ratio"],
-                "citation_stacking": quality_check["citation_stacking_count"],
-                "filler_count": quality_check["empty_filler_count"],
+                "will_rewrite_report": True,
             }],
         }
 
@@ -128,6 +121,35 @@ def memo_gate_node(state: ResearchState) -> dict:
 
 
 def memo_gate_node_auto(state: ResearchState) -> dict:
+    """Auto-publish path with quality checks - must match HITL standards."""
+    from app.domain.memo_quality import check_memo_quality
+    
+    report = state.get("report") or {}
+    body_markdown = report.get("body_markdown") or ""
+    evidence = state.get("retrieved") or state.get("evidence") or []
+    
+    # Run same quality check as HITL path
+    if body_markdown:
+        quality_check = check_memo_quality(body_markdown, evidence=evidence)
+        
+        # If quality issues detected, trigger rewrite from notes (not new search)
+        if quality_check["should_regenerate"]:
+            event("memo_gate_auto_quality_fail", issues="; ".join(quality_check["issues"][:3]))
+            
+            # Trigger report rewrite with quality issues as feedback
+            # Do NOT create new search - rewrite from existing dimension-filtered notes
+            return {
+                "status": "revising_quality",
+                "memo_confirmed": False,
+                "quality_gate_issues": quality_check["issues"],
+                "traces": [{
+                    "node": "memo_gate_auto",
+                    "action": "quality_regenerate",
+                    "issues": quality_check["issues"],
+                    "will_rewrite": True,
+                }],
+            }
+    
     stored = _persist_knowledge(state)
     patch: dict = {
         "status": "completed",

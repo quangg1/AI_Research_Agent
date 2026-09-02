@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 
@@ -32,6 +33,12 @@ OFF_DOMAIN_RE = re.compile(
     r"k-12|pedagog|curriculum)\b",
     re.I,
 )
+
+# Rate limiting for Semantic Scholar (1 req/sec without key, be conservative)
+_last_s2_call_time = 0.0
+_s2_rate_limit_lock = __import__("threading").Lock()
+_s2_is_rate_limited = False
+_s2_rate_limit_until = 0.0
 
 
 def scholar_node(state: ResearchState) -> dict:
@@ -84,9 +91,19 @@ def scholar_node(state: ResearchState) -> dict:
 
 
 def _scholar_search(query: str) -> tuple[list[dict], int]:
+    global _s2_is_rate_limited, _s2_rate_limit_until
+    
     q = compact_retrieval_query(query, agent="scholar")
     openalex = _openalex(q)
     calls = 1
+    
+    # Check if we're in a rate-limit cooldown period
+    now = time.time()
+    if _s2_is_rate_limited and now < _s2_rate_limit_until:
+        cooldown_remaining = int(_s2_rate_limit_until - now)
+        logger.info(f"semantic_scholar_skipped: in rate-limit cooldown for {cooldown_remaining}s, using OpenAlex only")
+        return openalex, calls
+    
     # Augment thin OpenAlex result sets without making a second call routinely.
     semantic: list[dict] = []
     if len(openalex) < 5:
@@ -159,28 +176,70 @@ def _openalex(query: str) -> list[dict]:
 
 
 def _semantic_scholar(query: str) -> list[dict]:
-    try:
-        # Use API key if available to avoid rate limits
-        headers = {"User-Agent": "kiln-research-agent/0.1"}
-        api_key = os.getenv("S2_API_KEY") or os.getenv("SEMANTIC_SCHOLAR_API_KEY")
-        if api_key:
-            headers["x-api-key"] = api_key
-        
-        with httpx.Client(timeout=15) as client:
-            response = client.get(
-                "https://api.semanticscholar.org/graph/v1/paper/search",
-                params={
-                    "query": _openalex_query(query),
-                    "limit": 8,
-                    "fields": "title,abstract,url,year,externalIds,publicationTypes,venue",
-                },
-                headers=headers,
-            )
-            response.raise_for_status()
-            data = response.json()
-    except Exception as exc:
-        logger.warning("semantic_scholar_failed %s", exc)
-        return []
+    global _last_s2_call_time, _s2_is_rate_limited, _s2_rate_limit_until
+    
+    # Rate limiting: ensure at least 1.2 seconds between calls (conservative)
+    with _s2_rate_limit_lock:
+        now = time.time()
+        elapsed = now - _last_s2_call_time
+        if elapsed < 1.2:
+            sleep_time = 1.2 - elapsed
+            time.sleep(sleep_time)
+        _last_s2_call_time = time.time()
+    
+    # Retry logic for 429 errors
+    max_retries = 2
+    for attempt in range(max_retries):
+        try:
+            # Use API key if available to avoid rate limits
+            headers = {"User-Agent": "kiln-research-agent/0.1"}
+            api_key = os.getenv("S2_API_KEY") or os.getenv("SEMANTIC_SCHOLAR_API_KEY")
+            if api_key:
+                headers["x-api-key"] = api_key
+            
+            with httpx.Client(timeout=15) as client:
+                response = client.get(
+                    "https://api.semanticscholar.org/graph/v1/paper/search",
+                    params={
+                        "query": _openalex_query(query),
+                        "limit": 8,
+                        "fields": "title,abstract,url,year,externalIds,publicationTypes,venue",
+                    },
+                    headers=headers,
+                )
+                response.raise_for_status()
+                data = response.json()
+                
+                # Success! Clear rate limit flag
+                _s2_is_rate_limited = False
+                _s2_rate_limit_until = 0.0
+                
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 429:
+                # Rate limited! Set cooldown period
+                _s2_is_rate_limited = True
+                _s2_rate_limit_until = time.time() + 60  # 60 second cooldown
+                
+                if attempt < max_retries - 1:
+                    # Retry after delay
+                    backoff = 2 ** attempt  # 1s, 2s
+                    logger.warning(f"semantic_scholar_429_retry: attempt {attempt + 1}, waiting {backoff}s")
+                    time.sleep(backoff)
+                    continue
+                else:
+                    # Give up after retries
+                    logger.warning(f"semantic_scholar_429_failed: rate limited after {max_retries} attempts, entering 60s cooldown")
+                    return []
+            else:
+                logger.warning("semantic_scholar_failed %s", exc)
+                return []
+        except Exception as exc:
+            logger.warning("semantic_scholar_failed %s", exc)
+            return []
+        else:
+            # Success, break retry loop
+            break
+    
     out: list[dict] = []
     for item in data.get("data", []):
         title = item.get("title") or "Untitled work"

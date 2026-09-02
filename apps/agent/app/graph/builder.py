@@ -49,12 +49,35 @@ def after_critic(state: ResearchState, hitl_target: str = "hitl") -> str:
     critic = state.get("critic") or {}
     status = critic.get("status")
     followups = critic.get("followup_queries") or state.get("followups") or []
+    
+    # Early exit checks
     if budget.exhausted or budget.remaining_calls <= 0:
         return hitl_target
     if status == "sufficient":
         return hitl_target
+    
+    # Stagnation detection: stop if no new sources in last 2 iterations
     if followups and budget.remaining_iterations > 0:
+        current_sources = (critic.get("coverage") or {}).get("unique_sources") or 0
+        iteration = budget.iterations
+        
+        # Track unique_sources history across iterations
+        source_history = state.get("_source_history") or []
+        source_history.append({"iteration": iteration, "unique_sources": current_sources})
+        
+        # Check for stagnation: if last 2 iterations had same source count, stop
+        if len(source_history) >= 3:  # Need at least 3 points to detect stagnation
+            recent = source_history[-3:]
+            if recent[0]["unique_sources"] == recent[1]["unique_sources"] == recent[2]["unique_sources"]:
+                from app.observability.logging import event
+                event("critic_stagnation_detected", 
+                      unique_sources=current_sources, 
+                      stagnant_iterations=3,
+                      remaining_gaps=len((critic.get("coverage") or {}).get("critical_gaps") or []))
+                return hitl_target  # Stop early - no new sources being found
+        
         return "planner"
+    
     return hitl_target
 
 

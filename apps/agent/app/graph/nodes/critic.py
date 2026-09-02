@@ -113,6 +113,13 @@ def critic_node(state: ResearchState) -> dict:
     verdict.coverage_gate = gate
 
     claims = state.get("claims") or claims_from_must_answer(coverage, retrieved)
+    
+    # Track source history for stagnation detection
+    source_history = list(state.get("_source_history") or [])
+    source_history.append({
+        "iteration": budget.iterations,
+        "unique_sources": coverage.get("unique_sources") or 0,
+    })
 
     event(
         "critic",
@@ -122,6 +129,7 @@ def critic_node(state: ResearchState) -> dict:
         iteration=budget.iterations,
         coverage=coverage.get("ratio"),
         depth=(coverage.get("depth_score") or {}).get("score"),
+        unique_sources=coverage.get("unique_sources"),
     )
     return {
         "critic": dump(verdict),
@@ -131,6 +139,7 @@ def critic_node(state: ResearchState) -> dict:
         "brief": {**brief, "must_answer": coverage.get("slots") or slots},
         "budget": dump(budget),
         "llm_mode": llm.mode,
+        "_source_history": source_history,
         "traces": [
             {
                 "node": "critic",
@@ -142,6 +151,7 @@ def critic_node(state: ResearchState) -> dict:
                 "depth_label": (coverage.get("depth_score") or {}).get("label"),
                 "gate_reason": gate["gate_reason"],
                 "gaps": [g.get("id") for g in (coverage.get("critical_gaps") or [])],
+                "unique_sources": coverage.get("unique_sources"),
             }
         ],
     }

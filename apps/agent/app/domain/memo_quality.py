@@ -21,6 +21,7 @@ def check_memo_quality(body_markdown: str, *, evidence: list[dict] | None = None
         - issues: list of str describing problems
         - duplicate_quote_ratio: float
         - citation_stacking_count: int
+        - source_saturation_count: int
         - empty_filler_count: int
         - template_placeholder_count: int
     """
@@ -42,6 +43,14 @@ def check_memo_quality(body_markdown: str, *, evidence: list[dict] | None = None
             f"Examples: {'; '.join(stacking_examples[:3])}"
         )
     
+    # Check 2b: Single-source saturation (same source 3+ times in one paragraph)
+    saturation_count, saturation_examples = _detect_source_saturation(body_markdown)
+    if saturation_count > 0:
+        issues.append(
+            f"Source saturation detected: {saturation_count} paragraphs cite same source 3+ times. "
+            f"Examples: {'; '.join(saturation_examples[:3])}"
+        )
+    
     # Check 3: Empty filler sentences
     filler_count, filler_examples = _detect_empty_filler(body_markdown)
     if filler_count > 0:
@@ -61,6 +70,7 @@ def check_memo_quality(body_markdown: str, *, evidence: list[dict] | None = None
     should_regenerate = (
         duplicate_ratio > 0.40
         or stacking_count >= 2
+        or saturation_count >= 2
         or filler_count >= 1
         or placeholder_count > 0
     )
@@ -70,6 +80,7 @@ def check_memo_quality(body_markdown: str, *, evidence: list[dict] | None = None
         "issues": issues,
         "duplicate_quote_ratio": duplicate_ratio,
         "citation_stacking_count": stacking_count,
+        "source_saturation_count": saturation_count,
         "empty_filler_count": filler_count,
         "template_placeholder_count": placeholder_count,
     }
@@ -157,6 +168,47 @@ def _detect_citation_stacking(body: str) -> tuple[int, list[str]]:
             examples.append(example)
     
     return (stacking_count, examples[:5])
+
+
+def _detect_source_saturation(body: str) -> tuple[int, list[str]]:
+    """Detect paragraphs where the same source is cited 3+ times (source saturation).
+    
+    This catches over-reliance on a single source within a paragraph, which indicates
+    insufficient evidence diversity or quote-dumping from one paper.
+    """
+    # Split by double newlines to get paragraphs
+    paragraphs = re.split(r'\n\s*\n', body)
+    
+    saturation_count = 0
+    examples: list[str] = []
+    
+    for para in paragraphs:
+        if len(para.strip()) < 50:  # Skip very short paragraphs
+            continue
+        
+        # Find all citation markers [n] or [n peer] etc.
+        citation_markers = re.findall(r'\[([^\]]+)\]', para)
+        if not citation_markers:
+            continue
+        
+        # Count occurrences of each source number
+        source_counts: dict[int, int] = {}
+        for marker in citation_markers:
+            numbers = re.findall(r'\b(\d+)\b', marker)
+            for num_str in numbers:
+                num = int(num_str)
+                source_counts[num] = source_counts.get(num, 0) + 1
+        
+        # Check if any single source appears 3+ times in this paragraph
+        for source_num, count in source_counts.items():
+            if count >= 3:
+                saturation_count += 1
+                if len(examples) < 5:
+                    para_preview = para[:100].replace('\n', ' ').strip()
+                    examples.append(f"Paragraph cites [{source_num}] {count} times: {para_preview}...")
+                break  # Only count each paragraph once
+    
+    return (saturation_count, examples)
 
 
 def _detect_empty_filler(body: str) -> tuple[int, list[str]]:

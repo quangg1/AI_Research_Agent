@@ -10,6 +10,8 @@ from app.observability.logging import event
 
 def memo_gate_node(state: ResearchState) -> dict:
     """Review the written memo draft before publishing to the user."""
+    from app.domain.memo_quality import check_memo_quality
+    
     report = state.get("report") or {}
     has_draft = bool((report.get("body_markdown") or "").strip())
     status = str(state.get("status") or "")
@@ -20,6 +22,40 @@ def memo_gate_node(state: ResearchState) -> dict:
         return {"traces": [{"node": "memo_gate", "skipped": "confirmed"}]}
     if not has_draft and status not in {"draft", "approved", "revising"}:
         return {"traces": [{"node": "memo_gate", "skipped": "no_draft"}]}
+
+    # Check memo quality for automatic regeneration triggers
+    body_markdown = report.get("body_markdown") or ""
+    evidence = state.get("retrieved") or state.get("evidence") or []
+    quality_check = check_memo_quality(body_markdown, evidence=evidence)
+    
+    # If quality issues detected, trigger automatic revision
+    if quality_check["should_regenerate"]:
+        from app.domain.schema import AgentName, SubQuery
+        
+        issue_summary = "; ".join(quality_check["issues"][:3])
+        event("memo_gate_quality_regenerate", issues=issue_summary)
+        
+        # Create followup to regenerate with quality feedback
+        followup = dump(SubQuery(
+            agent=AgentName.SEARCH,
+            question=state.get("query") or "",
+            rationale=f"Quality gate: {issue_summary}"
+        ))
+        
+        return {
+            "status": "revising",
+            "memo_confirmed": False,
+            "followups": [followup],
+            "quality_gate_issues": quality_check["issues"],
+            "traces": [{
+                "node": "memo_gate",
+                "action": "quality_regenerate",
+                "issues": quality_check["issues"],
+                "duplicate_ratio": quality_check["duplicate_quote_ratio"],
+                "citation_stacking": quality_check["citation_stacking_count"],
+                "filler_count": quality_check["empty_filler_count"],
+            }],
+        }
 
     payload = pythonize(
         {
@@ -41,13 +77,14 @@ def memo_gate_node(state: ResearchState) -> dict:
             "gate_reason": (report.get("metrics") or {}).get("gate_reason")
             or ((state.get("critic") or {}).get("coverage_gate") or {}).get("gate_reason"),
             "synthesis_status": (report.get("metrics") or {}).get("synthesis_status"),
+            "quality_check": quality_check,
         }
     )
     event("memo_gate_interrupt")
     decision = interrupt(payload)
     if isinstance(decision, str):
         decision = {"action": decision}
-
+    
     action = (decision or {}).get("action", "publish")
     notes = str((decision or {}).get("notes") or "").strip()
     extra = (decision or {}).get("extra_questions") or []

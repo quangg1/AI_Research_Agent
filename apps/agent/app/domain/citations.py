@@ -84,18 +84,52 @@ def looks_like_nav_chrome(text: str) -> bool:
     return bool(NAV_CHROME_RE.search(t))
 
 
-def pick_quote(ev: dict, limit: int = 280) -> str:
-    raw = (ev.get("quote") or ev.get("snippet") or ev.get("full_text") or ev.get("title") or "").strip()
-    skip = ("source:", "url:", "published:", "credibility:", "secondary:")
-    lines = []
-    for line in raw.splitlines():
-        t = line.strip()
-        if not t or t.startswith("#") or t.lower().startswith(skip):
-            continue
-        if looks_like_nav_chrome(t):
-            continue
-        lines.append(t)
-    blob = " ".join(lines) or " ".join(raw.split())
+def pick_quote(ev: dict, limit: int = 280, *, claim_or_dimension: str = "", patterns: list[str] | None = None, topic_terms: list[str] | None = None) -> str:
+    """Select best quote from evidence, optionally reranking by claim/dimension relevance.
+    
+    If claim_or_dimension is provided, will select the most relevant passage from
+    the document rather than defaulting to the first chunk.
+    """
+    # If we have dimension-specific passage already selected, use it
+    if ev.get("selected_passage"):
+        blob = ev["selected_passage"]
+    elif claim_or_dimension:
+        # Use passage-level retrieval to find best chunk for this claim/dimension
+        from app.retrieval.passage import best_passage_for_claim
+        full_text = (
+            f"{ev.get('full_text') or ''} "
+            f"{ev.get('quote') or ''} "
+            f"{ev.get('snippet') or ''}"
+        ).strip()
+        if full_text:
+            best_passage = best_passage_for_claim(
+                full_text,
+                claim_or_dimension,
+                patterns=patterns,
+                topic_terms=topic_terms,
+                max_passage_len=limit * 3,
+            )
+            if best_passage:
+                blob = best_passage
+            else:
+                # Fallback to original logic
+                blob = ev.get("quote") or ev.get("snippet") or ev.get("full_text") or ev.get("title") or ""
+        else:
+            blob = ev.get("quote") or ev.get("snippet") or ev.get("full_text") or ev.get("title") or ""
+    else:
+        # Original fallback logic when no claim specified
+        raw = (ev.get("quote") or ev.get("snippet") or ev.get("full_text") or ev.get("title") or "").strip()
+        skip = ("source:", "url:", "published:", "credibility:", "secondary:")
+        lines = []
+        for line in raw.splitlines():
+            t = line.strip()
+            if not t or t.startswith("#") or t.lower().startswith(skip):
+                continue
+            if looks_like_nav_chrome(t):
+                continue
+            lines.append(t)
+        blob = " ".join(lines) or " ".join(raw.split())
+    
     blob = " ".join(blob.split())
     if looks_like_nav_chrome(blob):
         alt = (ev.get("title") or "").strip()

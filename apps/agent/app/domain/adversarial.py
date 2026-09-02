@@ -394,10 +394,20 @@ def extract_quantitative_rows(evidence: list[dict], citations: list[dict] | None
             window = blob[start:end]
             if _is_setup_parameter(token, window):
                 continue
+            
+            # SEMANTIC GATE: Require metric/unit AND experimental condition
+            if not _has_valid_metric_and_condition(token, window):
+                continue
+            
             seen.add(key)
             condition = _metric_condition(window)
             benchmark = _benchmark_name(window, blob[:500])
             verified_bench = benchmark != "unverified benchmark"
+            
+            # Additional filter: drop if condition is still generic/missing after validation
+            if condition == "condition not stated in excerpt":
+                continue
+            
             rows.append(
                 {
                     "n": n,
@@ -473,6 +483,67 @@ def _metric_condition(window: str) -> str:
     if re.search(r"\bkv[- ]?cache|multi[- ]?node|cluster|gpu\s*memory|hbm\b", low):
         return "scalability / systems regime"
     return "condition not stated in excerpt"
+
+
+def _has_valid_metric_and_condition(token: str, window: str) -> bool:
+    """Semantic gate: require metric/unit name AND experimental condition.
+    
+    Drops bare numbers like "1970s", "16%", "53%" without context.
+    Returns True only if the number has BOTH:
+    1. A metric/unit name (accuracy, latency, FLOP, etc.)
+    2. An experimental condition (dataset, setup, benchmark, etc.)
+    """
+    t = (token or "").lower()
+    w = (window or "").lower()
+    
+    # Check for valid metric/unit in token or nearby context
+    # Clear outcome metrics with units
+    has_metric = bool(re.search(
+        r"%|accuracy|error|precision|recall|f1|"
+        r"\bms\b|µs|\bus\b|seconds?|minutes?|latency|ttft|throughput|"
+        r"tflop|gflop|\bflop|tok(?:ens)?/s|req(?:uests)?/s|"
+        r"gb/s|gib|gb|tb|memory|bandwidth|"
+        r"×|x\s*(?:faster|speedup|improvement)|"
+        r"cost|price|\$|tokens?|parameters?",
+        t + " " + w,
+    ))
+    
+    # Bare years without metric context are not valid
+    if re.match(r"^\d{4}s?$", t.strip()):
+        return False
+    
+    # Bare percentages without outcome metric context
+    if re.search(r"^\d+(?:\.\d+)?%$", t.strip()) and not re.search(
+        r"accuracy|error|precision|recall|improvement|reduction|increase|decrease|"
+        r"pass@\d+|success|failure|correct|incorrect",
+        w,
+    ):
+        return False
+    
+    # Check for experimental condition in context
+    # Require specific named benchmarks, datasets, or experimental setups
+    has_condition = bool(re.search(
+        r"\b("
+        r"dataset|benchmark|task\s+(?:subset|set)|test\s+set|evaluation\s+(?:set|setup)|"
+        r"on\s+(?:the\s+)?(?:\w+\s+)?(?:dataset|benchmark|task)|"
+        r"swe-bench|humaneval|mbpp|gaia|webarena|browsergym|agentbench|"
+        r"mmlu|gpqa|math|gsm8k|hotpotqa|triviaqa|livecodebench|"
+        r"baseline|ablation(?:\s+study)?|condition|setting|scenario|"
+        r"hard\s+task|easy\s+task|all\s+tasks|subset|"
+        r"gpu|node|cluster|kv[- ]cache|batch\s+size|model\s+size|"
+        r"vs\.?|versus|compared\s+to|against\s+"
+        r")\b",
+        w,
+        re.I,
+    ))
+    
+    # "experiment" alone without specific benchmark/dataset is too generic
+    if not has_condition and re.search(r"\bexperiment\b", w, re.I):
+        # Check if there's a specific experimental setup mentioned
+        if re.search(r"(?:in\s+(?:the|our|this)\s+)?experiment(?:al)?\s+(?:setup|configuration|protocol)", w, re.I):
+            has_condition = True
+    
+    return has_metric and has_condition
 
 
 def temporal_warnings(evidence: list[dict], horizon: str = "") -> list[str]:

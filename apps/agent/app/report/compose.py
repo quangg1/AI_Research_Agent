@@ -340,9 +340,33 @@ def _evidence_text(ev: dict) -> str:
     return " ".join(p for p in parts if p)
 
 
-def _relevant_sentences(ev: dict, patterns: list[str], topic_terms: list[str], limit: int = 2) -> list[str]:
-    """Sentences in a source that actually speak to this dimension."""
-    text = re.sub(r"\s+", " ", _evidence_text(ev))
+def _relevant_sentences(ev: dict, patterns: list[str], topic_terms: list[str], limit: int = 2, *, dimension_label: str = "") -> list[str]:
+    """Sentences in a source that actually speak to this dimension.
+    
+    If dimension_label is provided, will first select best passage for the dimension,
+    then extract relevant sentences from that passage.
+    """
+    # Use dimension-specific passage if available
+    if ev.get("selected_passage"):
+        text = ev["selected_passage"]
+    elif dimension_label:
+        # Select best passage for this dimension
+        from app.retrieval.passage import best_passage_for_claim
+        full_text = _evidence_text(ev)
+        if full_text:
+            best_passage = best_passage_for_claim(
+                full_text,
+                dimension_label,
+                patterns=patterns,
+                topic_terms=topic_terms,
+            )
+            text = best_passage if best_passage else full_text
+        else:
+            text = full_text
+    else:
+        text = _evidence_text(ev)
+    
+    text = re.sub(r"\s+", " ", text)
     if not text:
         return []
     sentences = [s.strip() for s in re.split(r"(?<=[.!?;])\s+", text) if len(s.strip()) > 40]
@@ -368,18 +392,26 @@ def _relevant_sentences(ev: dict, patterns: list[str], topic_terms: list[str], l
 
 def _analysis_sections(query: str, dossier: list[dict], ledger: list[Citation], slots: list[dict]) -> str:
     """One evidence-grounded section per must-answer dimension."""
+    from app.retrieval.passage import select_best_excerpts_per_dimension
+    
     anchors = distinctive_terms(user_goal(query), limit=10)
     by_id = {s.get("id"): s for s in slots}
+    
+    # First, rerank passages per dimension for better excerpts
+    dossier_with_passages = select_best_excerpts_per_dimension(dossier, [])
+    
     blocks: list[str] = []
-    for dim in _dimensions(dossier):
+    for dim in _dimensions(dossier_with_passages):
         slot = by_id.get(dim.get("id")) or {}
         patterns = [p for p in (slot.get("patterns") or []) if p]
         topic_terms = [t for t in (slot.get("topic_terms") or anchors) if t]
+        dim_label = dim.get("label") or ""
+        
         lines: list[str] = []
         used_cites: list[str] = []
         for ev in dim.get("items") or []:
             cite = _cite_for_evidence(ev, ledger)
-            sentences = _relevant_sentences(ev, patterns, topic_terms)
+            sentences = _relevant_sentences(ev, patterns, topic_terms, dimension_label=dim_label)
             if not sentences:
                 continue
             used_cites.append(cite)
@@ -512,7 +544,10 @@ def _findings_narrative(
         cites = " ".join(
             dict.fromkeys(c for c in (_cite_for_evidence(ev, ledger) for ev in dim.get("items") or []) if c)
         )
-        blocks.append(f"**{dim.get('label')}** is carried by the collected sources. {cites}".strip())
+        # Don't emit empty filler - only add if we have real synthesis
+        label = dim.get('label') or ""
+        if label and cites:
+            blocks.append(f"**{label}** {cites}".strip())
     if partial:
         labels = "; ".join((d.get("label") or "")[:70] for d in partial[:3])
         blocks.append(

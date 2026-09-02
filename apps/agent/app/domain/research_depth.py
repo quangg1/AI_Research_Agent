@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.domain.retrieval_limits import ENRICH_POOL, RETRIEVAL_POOL
+from app.domain.retrieval_limits import DEEP_RESERVE_CALLS, ENRICH_POOL, RETRIEVAL_POOL
 from app.domain.schema import Budget
 
 FORCED_DEPTH = "deep"

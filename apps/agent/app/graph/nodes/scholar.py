@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
@@ -159,6 +160,12 @@ def _openalex(query: str) -> list[dict]:
 
 def _semantic_scholar(query: str) -> list[dict]:
     try:
+        # Use API key if available to avoid rate limits
+        headers = {"User-Agent": "kiln-research-agent/0.1"}
+        api_key = os.getenv("S2_API_KEY") or os.getenv("SEMANTIC_SCHOLAR_API_KEY")
+        if api_key:
+            headers["x-api-key"] = api_key
+        
         with httpx.Client(timeout=15) as client:
             response = client.get(
                 "https://api.semanticscholar.org/graph/v1/paper/search",
@@ -167,7 +174,7 @@ def _semantic_scholar(query: str) -> list[dict]:
                     "limit": 8,
                     "fields": "title,abstract,url,year,externalIds,publicationTypes,venue",
                 },
-                headers={"User-Agent": "kiln-research-agent/0.1"},
+                headers=headers,
             )
             response.raise_for_status()
             data = response.json()

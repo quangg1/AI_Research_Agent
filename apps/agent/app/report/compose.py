@@ -640,7 +640,21 @@ def _user_memo_markdown(
         "## References",
         format_reference_list(ledger),
     ]
-    return "\n\n".join(p.strip() for p in parts if (p or "").strip()) + "\n"
+    memo = "\n\n".join(p.strip() for p in parts if (p or "").strip()) + "\n"
+    
+    # Soften overclaim language
+    from app.domain.overclaim import soften_overclaims
+    from app.observability.logging import logger
+    
+    softened_memo, changes = soften_overclaims(memo, aggressive=False)
+    
+    if changes:
+        logger.info(
+            f"overclaim_softened: {len(changes)} absolute terms softened",
+            extra={"changes": [{"from": c["original"], "to": c["replacement"]} for c in changes[:3]]}
+        )
+    
+    return softened_memo
 
 
 def _diagnostics_markdown(

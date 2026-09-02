@@ -388,12 +388,34 @@ def _research_quality(
             + 0.10 * fifth_pct
         )
     )
+    
+    # Apply penalties for known limitations
     if any(s.get("status") == "weak" for s in slots if s.get("critical")):
         overall = min(overall, 80)
     if any(s.get("status") == "open" for s in slots if s.get("critical")):
         overall = min(overall, 65)
     if primary_n == 0:
         overall = min(overall, 55)
+    
+    # ADDITIONAL: Reduce confidence when gaps/unknowns are present
+    # These penalties prevent 100/100 when report lists uncertainties
+    gaps_penalty = 0
+    
+    # Penalty for open gaps (even non-critical ones indicate incomplete coverage)
+    if open_n > 0:
+        gaps_penalty += min(10, open_n * 3)  # 3 points per open gap, max 10
+    
+    # Penalty for weak evidence (indicates uncertainty)
+    if weak > 0:
+        gaps_penalty += min(5, weak * 2)  # 2 points per weak slot, max 5
+    
+    # Penalty for low primary source count (measurement gap indicator)
+    if primary_n > 0 and primary_n < 3:
+        gaps_penalty += 5  # Sparse primary sources = likely measurement gaps
+    
+    # Apply penalties (but don't drop below existing caps)
+    if gaps_penalty > 0:
+        overall = max(overall - gaps_penalty, 55)  # Never drop below shallow threshold
 
     label = "deep" if overall >= 85 and not critical_gaps else "standard" if overall >= 55 else "shallow"
     if critical_gaps:

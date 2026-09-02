@@ -220,6 +220,119 @@ _FILLER_ASPECTS = ("mechanism", "quantitative", "constraints", "scalability")
 _slot_cache: dict[str, list[dict[str, Any]]] = {}
 
 
+def synthesize_dimensions_from_evidence(
+    query: str,
+    evidence: list[dict],
+    fallback_to_heuristic: bool = True
+) -> list[dict[str, Any]]:
+    """Evidence-first dimension synthesis from paper concepts.
+    
+    Extracts technical concepts from papers and creates paper-specific
+    dimensions instead of generic templates.
+    
+    Args:
+        query: User's research question
+        evidence: Scholar/search results to extract concepts from
+        fallback_to_heuristic: Use heuristic dimensions if concept extraction fails
+        
+    Returns:
+        List of dimension dicts with paper-specific concepts
+    """
+    from app.domain.paper_concepts import extract_paper_concepts
+    from app.llm.client import llm
+    
+    # Extract concepts from top papers
+    concepts = extract_paper_concepts(evidence, limit=5)
+    
+    if not concepts and fallback_to_heuristic:
+        # No concepts found, fall back to heuristics
+        return derive_slots(query, use_llm=True)
+    
+    # Group concepts by type
+    methods = [c for c in concepts if c["concept_type"] == "method"]
+    frameworks = [c for c in concepts if c["concept_type"] == "framework"]
+    findings = [c for c in concepts if c["concept_type"] == "finding"]
+    limitations = [c for c in concepts if c["concept_type"] == "limitation"]
+    
+    # Build dimension candidates from concepts
+    dimension_candidates = []
+    
+    # Methods and frameworks become primary dimensions
+    for concept in (methods + frameworks)[:5]:
+        dim = {
+            "id": _sanitize_id(concept["concept_name"]),
+            "label": f"{concept['concept_name']} [{concept['cite_id']}]",
+            "patterns": [
+                concept["concept_name"].lower(),
+                *[m["raw_text"] for m in concept.get("metrics", [])[:2]]
+            ],
+            "topic_terms": distinctive_terms(concept["context"], limit=5),
+            "critical": True,
+            "paper_cite": concept["cite_id"],
+            "paper_title": concept["paper_title"],
+            "example_metrics": concept.get("metrics", []),
+        }
+        dimension_candidates.append(dim)
+    
+    # If we have findings with strong metrics, add them
+    for concept in findings[:3]:
+        if concept.get("metrics"):
+            dim = {
+                "id": _sanitize_id(concept["concept_name"][:30]),
+                "label": f"{concept['concept_name'][:50]}... [{concept['cite_id']}]",
+                "patterns": [m["raw_text"] for m in concept["metrics"][:3]],
+                "topic_terms": distinctive_terms(concept["context"], limit=5),
+                "critical": False,
+                "paper_cite": concept["cite_id"],
+                "paper_title": concept["paper_title"],
+                "example_metrics": concept["metrics"],
+            }
+            dimension_candidates.append(dim)
+    
+    # Add one limitations dimension if we have them
+    if limitations:
+        all_limitations = "; ".join([c["context"][:100] for c in limitations[:3]])
+        dim = {
+            "id": "constraints_and_limitations",
+            "label": "Constraints, Limitations, and Failure Modes",
+            "patterns": [
+                "limitation", "constraint", "fails", "cannot", "does not",
+                *[c["concept_name"] for c in limitations[:3]]
+            ],
+            "topic_terms": distinctive_terms(all_limitations, limit=5),
+            "critical": True,
+        }
+        dimension_candidates.append(dim)
+    
+    # If we still need more dimensions, add query-driven heuristics
+    if len(dimension_candidates) < 4:
+        heuristic_dims = _heuristic_slots(user_goal(query) or query)
+        # Only add heuristics that don't duplicate paper-specific concepts
+        for h_dim in heuristic_dims:
+            if not any(h_dim["id"] == d["id"] for d in dimension_candidates):
+                dimension_candidates.append(h_dim)
+                if len(dimension_candidates) >= 6:
+                    break
+    
+    # Limit to 6 dimensions max
+    final_dimensions = dimension_candidates[:6]
+    
+    # Ensure at least one is marked critical
+    if not any(d.get("critical") for d in final_dimensions):
+        final_dimensions[0]["critical"] = True
+    
+    return final_dimensions
+
+
+def _sanitize_id(name: str) -> str:
+    """Convert concept name to valid dimension ID."""
+    # Remove special chars, lowercase, replace spaces with underscores
+    sanitized = re.sub(r'[^a-zA-Z0-9\s_-]', '', name)
+    sanitized = sanitized.lower().strip().replace(' ', '_')
+    # Limit length
+    return sanitized[:50]
+
+
 def derive_slots(query: str, use_llm: bool = True) -> list[dict[str, Any]]:
     """Must-answer dimensions derived from the question itself.
 

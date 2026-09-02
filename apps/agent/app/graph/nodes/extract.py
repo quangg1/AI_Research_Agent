@@ -16,6 +16,34 @@ def extract_node(state: ResearchState) -> dict:
     retrieved = tag_evidence_roles(state.get("retrieved") or state.get("evidence") or [], query)
     on_topic = [e for e in retrieved if not e.get("off_topic")]
     working = on_topic if len(on_topic) >= 3 else retrieved
+    
+    # EVIDENCE-FIRST DIMENSION REFINEMENT
+    # If this is first iteration and we have scholar/high-quality evidence,
+    # refine dimensions from paper concepts instead of using generic templates
+    should_refine_dimensions = (
+        budget.iterations == 1  # First iteration
+        and len(working) >= 3  # Have some evidence
+        and not brief.get("dimensions_refined")  # Not already refined
+        and any(e.get("tier") in {"peer_reviewed", "specialist_research"} for e in working[:10])  # Has papers
+    )
+    
+    if should_refine_dimensions:
+        from app.domain.decompose import synthesize_dimensions_from_evidence
+        
+        # Extract paper-specific dimensions
+        paper_dimensions = synthesize_dimensions_from_evidence(query, working, fallback_to_heuristic=True)
+        
+        # Update brief with refined dimensions
+        brief = {
+            **brief,
+            "must_answer": paper_dimensions,
+            "dimensions_refined": True,
+        }
+        event("extract_dimensions_refined", 
+              old_count=len(brief.get("must_answer") or []),
+              new_count=len(paper_dimensions),
+              paper_specific=sum(1 for d in paper_dimensions if d.get("paper_cite")))
+    
     slots = brief.get("must_answer") or must_answer_for(query)
     coverage = score_must_answer(query, working, slots)
 

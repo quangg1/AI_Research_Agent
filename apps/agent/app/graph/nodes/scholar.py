@@ -125,12 +125,15 @@ def _openalex_query(query: str) -> str:
 
 
 def _openalex(query: str) -> list[dict]:
+    search_query = _openalex_query(query)
+    logger.info(f"openalex_query: original={query[:80]}, transformed={search_query[:80]}")
+    
     try:
         with httpx.Client(timeout=20) as client:
             response = client.get(
                 "https://api.openalex.org/works",
                 params={
-                    "search": _openalex_query(query),
+                    "search": search_query,
                     "per_page": API_RESULTS_PER_QUERY,
                     "filter": "from_publication_date:2018-01-01",
                 },
@@ -138,20 +141,27 @@ def _openalex(query: str) -> list[dict]:
             )
             response.raise_for_status()
             data = response.json()
+            total_results = len(data.get("results", []))
+            logger.info(f"openalex_raw_results: got {total_results} results from API")
     except Exception as exc:
-        logger.warning("openalex_failed %s", exc)
+        logger.warning(f"openalex_failed: {exc}")
         return []
     out = []
+    filtered_out_by_topic = 0
+    filtered_out_by_url = 0
+    
     for item in data.get("results", []):
         title = item.get("display_name") or "Untitled work"
         abstract = _inflate_abstract(item.get("abstract_inverted_index"))
         if not _on_topic(title, abstract, query):
+            filtered_out_by_topic += 1
             continue
         loc = item.get("primary_location") or {}
         source = loc.get("source") or {}
         doi = str(item.get("doi") or "").replace("https://doi.org/", "")
         url = (loc.get("landing_page_url") or "").strip() or (f"https://doi.org/{doi}" if doi else "") or (item.get("id") or "")
         if not is_citable_url(url):
+            filtered_out_by_url += 1
             continue
         year = str(item.get("publication_year") or "")
         eid = "ev_" + hashlib.sha1((url or title).encode()).hexdigest()[:10]
@@ -179,6 +189,8 @@ def _openalex(query: str) -> list[dict]:
                 "publication_type": publication_type,
             }
         )
+    
+    logger.info(f"openalex_filtering: raw={total_results}, rejected_topic={filtered_out_by_topic}, rejected_url={filtered_out_by_url}, final={len(out)}")
     return out
 
 

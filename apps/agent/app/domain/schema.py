@@ -80,7 +80,7 @@ HOST_TIER: dict[str, SourceTier] = {
     "docs.llamaindex.ai": SourceTier.STANDARD_BODY,
     "nvidia.com": SourceTier.STANDARD_BODY,
     "docs.nvidia.com": SourceTier.STANDARD_BODY,
-    "arxiv.org": SourceTier.PEER_REVIEWED,
+    "arxiv.org": SourceTier.SPECIALIST_RESEARCH,  # ArXiv is preprint server, not peer-reviewed
     "openalex.org": SourceTier.PEER_REVIEWED,
     "semanticscholar.org": SourceTier.PEER_REVIEWED,
     "doi.org": SourceTier.PEER_REVIEWED,

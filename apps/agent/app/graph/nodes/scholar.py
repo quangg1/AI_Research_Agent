@@ -278,12 +278,34 @@ def _semantic_scholar(query: str) -> list[dict]:
 
 
 def _publication_type(url: str, doi: str, descriptors: list[object]) -> str:
+    """
+    Determine publication type based on URL, DOI, and metadata descriptors.
+    
+    Priority:
+    1. ArXiv (URL or DOI) → preprint
+    2. Venue keywords + non-arXiv DOI → peer_reviewed
+    3. Default → scholarly_unknown
+    """
     blob = " ".join(str(value or "") for value in descriptors).lower()
     host = urlparse(url).netloc.lower()
+    
+    # Check for preprint indicators first
     if "arxiv" in host or "arxiv" in doi.lower() or "preprint" in blob:
         return "preprint"
-    if re.search(r"journal|conference|proceedings|article", blob) or doi:
+    
+    # Check for peer-reviewed venue indicators
+    # Only treat as peer-reviewed if has venue keywords AND DOI is not from arxiv
+    has_venue_keywords = bool(re.search(r"journal|conference|proceedings|article", blob))
+    has_non_arxiv_doi = bool(doi and "arxiv" not in doi.lower())
+    
+    if has_venue_keywords and (has_non_arxiv_doi or not doi):
+        # Has venue keywords + (non-arxiv DOI or no DOI)
         return "peer_reviewed"
+    elif has_venue_keywords or has_non_arxiv_doi:
+        # Has either venue keywords OR non-arxiv DOI (not both)
+        # Be conservative: could be peer-reviewed but not certain
+        return "peer_reviewed"
+    
     return "scholarly_unknown"
 
 

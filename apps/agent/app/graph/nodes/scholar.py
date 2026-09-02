@@ -170,6 +170,9 @@ def _openalex(query: str) -> list[dict]:
             doi,
             [source.get("type"), source.get("display_name"), item.get("type"), item.get("type_crossref")],
         )
+        # DEBUG: Log publication type for ArXiv papers
+        if "arxiv" in url.lower():
+            logger.info(f"openalex_arxiv_paper: title={title[:60]}, url={url}, publication_type={publication_type}")
         fallback = SourceTier.PEER_REVIEWED if publication_type == "peer_reviewed" else SourceTier.SPECIALIST_RESEARCH
         tier, score = credibility_score(url, year, fallback)
         if publication_type == "preprint":

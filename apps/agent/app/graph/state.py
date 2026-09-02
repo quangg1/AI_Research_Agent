@@ -75,6 +75,8 @@ class ResearchState(TypedDict, total=False):
     integrity_retries: int
     depth_retries: int
     gap_micro_retries: int
+    quality_regeneration_count: int
+    quality_gate_issues: list[str]
 
 
 def budget_from(state: ResearchState) -> Budget:

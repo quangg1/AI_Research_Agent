@@ -28,12 +28,16 @@ def memo_gate_node(state: ResearchState) -> dict:
     evidence = state.get("retrieved") or state.get("evidence") or []
     quality_check = check_memo_quality(body_markdown, evidence=evidence)
     
-    # If quality issues detected, trigger report rewrite from notes (not new search)
-    if quality_check["should_regenerate"]:
+    # Track regeneration attempts to prevent infinite loops
+    quality_regen_count = int(state.get("quality_regeneration_count") or 0)
+    MAX_QUALITY_REGENERATIONS = 2  # Allow up to 2 rewrites
+    
+    # If quality issues detected AND under limit, trigger report rewrite from notes (not new search)
+    if quality_check["should_regenerate"] and quality_regen_count < MAX_QUALITY_REGENERATIONS:
         from app.domain.schema import AgentName, SubQuery
         
         issue_summary = "; ".join(quality_check["issues"][:3])
-        event("memo_gate_quality_regenerate", issues=issue_summary)
+        event("memo_gate_quality_regenerate", issues=issue_summary, attempt=quality_regen_count + 1)
         
         # Trigger report rewrite with quality issues as feedback
         # Do NOT create new search - rewrite from existing dimension-filtered notes
@@ -42,13 +46,19 @@ def memo_gate_node(state: ResearchState) -> dict:
             "status": "revising_quality",
             "memo_confirmed": False,
             "quality_gate_issues": quality_check["issues"],
+            "quality_regeneration_count": quality_regen_count + 1,
             "traces": [{
                 "node": "memo_gate",
                 "action": "quality_regenerate",
                 "issues": quality_check["issues"],
+                "attempt": quality_regen_count + 1,
                 "will_rewrite_report": True,
             }],
         }
+    elif quality_check["should_regenerate"] and quality_regen_count >= MAX_QUALITY_REGENERATIONS:
+        # Hit regeneration limit - force publish with warning
+        event("memo_gate_quality_limit_reached", attempts=quality_regen_count, remaining_issues=len(quality_check["issues"]))
+        # Fall through to normal gate flow (will show to user or auto-publish)
 
     payload = pythonize(
         {
@@ -133,8 +143,11 @@ def memo_gate_node_auto(state: ResearchState) -> dict:
         quality_check = check_memo_quality(body_markdown, evidence=evidence)
         
         # If quality issues detected, trigger rewrite from notes (not new search)
-        if quality_check["should_regenerate"]:
-            event("memo_gate_auto_quality_fail", issues="; ".join(quality_check["issues"][:3]))
+        quality_regen_count_auto = int(state.get("quality_regeneration_count") or 0)
+        MAX_QUALITY_REGENERATIONS = 2
+        
+        if quality_check["should_regenerate"] and quality_regen_count_auto < MAX_QUALITY_REGENERATIONS:
+            event("memo_gate_auto_quality_fail", issues="; ".join(quality_check["issues"][:3]), attempt=quality_regen_count_auto + 1)
             
             # Trigger report rewrite with quality issues as feedback
             # Do NOT create new search - rewrite from existing dimension-filtered notes
@@ -142,13 +155,19 @@ def memo_gate_node_auto(state: ResearchState) -> dict:
                 "status": "revising_quality",
                 "memo_confirmed": False,
                 "quality_gate_issues": quality_check["issues"],
+                "quality_regeneration_count": quality_regen_count_auto + 1,
                 "traces": [{
                     "node": "memo_gate_auto",
                     "action": "quality_regenerate",
                     "issues": quality_check["issues"],
+                    "attempt": quality_regen_count_auto + 1,
                     "will_rewrite": True,
                 }],
             }
+        elif quality_check["should_regenerate"] and quality_regen_count_auto >= MAX_QUALITY_REGENERATIONS:
+            event("memo_gate_auto_quality_limit_reached", attempts=quality_regen_count_auto, remaining_issues=len(quality_check["issues"]))
+            # Force approve after limit
+            pass  # Fall through to final return
     
     stored = _persist_knowledge(state)
     patch: dict = {

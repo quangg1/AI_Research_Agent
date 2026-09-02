@@ -20,11 +20,27 @@ def extract_node(state: ResearchState) -> dict:
     # EVIDENCE-FIRST DIMENSION REFINEMENT
     # If this is first iteration and we have scholar/high-quality evidence,
     # refine dimensions from paper concepts instead of using generic templates
+    
+    # Debug logging to check conditions
+    iteration_check = budget.iterations == 1
+    evidence_check = len(working) >= 3
+    not_refined_check = not brief.get("dimensions_refined")
+    has_papers = any(e.get("tier") in {"peer_reviewed", "specialist_research"} for e in working[:10])
+    
+    event("extract_dimension_check",
+          iteration=budget.iterations,
+          iteration_ok=iteration_check,
+          evidence_count=len(working),
+          evidence_ok=evidence_check,
+          not_refined=not_refined_check,
+          has_papers=has_papers,
+          paper_tiers=[e.get("tier") for e in working[:10]])
+    
     should_refine_dimensions = (
-        budget.iterations == 1  # First iteration
-        and len(working) >= 3  # Have some evidence
-        and not brief.get("dimensions_refined")  # Not already refined
-        and any(e.get("tier") in {"peer_reviewed", "specialist_research"} for e in working[:10])  # Has papers
+        iteration_check
+        and evidence_check
+        and not_refined_check
+        and has_papers
     )
     
     if should_refine_dimensions:

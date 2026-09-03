@@ -27,7 +27,7 @@ Get-Content $envFile | ForEach-Object {
         $value = $matches[2].Trim()
         
         # Remove quotes if present
-        $value = $value -replace '^[''"]|[''"]$', ''
+        $value = $value.Trim('"').Trim("'")
         
         # Set environment variable
         Set-Item -Path "env:$key" -Value $value

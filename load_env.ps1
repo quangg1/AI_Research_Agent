@@ -1,56 +1,52 @@
-# Load environment variables from .env file
+# Simple .env loader for PowerShell
 # Usage: .\load_env.ps1
 
 $envFile = ".env"
 
 if (-Not (Test-Path $envFile)) {
-    Write-Host "❌ .env file not found!" -ForegroundColor Red
+    Write-Host "ERROR: .env file not found!" -ForegroundColor Red
     exit 1
 }
 
-Write-Host "🔧 Loading environment variables from $envFile..." -ForegroundColor Cyan
+Write-Host "Loading environment variables from .env..." -ForegroundColor Green
 
-$loadedCount = 0
-$skippedCount = 0
+$loaded = 0
 
 Get-Content $envFile | ForEach-Object {
     $line = $_.Trim()
     
-    # Skip comments and empty lines
-    if ($line -match '^#' -or $line -eq '') {
+    # Skip empty lines and comments
+    if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith('#')) {
         return
     }
     
-    # Match KEY=VALUE format
+    # Parse KEY=VALUE
     if ($line -match '^([^=]+)=(.*)$') {
         $key = $matches[1].Trim()
         $value = $matches[2].Trim()
         
-        # Remove quotes if present
-        $value = $value.Trim('"').Trim("'")
-        
-        # Set environment variable
-        Set-Item -Path "env:$key" -Value $value
-        
-        # Show confirmation (mask sensitive values)
-        if ($value.Length -gt 10) {
-            $masked = $value.Substring(0, 8) + "..."
-        } else {
-            $masked = "***"
+        # Remove surrounding quotes
+        if ($value.StartsWith('"') -and $value.EndsWith('"')) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+        if ($value.StartsWith("'") -and $value.EndsWith("'")) {
+            $value = $value.Substring(1, $value.Length - 2)
         }
         
-        Write-Host "  ✅ $key = $masked" -ForegroundColor Green
-        $loadedCount++
-    } else {
-        Write-Host "  ⚠️  Skipped invalid line: $line" -ForegroundColor Yellow
-        $skippedCount++
+        # Set the environment variable
+        [Environment]::SetEnvironmentVariable($key, $value, "Process")
+        
+        # Show what was loaded (masked)
+        if ($value.Length -gt 10) {
+            $display = $value.Substring(0, 8) + "..."
+        } else {
+            $display = "***"
+        }
+        
+        Write-Host "  $key = $display" -ForegroundColor Cyan
+        $loaded++
     }
 }
 
-Write-Host "`n📊 Summary:" -ForegroundColor Cyan
-Write-Host "  Loaded: $loadedCount variables" -ForegroundColor Green
-if ($skippedCount -gt 0) {
-    Write-Host "  Skipped: $skippedCount lines" -ForegroundColor Yellow
-}
-
-Write-Host "`n✅ Environment variables loaded successfully!" -ForegroundColor Green
+Write-Host ""
+Write-Host "Loaded $loaded environment variables successfully!" -ForegroundColor Green

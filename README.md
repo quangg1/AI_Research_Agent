@@ -127,6 +127,20 @@ Evidence is merged, ranked (authority + numeric benchmark bias), enriched with f
 
 Target memo length for deep runs: ~5,500 words with executive summary, quantitative table, worked example, and decision rules.
 
+### Quality assurance & trust (2026 Q3 Upgrade)
+
+**Seven-layer protection against hallucination:**
+
+1. **Per-dimension retrieval** — Each research question gets targeted evidence (k=3-5), not global pool  
+2. **Source tier classification** — ArXiv correctly labeled as `specialist`, not `peer-reviewed`  
+3. **Overclaim softening** — Post-process removes absolute language ("completely eliminates" → "largely reduces")  
+4. **Confidence calibration** — Scores penalized for gaps (-3 pts), weak evidence (-2 pts), sparse sources (-5 pts)  
+5. **Citation relevance** — Rejects papers from irrelevant domains (e.g., biology papers for AI claims)  
+6. **Quality regeneration** — Memo can be rewritten up to 2× if it fails integrity checks  
+7. **Independent audit** — Post-publish LLM judge verifies claims match sources (`trust_bench_e2e.py`)  
+
+**Trust Bench E2E** measures hallucination rate by having a separate judge LLM verify that numeric claims are actually supported by cited sources. Results tracked in `data/eval/trust_bench_e2e_history.jsonl`.
+
 ---
 
 ## Multi-tenancy and security
@@ -154,6 +168,8 @@ Kiln is designed to be **testable without live LLM calls** for routing and gate 
 | Domain + routing eval | `python -m app.eval.runner` | Query classification, folklore blocking, golden set |
 | Graph routing | `python -m app.eval.graph_routing` | Coverage gate transitions (budget vs coverage) |
 | RACE proxy metrics | `python -m app.eval.race_bench` | Memo structure and grounding proxies |
+| **Trust Bench Tier-A** | `python -m app.eval.trust_bench` | Deterministic citation integrity checks (inline) |
+| **Trust Bench E2E** | `python -m app.eval.trust_bench_e2e` | Independent LLM judge audit (post-publish) |
 | Unit tests | `pytest` (180+ tests across agent) | Budget accounting, coverage, citations, fetch guards |
 
 Golden set: `data/eval/golden_set.json`

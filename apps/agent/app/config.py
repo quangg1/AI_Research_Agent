@@ -6,7 +6,14 @@ class Settings(BaseSettings):
 
     google_api_key: str = ""
     gemini_model: str = "gemini-3.6-flash"
-    gemini_embed_model: str = "text-embedding-004"
+    # Per-role overrides (app.llm.roles.use_role_model): empty = use gemini_model.
+    # Splitting high-frequency roles (critic/planner) onto a different model
+    # spreads calls across a separate per-model RPM/RPD quota bucket instead
+    # of hammering one model's free-tier limit.
+    gemini_model_critic: str = ""
+    gemini_model_planner: str = ""
+    gemini_model_report: str = ""
+    gemini_embed_model: str = "gemini-embedding-001"
     openai_api_key: str = ""
     openai_model: str = "gpt-4.1-mini"
     xai_api_key: str = ""

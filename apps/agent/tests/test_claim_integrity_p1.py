@@ -29,6 +29,18 @@ def test_annotate_skips_already_tagged():
     assert annotate_inline_citation_tiers(md, citations) == md
 
 
+def test_annotate_skips_latex_interval_that_looks_like_citation_list():
+    """Regression: "$c \\in [0, 1]$" has the same bracket shape as a citation
+    list. The old code annotated it as citing sources 0 and 1, producing
+    "$c \\in [0, 1 peer]$" inside a live LaTeX formula (real memo output,
+    2026-09-05 run)."""
+    citations = [{"n": 1, "tier": "peer_reviewed", "url": "https://arxiv.org/abs/2401.1"}]
+    md = r"confidence values $c \in [0, 1]$ across subgroup bins [1]."
+    out = annotate_inline_citation_tiers(md, citations)
+    assert r"$c \in [0, 1]$" in out
+    assert "[1 peer]" in out
+
+
 def test_integrity_severity_critical():
     memo = (
         "## Quantitative findings\n\nMeasurements absent in source texts.\n\n"

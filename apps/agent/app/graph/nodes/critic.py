@@ -16,6 +16,7 @@ from app.domain.schema import CriticVerdict
 from app.graph.serde import dump
 from app.graph.state import ResearchState, budget_from
 from app.llm.client import llm
+from app.llm.roles import use_role_model
 from app.observability.logging import event
 
 
@@ -30,6 +31,8 @@ def critic_node(state: ResearchState) -> dict:
     coverage = score_must_answer(query, retrieved, slots)
 
     verdict = _llm_critic(state, retrieved, coverage) or _heuristic_critic(state, retrieved, coverage, budget)
+    if llm.last_tokens:
+        budget.used_tokens += llm.last_tokens
     if verdict.status in {"ok", "pass", "good", "pass_with_notes"}:
         verdict.status = "sufficient"
 
@@ -211,24 +214,25 @@ def _heuristic_critic(state: ResearchState, evidence: list[dict], coverage: dict
 def _llm_critic(state: ResearchState, evidence: list[dict], coverage: dict) -> CriticVerdict | None:
     if not llm.available:
         return None
-    payload = llm.generate_json(
-        prompt=(
-            f"Question: {user_goal(state['query'])}\n"
-            f"Must-answer coverage:\n{coverage}\n"
-            f"Evidence (roles tagged): {[{'title': e.get('title'), 'url': e.get('url'), 'role': e.get('source_role'), 'tier': e.get('tier')} for e in evidence[:12]]}\n"
-            "You are a coverage critic, not a prose critic. Judge whether the evidence can support an "
-            "answer to THIS question, whatever its subject.\n"
-            "status=sufficient only if every critical dimension is covered by a source that speaks to it "
-            "directly. Background material that merely shares vocabulary with the question does not count.\n"
-            "If the question asks how something works or is built, generic overviews are not sufficient; "
-            "a primary or source-level document is required.\n"
-            "If gaps remain, status=insufficient and propose followup_queries targeting those gaps.\n"
-            "Also flag: overclaim (conclusion stronger than evidence), missing counter-evidence, "
-            "old papers used as sole support for current SOTA, and inference presented as a paper finding.\n"
-            "JSON: status, reasons, followup_queries, claimed_unsupported, confidence_floor."
-        ),
-        system="Kiln coverage critic. Refuse 'sufficient' when a critical dimension lacks direct evidence or a controversial claim has no counter-thread.",
-    )
+    with use_role_model(llm, "critic"):
+        payload = llm.generate_json(
+            prompt=(
+                f"Question: {user_goal(state['query'])}\n"
+                f"Must-answer coverage:\n{coverage}\n"
+                f"Evidence (roles tagged): {[{'title': e.get('title'), 'url': e.get('url'), 'role': e.get('source_role'), 'tier': e.get('tier')} for e in evidence[:12]]}\n"
+                "You are a coverage critic, not a prose critic. Judge whether the evidence can support an "
+                "answer to THIS question, whatever its subject.\n"
+                "status=sufficient only if every critical dimension is covered by a source that speaks to it "
+                "directly. Background material that merely shares vocabulary with the question does not count.\n"
+                "If the question asks how something works or is built, generic overviews are not sufficient; "
+                "a primary or source-level document is required.\n"
+                "If gaps remain, status=insufficient and propose followup_queries targeting those gaps.\n"
+                "Also flag: overclaim (conclusion stronger than evidence), missing counter-evidence, "
+                "old papers used as sole support for current SOTA, and inference presented as a paper finding.\n"
+                "JSON: status, reasons, followup_queries, claimed_unsupported, confidence_floor."
+            ),
+            system="Kiln coverage critic. Refuse 'sufficient' when a critical dimension lacks direct evidence or a controversial claim has no counter-thread.",
+        )
     if not isinstance(payload, dict):
         return None
     try:

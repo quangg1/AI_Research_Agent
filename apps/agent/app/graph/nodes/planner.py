@@ -4,7 +4,7 @@ import asyncio
 
 from app.domain.coverage import must_answer_for
 from app.domain.adversarial import falsification_queries
-from app.domain.decompose import subquestions_for
+from app.domain.decompose import derive_slots, subquestions_for
 from app.domain.knowledge import lookup, partial_evidence, seed_evidence
 from app.domain.routing_policy import heuristic_plan, is_learning_query, out_of_scope
 from app.domain.research_depth import apply_forced_depth, configure_budget_pools, effective_depth, showcase_reserve_calls
@@ -15,6 +15,7 @@ from app.domain.schema import AgentName, Budget, Plan, QueryType, SubQuery
 from app.graph.serde import dump
 from app.graph.state import ResearchState, budget_from
 from app.llm.client import llm
+from app.llm.roles import use_role_model
 from app.observability.logging import event
 from app.retrieval.chunk import load_corpus
 from app.retrieval.hybrid import corpus_is_relevant
@@ -205,21 +206,31 @@ def _knowledge_hit(state: ResearchState, budget: Budget, followups: list[SubQuer
 
 
 def _followups_from_prior(record: dict, followups: list[SubQuery]) -> list[SubQuery]:
-    """Target the dimensions the stored answer never nailed down."""
+    """Target the dimensions the stored answer never nailed down.
+
+    Stored slots keep only id/label/status/critical (see `_slim_slots`) — the
+    short, LLM-crafted search query each slot was built with isn't persisted.
+    Re-deriving slots for the same goal text hits `derive_slots`' cache (it
+    was already computed once for this exact goal) and gets that query back
+    for free, instead of falling back to `goal + label` mashed together into
+    one long, unnatural string that search/scholar treat as a poor query.
+    """
     if followups:
         return followups
-    out: list[SubQuery] = []
     goal = record.get("goal") or ""
+    fresh_by_id = {s["id"]: s.get("followup") for s in derive_slots(goal)} if goal else {}
+    out: list[SubQuery] = []
     for slot in record.get("slots") or []:
         if slot.get("status") == "covered":
             continue
         label = slot.get("label") or slot.get("id")
         if not label:
             continue
+        question = fresh_by_id.get(slot.get("id")) or f"{goal} {label}"
         out.append(
             SubQuery(
                 agent=AgentName.SEARCH,
-                question=f"{goal} {label}"[:200],
+                question=question[:200],
                 rationale=f"Prior memo left this open: {label}",
             )
         )
@@ -264,26 +275,27 @@ def _llm_plan(
         {"id": s.get("id"), "label": s.get("label"), "critical": s.get("critical")}
         for s in must_answer_for(query)
     ]
-    payload = llm.generate_json(
-        prompt=(
-            f"User question (goal):\n{goal}\n\n"
-            f"Full brief blob (metadata only):\n{query}\n\n"
-            f"Must-answer dimensions (each needs a dedicated sub_query):\n{must_answer}\n\n"
-            f"Follow-up questions from critic: {[dump(f) for f in followups]}\n"
-            f"Remaining tool calls: {budget.remaining_calls}. Remaining tokens: {budget.remaining_tokens}.\n"
-            f"{corpus_line}\n"
-            "Classify as factual | comparison | open_research.\n"
-            "Pick only the agents needed from search, scholar, docs.\n"
-            "Emit multiple sub_queries that each chase a different claim — not copies of the same string.\n"
-            "Every critical must-answer dimension above must have at least one sub_query targeting it.\n"
-            "At least one sub_query must seek counter-evidence or a result that would falsify the convenient thesis.\n"
-            "At least one sub_query must seek a measured number (benchmark, N, success rate, delta).\n"
-            "Stay inside applied AI / LLM systems: serving, RAG, agents, eval, multi-LoRA kernels.\n"
-            "JSON keys: query_type, goal, agents_to_run, assumptions, stop_conditions, "
-            "sub_queries (list of {agent, question, rationale})."
-        ),
-        system="You are the planner for Kiln, an LLM-systems research agent. Prefer claim-driven subquestions.",
-    )
+    with use_role_model(llm, "planner"):
+        payload = llm.generate_json(
+            prompt=(
+                f"User question (goal):\n{goal}\n\n"
+                f"Full brief blob (metadata only):\n{query}\n\n"
+                f"Must-answer dimensions (each needs a dedicated sub_query):\n{must_answer}\n\n"
+                f"Follow-up questions from critic: {[dump(f) for f in followups]}\n"
+                f"Remaining tool calls: {budget.remaining_calls}. Remaining tokens: {budget.remaining_tokens}.\n"
+                f"{corpus_line}\n"
+                "Classify as factual | comparison | open_research.\n"
+                "Pick only the agents needed from search, scholar, docs.\n"
+                "Emit multiple sub_queries that each chase a different claim — not copies of the same string.\n"
+                "Every critical must-answer dimension above must have at least one sub_query targeting it.\n"
+                "At least one sub_query must seek counter-evidence or a result that would falsify the convenient thesis.\n"
+                "At least one sub_query must seek a measured number (benchmark, N, success rate, delta).\n"
+                "Stay inside applied AI / LLM systems: serving, RAG, agents, eval, multi-LoRA kernels.\n"
+                "JSON keys: query_type, goal, agents_to_run, assumptions, stop_conditions, "
+                "sub_queries (list of {agent, question, rationale})."
+            ),
+            system="You are the planner for Kiln, an LLM-systems research agent. Prefer claim-driven subquestions.",
+        )
     if not isinstance(payload, dict):
         return None
     try:

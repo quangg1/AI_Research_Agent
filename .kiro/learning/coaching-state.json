@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "updatedAt": "2026-09-05T02:38:24.243Z",
+  "metrics": {
+    "promptClarity": {
+      "metric": "promptClarity",
+      "showCount": 2,
+      "improvedCount": 1,
+      "ignoredCount": 2,
+      "cooldownUntil": null,
+      "lastScore": 20,
+      "lastShownAt": "2026-09-05T01:50:14.822Z",
+      "lastEvaluatedAt": "2026-09-05T02:38:24.243Z",
+      "adaptedMultiplier": 1.2
+    }
+  }
+}

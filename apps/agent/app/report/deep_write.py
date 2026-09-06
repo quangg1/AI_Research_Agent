@@ -13,7 +13,17 @@ import re
 WORD_TARGET = {"quick": 900, "standard": 2400, "deep": 5500}
 REPORT_MAX_TOKENS = {"quick": 6144, "standard": 12000, "deep": 24000}
 # Depth-aware note budgets (deep keeps more operational detail for the writer).
-NOTES_MAX_CHARS = {"quick": 20_000, "standard": 40_000, "deep": 64_000}
+# "deep" skips the LLM compress pass (SKIP_LLM_COMPRESS_DEPTHS below), so this
+# ceiling *is* what the writer sees. With merge_unique_evidence now keeping
+# enriched full_text instead of dropping it, quotes run closer to the
+# QUOTE_CHARS cap (2800/item) more often, so 8 dims x ~16 items could already
+# exceed the old 64k ceiling on its own — later (still-relevant) dimensions
+# were getting silently truncated off the end, not because there was too
+# little evidence but because there was too little room for it. The model
+# (gemini-3.6-flash) has a context window far above this either way, so
+# raising it costs more input tokens on the one already-budgeted writer call,
+# not an extra Gemini request.
+NOTES_MAX_CHARS = {"quick": 20_000, "standard": 40_000, "deep": 140_000}
 ITEMS_PER_DIMENSION = {"quick": 4, "standard": 10, "deep": 16}
 QUOTE_CHARS = {"quick": 700, "standard": 1400, "deep": 2800}
 COMPRESS_MAX_TOKENS = {"quick": 6144, "standard": 8192, "deep": 12288}
@@ -301,6 +311,10 @@ def writer_prompt(
         "- Detailed analysis must be ANALYTICAL (conclusion → evidence → nuance). "
         "Each ### must add facts NOT already stated in Executive summary / Key findings. "
         "No Evidence/Counter-evidence/Inference stencil per subsection.\n"
+        "- Every ### heading is a noun phrase naming the dimension (e.g. '### Verification mechanisms'). "
+        "NEVER a sentence or transition phrase carried over from the prose before it "
+        "(FORBIDDEN: '### Then we address alignment', '### And discuss methodologies for X' — "
+        "write that sentence as body text under the PRIOR heading instead of promoting it to a new one).\n"
         "Paper-specific subsection structure (CRITICAL for quality):\n"
         "When a dimension references a specific paper [n], structure that ### subsection as:\n"
         "  1. Technical definition: One sentence defining the method/framework from the paper.\n"

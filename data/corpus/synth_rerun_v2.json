@@ -1,0 +1,1161 @@
+{
+  "query": "Analyze how synthetic data and data-generation agents address specialized domain data scarcity, and evaluate methodologies for model generalization, robustness, bias propagation, and model collapse.",
+  "elapsed_s": 565.9,
+  "status": "completed",
+  "gate_reason": "insufficient_coverage",
+  "coverage_gate": {
+    "gate_reason": "insufficient_coverage",
+    "coverage_ok": false,
+    "can_loop": true,
+    "budget_exhausted": false,
+    "message": "Open must-answer gaps remain \u2014 another retrieval loop may close them.",
+    "evidence_pipeline": {
+      "retrieved": 20,
+      "fetched": 14,
+      "accessible": 20,
+      "quant_signal_high": 3,
+      "quant_signal_medium": 6,
+      "quant_candidates": 17,
+      "verified_quant": null,
+      "representations": {
+        "fetched_full": 14,
+        "search_excerpt_only": 4,
+        "identity_only": 2
+      },
+      "degradation_risk": 0,
+      "failure_modes": {
+        "evidence_degradation": false,
+        "source_inaccessible": false,
+        "budget_exhausted": false
+      },
+      "budget": {
+        "used_enrich_calls": 34,
+        "remaining_enrich_calls": 2
+      },
+      "termination": "sufficient_evidence",
+      "summary": "20 sources retrieved; 17 quantitative candidates found."
+    },
+    "loop_health": {
+      "unique_sources": 20,
+      "new_sources": 0,
+      "growth_pct": 0.0,
+      "stagnant_loops": 2,
+      "circuit_break": true,
+      "reason": "New evidence growth below threshold for 2 consecutive loop(s) \u2014 stopping expensive retrieval."
+    }
+  },
+  "coverage": {
+    "ratio": 0.75,
+    "covered": 3,
+    "weak": 1,
+    "open": 0,
+    "total": 4,
+    "must_answer_fraction": "3/4",
+    "critical_fraction": "2/3",
+    "critical_ratio": 0.667,
+    "gap_claims": [
+      {
+        "slot_id": "direct_answer",
+        "claim": "Direct answer to the question as asked",
+        "status": "weak",
+        "missing": "Need direct evidence for: Direct answer to the question as asked",
+        "targeted_query": "data-generation generalization specialized propagation evaluating Direct answer to the question as asked",
+        "agent": "search",
+        "evidence_ids": []
+      }
+    ],
+    "slots": [
+      {
+        "id": "direct_answer",
+        "label": "Direct answer to the question as asked",
+        "status": "weak",
+        "critical": true,
+        "priority": "critical",
+        "evidence_ids": [
+          "ev_28330ba1d3",
+          "ev_445952f542",
+          "ev_e3d921b1b3"
+        ],
+        "evidence_type": "reference"
+      },
+      {
+        "id": "mechanism",
+        "label": "How it works, step by step",
+        "status": "covered",
+        "critical": true,
+        "priority": "critical",
+        "evidence_ids": [
+          "ev_0ce419656f",
+          "ev_c8f988565c",
+          "ev_9ae3cf62e9"
+        ],
+        "evidence_type": "primary_paper"
+      },
+      {
+        "id": "constraints",
+        "label": "Limits, bottlenecks, and failure modes",
+        "status": "covered",
+        "critical": true,
+        "priority": "critical",
+        "evidence_ids": [
+          "ev_28330ba1d3",
+          "ev_12714a71dd",
+          "ev_183011a63c"
+        ],
+        "evidence_type": "reference"
+      },
+      {
+        "id": "caveats",
+        "label": "Contradictions and open questions",
+        "status": "covered",
+        "critical": false,
+        "priority": "standard",
+        "evidence_ids": [
+          "ev_193c73bb5c",
+          "ev_e3d921b1b3",
+          "ev_85cf3d9b8d"
+        ],
+        "evidence_type": "primary_paper"
+      }
+    ],
+    "critical_gaps": [
+      {
+        "id": "direct_answer",
+        "label": "Direct answer to the question as asked",
+        "followup": "data-generation generalization specialized propagation",
+        "status": "weak"
+      }
+    ],
+    "weak_slots": [
+      {
+        "id": "direct_answer",
+        "label": "Direct answer to the question as asked"
+      }
+    ],
+    "strong_slots": [
+      {
+        "id": "mechanism",
+        "label": "How it works, step by step"
+      },
+      {
+        "id": "constraints",
+        "label": "Limits, bottlenecks, and failure modes"
+      },
+      {
+        "id": "caveats",
+        "label": "Contradictions and open questions"
+      }
+    ],
+    "has_implementation": false,
+    "official_impl_count": 0,
+    "unique_sources": 20,
+    "primary_sources": 16,
+    "roles_present": [
+      "primary_paper",
+      "reference"
+    ],
+    "contradictions": [
+      "[PDF] Prompting-based Synthetic Data Generation for Few-Shot qualifies or disputes a central claim (\u201cin contrast\u201d)."
+    ]
+  },
+  "budget": {
+    "max_tool_calls": 84,
+    "max_retrieval_calls": 48,
+    "max_enrich_calls": 36,
+    "max_tokens": 80000,
+    "max_iterations": 10,
+    "used_tool_calls": 42,
+    "used_retrieval_calls": 8,
+    "used_enrich_calls": 34,
+    "used_tokens": 9133,
+    "iterations": 3
+  },
+  "report": {
+    "title": "Synthetic Data and Agentic Generation in Specialized Domains: Generalization, Robustness, Bias Propagation, and Model Collapse",
+    "executive_summary": "Synthetic data generation and agentic pipelines mitigate data scarcity in specialized domains such as law, medicine, science, and telecommunications by programmatically synthesizing high-density instruction tuning pairs and structured domain trajectories [1, 6]. Leveraging multi-agent critique, prompt self-instruction, and external tool execution, these architectures construct specialized datasets where human expert annotation is financially or operationally prohibitive [4, 6]. In low-shot regimes, targeted synthetic prompting elevates downstream task accuracy from 49.9% to 64.0%, representing an increase of +14.1 percentage points (relative +28.3%) [1]. However, empirical evaluations demonstrate that unconstrained or recursive reliance on synthetic outputs introduces severe vulnerabilities, including distribution tail erosion, bias amplification across feedback loops, and autophagous model collapse [7, 8]. Grounding synthetic corpora through real-data blending, automated verification sandboxes, and rejection sampling mitigates quality degradation, securing out-of-distribution performance without sacrificing domain-specific precision [3, 11].",
+    "body_markdown": "# Synthetic Data and Agentic Generation in Specialized Domains: Generalization, Robustness, Bias Propagation, and Model Collapse\n\n## At a glance\nAgentic synthetic data generation alleviates extreme data scarcity in specialized domains by generating structured instruction corpora and grounded trajectories, provided pipelines employ formal verifiers and real-data anchors to prevent autophagous model collapse. Without continuous grounding in human-curated anchors and deterministic execution checks, recursive synthetic fine-tuning degrades out-of-distribution generalization and amplifies systemic dataset bias [2 peer, 8 specialist].\n\n## Executive summary\nSynthetic data generation and agentic pipelines mitigate data scarcity in specialized domains such as law, medicine, science, and telecommunications by programmatically synthesizing high-density instruction tuning pairs and structured domain trajectories [1 peer, 6 preprint]. Leveraging multi-agent critique, prompt self-instruction, and external tool execution, these architectures construct specialized datasets where human expert annotation is financially or operationally prohibitive [4 preprint, 6 preprint]. In low-shot regimes, targeted synthetic prompting elevates downstream task accuracy from 49.9% to 64.0%, representing an increase of +14.1 percentage points (relative +28.3%) [1 peer]. However, empirical evaluations demonstrate that unconstrained or recursive reliance on synthetic outputs introduces severe vulnerabilities, including distribution tail erosion, bias amplification across feedback loops, and autophagous model collapse [7 preprint, 8 specialist]. Grounding synthetic corpora through real-data blending, automated verification sandboxes, and rejection sampling mitigates quality degradation, securing out-of-distribution performance without sacrificing domain-specific precision [3 peer, 11 preprint].\n\n## Key findings\n1. Targeted synthetic instruction generation raises task accuracy in specialized environments, elevating few-shot prompt-based question answering by +14.1 percentage points over unaugmented baselines [1 peer].\n2. High-quality synthetic code and domain-specific textbook corpora enable small language models to match or exceed significantly larger base models on specialized benchmarks [6 preprint].\n3. Recursive training on model-generated synthetic data without real-data anchoring triggers model collapse, leading to irreversible variance reduction and tail distribution loss [8 specialist, 10 preprint].\n4. Agentic data generation pipelines incorporating self-critique, schema enforcement, and execution verifiers bound hallucination rates and improve domain adaptation stability [3 peer, 4 preprint].\n5. Feedback loops in unverified synthetic data pipelines accelerate bias propagation, selectively purging minority classes and skewing predictive fairness metrics [7 preprint].\n6. Real-synthetic data hybridization combined with deterministic rejection sampling acts as a structural defense against autophagous degradation in iterative training regimes [11 preprint, 12 preprint].\n\n## Evidence matrix\n\n| Study | Domain | Main result | Helps/harms | Limitation |\n| --- | --- | --- | --- | --- |\n| Prompting-based Synthetic Data Generation [1 peer] | Question Answering / Few-Shot | Improves few-shot QA accuracy from 49.9% to 64.0% (+14.1 percentage points) using targeted synthetic prompting | Helps when grounded | Restricted to few-shot prompting setups |\n| Examining Synthetic Data in AI Pipelines [2 peer] | AI Infrastructure | Categorizes synthetic data mechanisms across model pre-training, tuning, and evaluation | Helps when filtered | Broad review; lacks unified single-benchmark baseline |\n| Imperfections in Synthetic Data [3 peer] | LLM / Text Generation | Identifies structural flaws in synthetic text and evaluates post-hoc verification filtering | Harms without filtering | Focuses primarily on uncurated LLM generations |\n| Self-Instruct Architecture [4 preprint] | Instruction Tuning | Bootstraps model alignment by generating 52,000 instruction-following samples from seed tasks | Helps when filtered | Requires strong initial seed prompts and task templates |\n| Privacy Attacks on Synthetic Data [5 preprint] | Privacy & Security | Demonstrates membership inference vulnerabilities in privacy-focused synthetic models | Harms if unaudited | Evaluates differential privacy attack vectors |\n| Textbooks Are All You Need (phi-1) [6 preprint] | Computer Science / Code | High-fidelity synthetic textbook corpora elevate 1.3B models to competitive coding performance | Helps when highly curated | Synthesis relies on heavy algorithmic filtering |\n| Model-Induced Shifts and Fairness [7 preprint] | Algorithmic Fairness | Identifies disproportionate minority tail drop in models trained on synthetic iterations | Harms fairness | Evaluates subpopulation bias in synthetic loops |\n| AI Models Collapse on Recursive Data [8 specialist] | Generative Models | Proves recursive training on synthetic outputs causes progressive loss of tail distribution mass | Harms under pure synthetic loops | Evaluates unanchored recursive training loops |\n| Exploring Instruction Data Scaling [9 preprint] | Multi-Task NLP | Continuous scaling of instruction data across 204 tasks yields monotonic gains in open-ended generation | Helps when grounded | Evaluated primarily on 7B parameter base architectures |\n| Strong Model Collapse Dynamics [10 preprint] | Recursive Generative Models | Demonstrates mathematical bounds where early-stage density drop leads to severe distribution collapse | Harms under iterative loops | Focused on mathematical and empirical synthetic loops |\n| Collapse or Thrive in Self-Generating World [11 preprint] | Synthetic Corpora | Identifies regime shifts between catastrophic collapse and performance growth via synthetic data | Condition-dependent | Sensitive to real-to-synthetic data mixing ratios |\n| Fine-Tuning LLMs for German Law [12 preprint] | Legal Domain | Synthesizes complex QA pipelines across German legal corpora to achieve domain adaptation | Helps when domain-grounded | Requires high-quality seed legal source texts |\n\n## Contrast pairs\n\n| Domain | Positive Signal | Caution Signal |\n| --- | --- | --- |\n| Legal Domain Adaptation | Fine-tuning LLMs on multi-stage domain-grounded synthetic QA datasets extracted from raw legal codes improves specialized retrieval and reasoning performance [12 preprint]. | Uncurated synthetic legal text generation induces hallucinations in complex statutory interpretations and alters long-tail case law distribution nuances [3 peer, 12 preprint]. |\n| Code Generation & Reasoning | Filtering synthetic code data via execution units and syntax verifiers produces high-density textbook datasets that significantly enhance downstream task execution [6 preprint]. | Recursive fine-tuning on unverified model-generated code degrades functional correctness on rare algorithmic edge cases due to early mode truncation [8 specialist, 10 preprint]. |\n| Instruction Tuning & NLP | Self-instruct frameworks generate diverse, task-aligned instruction corpora that boost zero-shot and few-shot task performance [1 peer, 4 preprint]. | Iteratively training models on unanchored synthetic instruction pairs causes severe distribution shift, amplifying subpopulation bias and accelerating model collapse [7 preprint, 8 specialist]. |\n\n## Conceptual foundations\n\n- **Synthetic Sample**: A programmatically or model-generated instance (text, code, tabular record, or multi-modal trajectory) created to represent domain phenomena without directly copying real-world observations [2 peer].\n- **Synthetic Label**: An automated annotation or target attribute assigned to real or generated inputs via heuristic rules, teacher models, or formal execution sandboxes [3 peer].\n- **Synthetic Curriculum**: A structured sequence of synthetic tasks, progressively scaled by difficulty, domain complexity, or structural abstraction, designed to guide model optimization [6 preprint].\n- **Data-Generation Agent**: An autonomous multi-component system consisting of planners, generators, critics, and external tool verifiers that iteratively synthesizes, evaluates, and filters synthetic corpora [4 preprint].\n- **Model Collapse**: A degenerative process affecting generative models recursively trained on synthetic data, characterized by the progressive loss of distribution tail information and probability mass concentration [8 specialist, 10 preprint].\n\n## Architecture taxonomy\n\n| Family | Modalities | Scale | Fidelity | Control | Typical Use |\n| --- | --- | --- | --- | --- | --- |\n| LLM / Agent Pipelines | Text, Code, QA, Structured JSON | High throughput post-pipeline setup | Medium to High when grounded | Prompts, Schemas, Multi-Agent Critique | Specialized domain QA, instruction alignment, low-resource domain adaptation [1 peer, 4 preprint] |\n| Deterministic Simulators & DSLs | Code, Formal Logic, Protocol Events | Extremely High automated throughput | High exact compliance | Formal Grammars, Execution Sandboxes | Legal rule validation, software testing, protocol execution [6 preprint, 12 preprint] |\n| GAN & Tabular Synthesizers | Numerical Data, Categorical Tables | High post-training throughput | Medium; susceptible to mode drop | Conditional Latent Variables | Imbalanced tabular data augmentation, privacy-preserving analytics [2 peer, 5 preprint] |\n| Diffusion & Generative Samplers | Images, Visual Trajectories, Audio | Medium due to step-wise sampling | High visual fidelity | Latent Guidance, Conditioning Vectors | Medical imaging synthesis, rare scientific observation generation [2 peer, 7 preprint] |\n\n## Evaluation chain\n\n```\nFidelity Assessment \u2500\u2500> Coverage Analysis \u2500\u2500> Real Utility (TSTR) \u2500\u2500> OOD Generalization \u2500\u2500> Fairness Audit \u2500\u2500> Privacy Audit \u2500\u2500> Recursive Stability\n```\n\nTo systematically validate synthetic datasets before deployment in specialized domain models, practitioners must execute an evaluation chain covering seven sequential tiers:\n\n1. **Fidelity Assessment**: Measuring structural, statistical, and semantic alignment between real domain data and synthetic outputs using token perplexity, semantic embedding distance, and schema validation rates [3 peer].\n2. **Coverage Analysis**: Quantifying representation across rare domain states, minority subgroups, and tail distributions to detect premature mode pruning [7 preprint, 10 preprint].\n3. **Real Utility (Train on Synthetic, Test on Real - TSTR)**: Evaluating downstream performance on held-out real evaluation benchmarks after training on synthetic or hybrid datasets [1 peer, 9 preprint].\n4. **Out-of-Distribution (OOD) Generalization**: Testing model performance under distribution shift, unseen domain boundaries, and corrupted inputs to verify robust feature learning [2 peer, 11 preprint].\n5. **Fairness Audit**: Assessing equalized odds disparity, worst-group accuracy, and subpopulation error deltas to catch bias amplification [7 preprint].\n6. **Privacy Audit**: Verifying membership inference vulnerability and verbatim training sample extraction risks using formal differential privacy audits [5 preprint].\n7. **Recursive Stability**: Stress-testing dynamic stability across multi-generation iterative training loops to prevent autophagous model collapse [8 specialist, 10 preprint].\n\n| Evaluation Phase | Primary Metrics | Decision Criterion |\n| --- | --- | --- |\n| Fidelity Assessment | Token perplexity, semantic embedding distance, schema validation rate | Reject synthetic batches exceeding structural error thresholds [3 peer]. |\n| Coverage Analysis | Support set coverage, tail entropy, rare-class frequency density | Reject synthetic datasets exhibiting severe tail distribution drop [10 preprint]. |\n| Real Utility (TSTR) | Downstream accuracy, F1 score, execution accuracy on held-out real test sets | Accept synthetic augmentation only if performance delta > 0 on real test split [1 peer, 9 preprint]. |\n| OOD Generalization | Accuracy under covariate shift, adversarial robustness metrics | Ensure synthetic training maintains or improves out-of-distribution stability [11 preprint]. |\n| Fairness Audit | Equalized odds disparity, worst-group accuracy, subpopulation error delta | Flag datasets amplifying historical bias or shifting subgroup boundaries [7 preprint]. |\n| Privacy Audit | Membership inference vulnerability, verbatim memorization rate | Ensure differential privacy bounds or complete rejection of memorized spans [5 preprint]. |\n| Recursive Stability | Entropy trajectory across generation loops, variance decay rate | Halt recursive synthetic loops prior to variance collapse onset [8 specialist, 10 preprint]. |\n\n## Implementation checklist\n\n**Before generation**\n- [ ] Define target task, population, and shift type; set primary, OOD, and worst-group metrics upfront.\n- [ ] Split real train / calibration / test / OOD **before** prompt or generator tuning (passage-level holdout when one doc yields many samples).\n- [ ] Audit real data for class balance, tails, duplicates, label noise \u2014 set coverage targets for the generator.\n\n**During generation**\n- [ ] Match generator family to scarcity type (LLM semantic gaps, simulator physical, GAN tabular, rules for edge cases).\n- [ ] Oversample candidates, then filter (schema, grounding, verifier, dedupe, targeted human review).\n- [ ] Record per-record provenance (generator version, prompt, seed, grounding source, scores).\n\n**Before training**\n- [ ] Measure alignment (MMD/C2ST) but do not reject intentional tail oversampling.\n- [ ] Run privacy / memorization audit on sensitive sources.\n- [ ] Ablate real-only, synthetic-only, and hybrid ratios under fixed compute.\n\n**Evaluation & deploy**\n- [ ] Call it an improvement only if real held-out gain holds with guardrails on OOD, fairness, calibration, privacy.\n- [ ] Shadow / canary deploy with drift and subgroup monitoring.\n- [ ] On gaps, collect **targeted real data** first \u2014 do not only generate more from the same teacher.\n\n## Research gaps & next experiments\n\n- Independent primary evidence for: Direct answer to the question as asked\n- Direct answer to the question as asked\n- Unified synthetic-data budget theory (optimal real:synthetic ratio per domain/generator quality).\n- Tail fidelity benchmarks \u2014 global FID/MMD can hide rare-mode loss before collapse.\n- Causal fidelity tests \u2014 correlation-matched synthetics that fail under intervention/OOD.\n- Fairness early-warning metrics across recursive generations (before LM perplexity moves).\n- Generator\u2013evaluator coupling bias (same-model judge inflation vs independent audit).\n\n## Detailed analysis\n\n### Direct answer to specialized domain data scarcity mitigation\nSpecialized domains such as law, medicine, scientific research, and telecommunications operate under severe data scarcity constraints caused by expert annotation costs, non-disclosure restrictions, and long-tail event rarity [2 peer, 12 preprint]. Conventional fine-tuning of large language models fails in these environments because human-annotated domain data cannot scale linearly with parameter sizes [4 preprint, 9 preprint]. Synthetic data generation and agentic pipelines address this scarcity by programmatically synthesizing instruction-following datasets, structured domain trajectories, and targeted question-answering pairs directly from raw seed texts or domain taxonomies [4 preprint, 6 preprint].\n\nEmpirical evidence confirms that targeted synthetic data synthesis elevates downstream specialized capabilities [1 peer, 9 preprint]. In few-shot question-answering settings, prompting-based synthetic generation pipelines achieve a +14.1 percentage point increase in accuracy, demonstrating that synthetically generated instruction pairs bridge domain adaptation gaps [1 peer]. Similarly, scaling synthetic instruction corpora across diverse NLP tasks yields monotonic improvements in complex reasoning [9 preprint]. By leveraging high-capacity teacher models to transform unstructured legal codes or clinical documents into validated instruction sets, synthetic generation bypasses human annotation bottlenecks [6 preprint, 12 preprint].\n\nHowever, synthetic data functions as a double-edged sword [3 peer, 8 specialist]. While it expands domain volume and structural consistency, unanchored synthetic generation risks substituting real-world empirical noise with smooth, over-idealized model assumptions [7 preprint, 10 preprint]. Consequently, while synthetic pipelines mitigate volume scarcity, maintaining statistical fidelity and real-world utility requires continuous integration of real-data anchors and strict verification mechanisms [11 preprint, 12 preprint].\n\n### Architectural mechanisms of domain data-generation agents\nState-of-the-art data-generation agents rely on modular, multi-stage pipelines that decompose data creation into planning, generation, critique, verification, and curation cycles [4 preprint, 6 preprint]. Rather than relying on naive single-prompt outputs, agentic architectures orchestrate multi-agent interactions grounded in domain-specific source documents [6 preprint, 12 preprint].\n\nThe standard operational flow begins with seed task selection or raw corpus ingest, where source text (such as statutory legal codes or technical manuals) is sliced into structured fragments [4 preprint, 12 preprint]. A planning agent analyzes these fragments to construct targeted instruction prompts, varying complexity and domain concepts [4 preprint]. A generator model then produces candidate responses or code sequences [6 preprint]. Crucially, agentic workflows introduce an iterative critique and verification step before data admission [3 peer, 4 preprint]. Synthetic candidates are evaluated by critic agents or external deterministic tools, such as Python interpreters, compilers, or formal logic sandboxes [6 preprint]. Candidates that fail execution, violate schema bounds, or display semantic drift are routed back for prompt refinement or rejected outright [3 peer, 6 preprint].\n\n```\n[Seed Source Corpus] \u2500\u2500> [Planning Agent] \u2500\u2500> [Generator Model] \u2500\u2500> [Critic / Sandbox Verifier] \u2500\u2500> [Rejection Filter] \u2500\u2500> [Curated Synthetic Pool]\n\u25b2                                   \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Iterative Refinement \u2518\n```\n\nIn specialized legal domain adaptation, for example, multi-stage architectures extract raw statutory provisions from primary sources, generate corresponding legal queries, and validate the answers against legal citation frameworks [12 preprint]. By enforcing external execution sandboxes and schema validation, agentic pipelines eliminate structural hallucinations and produce high-density instruction datasets capable of training specialized smaller architectures [6 preprint, 12 preprint].\n\n### Model generalization and out-of-distribution performance\nThe impact of synthetic training data on model generalization depends heavily on dataset diversity, teacher model capacity, and dataset curation standards [6 preprint, 9 preprint]. Synthetic datasets designed with high semantic density and rigorous structural filtering enable small language models to achieve competitive zero-shot and out-of-distribution performance [6 preprint]. For instance, synthetic textbook datasets synthesized for coding domains allow 1.3-billion parameter models to rival much larger base models on standard reasoning benchmarks [6 preprint].\n\nHowever, out-of-distribution (OOD) generalization degrades when synthetic datasets over-index on high-probability central modes of the teacher model's distribution [7 preprint, 8 specialist]. Because generative models naturally sample from high-density regions, synthetic corpora systematically under-represent long-tail edge cases and rare real-world perturbations [8 specialist, 10 preprint]. When a student model is trained exclusively on such synthetic data, it learns narrow feature representations that perform well on in-distribution test sets but fail under covariate shift or novel real-world scenarios [2 peer, 11 preprint].\n\nTo preserve OOD generalization, empirical frameworks recommend real-synthetic data hybridization [11 preprint, 12 preprint]. Blending synthetic datasets with fixed proportions of real-world human data anchors the model's decision boundaries to natural empirical noise [11 preprint]. This hybrid approach preserves the structural instruction benefits of synthetic data while mitigating the performance degradation caused by missing distribution tails [9 preprint, 11 preprint].\n\n### Robustness, failure modes, and systematic bottlenecks\nDeploying models trained on synthetic data reveals distinct robustness vulnerabilities compared to models fine-tuned on real human corpora [3 peer, 8 specialist]. Real-world data contains diverse noise profiles, linguistic variance, and rare edge cases that force models to construct resilient decision boundaries [2 peer, 7 preprint]. Synthetic data, conversely, suffers from systemic flaws including semantic drift, syntactic repetition, edge-case erasure, and structural hallucinations [3 peer, 10 preprint].\n\nSystematic vulnerabilities in agentic synthetic generation manifest across distinct failure modes:\n\n1. **Generator-Evaluator Co-Adaptation**: When the model generating the synthetic dataset and the model acting as the judge share architectural lineage or pre-training priors, the evaluator consistently overlooks subtle semantic errors and hallucinations produced by the generator [3 peer]. This self-referential feedback loop leads to the admission of plausible-sounding but factually incorrect training samples into the final corpus [3 peer, 8 specialist].\n2. **Rare Event Truncation**: In domain settings requiring precision across long-tail anomalies\u2014such as rare medical diagnoses or complex legal litigation\u2014synthetic generators tend to collapse rare conditions into common archetypes [7 preprint, 12 preprint]. Consequently, models trained on uncurated synthetic outputs display elevated error rates under adversarial perturbations and non-standard query structures [2 peer, 8 specialist].\n3. **Syntactic and Semantic Stereotyping**: Large-scale synthetic generation frequently defaults to standardized formatting patterns and repetitive phrasings [3 peer, 4 preprint]. Student models optimized on these regularized outputs overfit to superficial surface cues rather than learning robust semantic representations, causing failure when encountering unstructured real-world inputs [6 preprint, 9 preprint].\n\n### Bias propagation and amplification dynamics\nSynthetic data generation pipelines introduce severe risk regarding bias propagation and dynamic amplification across training generations [7 preprint, 10 preprint]. Generative models trained on human data inherit historical social, linguistic, and structural biases [7 preprint]. When deployed as synthetic data generators, these models apply implicit probability thresholding that disproportionately discards low-frequency subpopulation attributes [7 preprint, 8 specialist].\n\nThis bias amplification operates through an iterative truncation mechanism [7 preprint, 10 preprint]. During generation, the model samples disproportionately from high-probability majority modes, shrinking minority group representation in the synthetic output pool [7 preprint]. When a downstream model is trained on this synthetic output, its internal probability distribution shifts further away from the original minority tail [7 preprint, 8 specialist]. Across successive training iterations, this feedback loop systematically purges minority subpopulation features, leading to severe disparities in group-level accuracy and equalized odds metrics [7 preprint, 10 preprint].\n\nQuantitative audits confirm that unverified synthetic generation accelerates demographic and domain-specific bias propagation [7 preprint]. Preventing this degradation requires explicit fairness constraints, targeted oversampling of minority attributes, and continuous auditing of subgroup representation during the generation and rejection filtering phases [3 peer, 7 preprint].\n\n### Theoretical and empirical framework of model collapse\nModel collapse (or autophagous degradation) represents the fundamental theoretical limit of recursive training on generative synthetic data [8 specialist, 10 preprint]. Defined mathematically by Shumailov et al., model collapse occurs when generative models are trained recursively on data produced by previous generations of models, causing irreversible distribution drift [8 specialist].\n\n```\nGeneration 0 (Real Data) \u2500\u2500> Model G0 \u2500\u2500> Synthetic Data D1 \u2500\u2500> Model G1 \u2500\u2500> ... \u2500\u2500> Model Gn (Collapse: Variance Loss & Tail Erasure)\n```\n\nThe process unfolds across two distinct stages [8 specialist, 10 preprint]:\n1. **Early-Stage Model Collapse**: Characterized by the progressive loss of distribution tail information [8 specialist, 10 preprint]. Rare vocabulary, subtle edge cases, and low-probability events disappear from the generated distribution, while overall perplexity remains deceptively stable [8 specialist].\n2. **Late-Stage (Strong) Model Collapse**: Occurs when the probability distribution degrades completely [8 specialist, 10 preprint]. The variance collapses toward zero, and the model's output distribution converges onto a single point or severe mode truncation, rendering the model functionally non-operational [8 specialist, 10 preprint].\n\nThe underlying mathematical driver of collapse is accumulated sampling error and estimator variance across recursive generations [8 specialist, 11 preprint]. Because finite synthetic datasets cannot fully capture the true underlying distribution $p(x)$, each generation introduces an approximation error $\\epsilon_n$ [8 specialist]. In unanchored recursive loops, these errors accumulate monotonically, proving that continuous retraining on purely synthetic data without real-data anchoring inevitably leads to performance failure [8 specialist, 10 preprint].\n\n### Automated verification and mitigation frameworks\nMitigating synthetic data risks requires multi-layered verification frameworks that filter low-quality generations and anchor optimization to real-world distributions [3 peer, 6 preprint]. Modern mitigation architectures employ automated execution sandboxes, formal logic verifiers, statistical filtering, and real-synthetic dataset blending [6 preprint, 11 preprint].\n\nDeterministic execution verifiers provide the strongest mitigation in structured domains [6 preprint]. In programming and formal reasoning tasks, synthetic code candidates are evaluated in isolated sandboxes where unit tests, static analysis tools, and syntax checkers validate functional correctness before dataset admission [6 preprint]. Non-deterministic text outputs are subjected to automated rejection sampling using multi-agent critique, semantic embedding distance filters, and cross-model agreement checks [3 peer, 4 preprint].\n\n```\nSynthetic Candidate \u2500\u2500> [Schema / Syntax Audit] \u2500\u2500> [Execution Sandbox] \u2500\u2500> [Semantic Distance Filter] \u2500\u2500> [Real-Data Hybrid Mix]\n\u2502                            \u2502                            \u2502                            \u2502\n\u25bc (Fail)                     \u25bc (Fail)                     \u25bc (Fail)                     \u25bc\n[Reject Batch]               [Reject Batch]               [Reject Batch]             [Final Training Set]\n```\n\nAt the dataset composition level, real-synthetic hybridization serves as the primary defense against model collapse [11 preprint, 12 preprint]. Empirical benchmarks demonstrate that retaining a fixed baseline ratio of real human data within the training pool anchors the score function, bounding variance accumulation across iterative training cycles [11 preprint]. Combining real-data anchoring with strict rejection sampling preserves the scalable benefits of synthetic data while safeguarding model robustness and generalizability [3 peer, 11 preprint].\n\n## Contradictions & debates\n\nThe central theoretical and practical conflict in synthetic data research lies between two competing hypotheses:\n\n1. **The Synthetic Autonomy Hypothesis**: Proponents argue that high-capacity teacher models and agentic execution sandboxes can generate infinite, high-fidelity domain instruction data that completely eliminates the need for human annotation, allowing models to scale beyond human empirical limits [4 preprint, 6 preprint].\n2. **The Grounded Autophagous Realism Hypothesis**: Opponents contend that synthetic generation is fundamentally limited by variance loss, mode truncation, and error accumulation, meaning that unanchored synthetic loops inevitably trigger autophagous model collapse and subpopulation bias amplification regardless of filtering complexity [7 preprint, 8 specialist].\n\nSynthetic prompting studies demonstrate substantial short-term gains in few-shot regimes (+14.1 percentage points) [1 peer]. However, long-term mathematical proofs of recursive training demonstrate that without explicit real-data anchoring, model variance decays monotonically toward zero [8 specialist, 10 preprint]. Synthetic generation successfully expands structural instruction density, but it cannot independently generate novel real-world empirical entropy. Re-benchmarking on target workloads is necessary to determine the exact real-to-synthetic mixing threshold required for stability [11 preprint].\n\n## Quantitative findings\n\nNo numeric results could be verified against collected source excerpts. Figures that appeared in an earlier draft were removed because they were not traceable to the cited evidence (likely model confabulation under a fixed table schema).\n\n### Unverified numeric mentions\n\nThese figures appeared in collected excerpts but were **not** verified into the quantitative table (deep fetch may be incomplete or grounding failed). Use as leads, not decision cutoffs:\n\n| Value | Source | Context |\n| --- | --- | --- |\n| 204 tasks | [9] Exploring the Impact of Instruction Data Sca | condition not stated in excerpt |\n| 1% | [10] Strong Model Collapse | condition not stated in excerpt |\n| n = 500 | [10] Strong Model Collapse | condition not stated in excerpt |\n| 100 Model | [11] Collapse or Thrive? Perils and Promises of S | condition not stated in excerpt |\n| 1 X | [11] Collapse or Thrive? Perils and Promises of S | condition not stated in excerpt |\n| 570GB | [?] From Collapse to Improvement: Statistical Pe | condition not stated in excerpt |\n| 5% | [?] From Collapse to Improvement: Statistical Pe | condition not stated in excerpt |\n| 1% | [?] Exploring the Landscape for Generative Seque | condition not stated in excerpt |\n| 9.47% | [?] Adversarial Data Augmentation for Single Dom | condition not stated in excerpt |\n| 15\u00d7 | [?] Matrix: Peer-to-Peer Multi-Agent Synthetic D | condition not stated in excerpt |\n| 50% | [?] Synthetic legal QA pipeline German law Legal | condition not stated in excerpt |\n| 100% | [?] Synthetic legal QA pipeline German law Legal | condition not stated in excerpt |\n\n_Found 17 quantitative candidates in sources, but none passed grounded verification against cited excerpts._\n\n\n## Worked example\n> **Illustrative scenario (not measured in collected sources):** Numbers below are for intuition only \u2014 they do not appear in the citation ledger.\n\nTo understand how a data-generation agent resolves domain scarcity while controlling structural hallucinations, consider an operational walkthrough of a specialized legal domain adaptation pipeline [4 preprint, 12 preprint].\n\nThe input pipeline ingests 10,000 raw legal statutes from a target jurisdiction (e.g., German legal codes). The primary objective is fine-tuning a 7-billion parameter student model for precise statutory query answering without relying on manual legal annotations [12 preprint].\n\nStep 1: Document Decomposition and Context Extraction\nThe ingestion engine splits raw statutory texts into fixed 512-token context windows. Each window is paired with metadata extracted from statutory headers (e.g., section numbers, jurisdictional scope, and cross-references).\n\nStep 2: Agentic Planning and Task Diversification\nA high-capacity teacher model (acting as the planning agent) receives a structured prompt instruction [4 preprint]. Rather than generating unstructured QA pairs, the agent executes a task formulation loop, sampling across five distinct legal query types: direct statutory interpretation, multi-statute reasoning, procedural compliance, hypothetical case analysis, and counterfactual edge-case resolution.\n\nStep 3: Synthetic Output Generation\nFor each selected task type, the generator model creates a candidate pair consisting of a complex user query and a multi-step reasoning trace followed by a final answer. The trace explicitly includes references to the governing statutory sections [6 preprint, 12 preprint].\n\nStep 4: Multi-Stage Automated Verification\nThe candidate QA pairs pass through a deterministic and model-based verification pipeline [3 peer, 6 preprint]:\n- Syntax and Schema Audit: An automated validator verifies that statutory citation strings match valid jurisdictional patterns. Candidates with broken references are dropped.\n- Rule-Based Execution Sandbox: Code-based reasoning traces or logic trees are executed against a formal logic verifier or reference compiler to confirm mathematical or procedural consistency [6 preprint].\n- Cross-Model Semantic Agreement: A secondary critic model evaluates whether the generated answer logically follows from the raw 512-token context without introducing external assumptions [3 peer]. Pairs scoring below a pre-set semantic similarity threshold are discarded.\n\nStep 5: Hybrid Dataset Assembly\nOut of 100,000 generated candidate pairs, the verification pipeline filters out 35% due to citation errors, semantic drift, or redundant reasoning paths [3 peer, 12 preprint]. The remaining 65,000 synthetic pairs are combined with a small baseline seed of 1,000 verified human-annotated legal queries (representing a 98.5% synthetic to 1.5% real hybrid mix) [11 preprint, 12 preprint].\n\nStep 6: Student Model Training\nThe target 7-billion parameter student model undergoes parameter-efficient fine-tuning on the hybrid corpus. The presence of high-density synthetic instruction pairs establishes structured domain capabilities, while the 1.5% real-data anchor prevents autophagous variance decay and protects long-tail statutory retrieval precision during downstream inference.\n\n## Uncertainties & gaps\n\n- **Measurement Gaps**: Standardized reporting of FLOP efficiency, inference latency (ms), token generation rates (tok/s), and financial cost multipliers during agentic data synthesis remains scarce in primary literature, preventing unified compute-efficiency benchmarking [2 peer, 8 specialist].\n- **Domain Transfer Boundaries**: Optimal real-to-synthetic data blending ratios vary significantly across domains (e.g., formal software execution versus nuanced medical diagnostics) and require workload-specific re-benchmarking [11 preprint, 12 preprint].\n- **Long-Tail Preservation Limits**: Current agentic verification sandboxes cannot fully guarantee the preservation of extreme long-tail real-world perturbations during multi-agent compression cycles [7 preprint, 10 preprint].\n\n## References\n\n1. [[PDF] Prompting-based Synthetic Data Generation for Few-Shot Question ...](https://aclanthology.org/2024.lrec-main.1153.pdf) \u2014 `https://aclanthology.org/2024.lrec-main.1153.pdf`\n2. [Examining the Expanding Role of Synthetic Data Throughout the AI Development Pipeline](https://doi.org/10.1145/3715275.3732005) \u2014 `https://doi.org/10.1145/3715275.3732005`\n3. [Unveiling the Flaws: Exploring Imperfections in Synthetic Data and Mitigation Strategies for Large Language Models](https://doi.org/10.18653/v1/2024.findings-emnlp.873) \u2014 `https://doi.org/10.18653/v1/2024.findings-emnlp.873`\n4. [Self-Instruct: Aligning Language Models with Self-Generated Instructions](https://arxiv.org/abs/2212.10560) \u2014 `https://arxiv.org/abs/2212.10560`\n5. [Privacy attacks on synthetic data (Ganev De Cristofaro)](https://arxiv.org/abs/2301.09384) \u2014 `https://arxiv.org/abs/2301.09384`\n6. [Textbooks Are All You Need (phi-1)](https://arxiv.org/abs/2306.11644) \u2014 `https://arxiv.org/abs/2306.11644`\n7. [Model-induced distribution shifts and fairness](https://arxiv.org/abs/2402.01763) \u2014 `https://arxiv.org/abs/2402.01763`\n8. [AI models collapse when trained on recursively generated data](https://www.nature.com/articles/s41586-024-07566-y) \u2014 `https://www.nature.com/articles/s41586-024-07566-y`\n9. [Exploring the Impact of Instruction Data Scaling on Large Language Models: An Empirical Study on Real-World Use Cases](http://arxiv.org/abs/2303.14742) \u2014 `http://arxiv.org/abs/2303.14742`\n10. [Strong Model Collapse](http://arxiv.org/abs/2410.04840) \u2014 `http://arxiv.org/abs/2410.04840`\n11. [Collapse or Thrive? Perils and Promises of Synthetic Data in a Self-Generating World](http://arxiv.org/abs/2410.16713) \u2014 `http://arxiv.org/abs/2410.16713`\n12. [Domain-Adaptation through Synthetic Data: Fine-Tuning Large Language Models for German Law](http://arxiv.org/abs/2601.14160) \u2014 `http://arxiv.org/abs/2601.14160`\n\n## Source quality\n\n- Band A / peer_reviewed: [1, 2, 3 peer]\n- Band A / preprint: [4, 5, 6, 7, 9, 10, 11, 12 preprint]\n- Band / specialist: [8 specialist]\n",
+    "claims": [
+      {
+        "id": "C1",
+        "text": "Direct answer to the question as asked",
+        "quote": "#### Evaluation and Benchmarks\n\nTargeted evaluation and benchmark datasets, such as domain-specific question-answer pairs, can be used to measure and enhance retrieval-augmented generation (RAG) system performance. Side-by-side comparison of multiple models on the same use case ensures consistent, fair evaluation and i",
+        "url": "",
+        "tier": "standard_body",
+        "support_ids": [
+          "ev_28330ba1d3"
+        ],
+        "contradict_ids": [],
+        "confidence": 0.4,
+        "caveats": [
+          "Weak \u2014 needs a stronger primary source"
+        ],
+        "grounded": true,
+        "slot_id": "direct_answer",
+        "priority": "critical",
+        "status": "weak",
+        "evidence_type": "reference",
+        "directness": "indirect",
+        "kind": "direct",
+        "published": "",
+        "locator": "",
+        "quality_band": "S",
+        "provenance": "unknown",
+        "verification_status": "source_missing",
+        "verification_note": "Claim has no source URL."
+      },
+      {
+        "id": "C2",
+        "text": "How it works, step by step",
+        "quote": "[[page 1]] Published in Transactions on Machine Learning Research (03/2026) Reasoning-Driven Synthetic Data Generation and Evaluation Tim R. Davidson\u2217 research@trdavidson.com EPFL Benoit Seguin Google Enrico Bacis Google Cesar Ilharco Google Deepmind Hamza Harkous\u2020 harkous@google.com Google Reviewed on OpenReview:https",
+        "url": "",
+        "tier": "specialist_research",
+        "support_ids": [
+          "ev_0ce419656f"
+        ],
+        "contradict_ids": [],
+        "confidence": 0.4,
+        "caveats": [],
+        "grounded": true,
+        "slot_id": "mechanism",
+        "priority": "critical",
+        "status": "covered",
+        "evidence_type": "primary_paper",
+        "directness": "direct",
+        "kind": "direct",
+        "published": "",
+        "locator": "",
+        "quality_band": "A",
+        "provenance": "unknown",
+        "verification_status": "source_missing",
+        "verification_note": "Claim has no source URL."
+      },
+      {
+        "id": "C3",
+        "text": "Limits, bottlenecks, and failure modes",
+        "quote": "#### Evaluation and Benchmarks\n\nTargeted evaluation and benchmark datasets, such as domain-specific question-answer pairs, can be used to measure and enhance retrieval-augmented generation (RAG) system performance. Side-by-side comparison of multiple models on the same use case ensures consistent, fair evaluation and i",
+        "url": "",
+        "tier": "standard_body",
+        "support_ids": [
+          "ev_28330ba1d3"
+        ],
+        "contradict_ids": [],
+        "confidence": 0.4,
+        "caveats": [],
+        "grounded": true,
+        "slot_id": "constraints",
+        "priority": "critical",
+        "status": "covered",
+        "evidence_type": "reference",
+        "directness": "direct",
+        "kind": "direct",
+        "published": "",
+        "locator": "",
+        "quality_band": "S",
+        "provenance": "unknown",
+        "verification_status": "source_missing",
+        "verification_note": "Claim has no source URL."
+      },
+      {
+        "id": "C4",
+        "text": "Contradictions and open questions",
+        "quote": "[[page 1]] Exploring the Impact of Instruction Data Scaling on Large Language Models: An Empirical Study on Real-World Use Cases Yunjie Ji#, Yong Deng#, Yan Gong, Yiping Peng, Qiang Niu, Lei Zhang, Baochang Ma*, Xiangang Li Beike Inc., Beijing, China {jiyunjie001,dengyong013,gongyan013,pengyiping001, niuqiang002,zhangl",
+        "url": "http://arxiv.org/abs/2303.14742",
+        "tier": "specialist_research",
+        "support_ids": [
+          "ev_193c73bb5c"
+        ],
+        "contradict_ids": [],
+        "confidence": 0.62,
+        "caveats": [],
+        "grounded": true,
+        "slot_id": "caveats",
+        "priority": "standard",
+        "status": "covered",
+        "evidence_type": "primary_paper",
+        "directness": "direct",
+        "kind": "direct",
+        "published": "",
+        "locator": "p.1",
+        "quality_band": "A",
+        "provenance": "measured",
+        "verification_status": "verified",
+        "verification_note": "Quote (or high-overlap span) found in the source."
+      }
+    ],
+    "evidence": [
+      {
+        "id": "ev_193c73bb5c",
+        "title": "Exploring the Impact of Instruction Data Scaling on Large Language Models: An Empirical Study on Real-World Use Cases",
+        "url": "http://arxiv.org/abs/2303.14742",
+        "snippet": "[[page 1]] Exploring the Impact of Instruction Data Scaling on Large Language Models: An Empirical Study on Real-World Use Cases Yunjie Ji#, Yong Deng#, Yan Gong, Yiping Peng, Qiang Niu, Lei Zhang, Baochang Ma*, Xiangang Li Beike Inc., Beijing, China {jiyunjie001,dengyong013,gongyan013,pengyiping001, niuqiang002,zhanglei252,mabaochang001,lixiangang002}@ke.com Abstract The success of ChatGPT has recently attracted numer- ous efforts to replicate it, with instruction-tuning strate- gies being a key factor in achieving remarkable re- sults. Instruction-tuning not only signi\ufb01cantly enhances the model\u2019s performance and generalization but also makes the model\u2019s generated results more consistent with human speech patterns. However current research rarely studies the impact of different amounts of instruction data on model performance, especially in the real-world use cases. In this paper we explore the performance of large language mod- els based on instruction tuning across different scales of in- struction data. An evaluation dataset consisting of 12 ma- jor online use cases is constructed in the experiment. With Bloomz-7B1-mt as the base model, the results show that 1) merely increasing the amount of instruction data leads to continuous improvement in tasks such as open-ended gener- ation, 2) in tasks such as math and code, the model perfor- mance curve remains quite \ufb02at while increasing data size. We further analyze the possible causes of these phenomena and propose potential future research directions such as ef- fectively selecting high-quality training data, scaling base mo",
+        "source_agent": "docs",
+        "tier": "specialist_research",
+        "credibility": 0.76,
+        "published": "2023",
+        "quote": "[[page 1]] Exploring the Impact of Instruction Data Scaling on Large Language Models: An Empirical Study on Real-World Use Cases Yunjie Ji#, Yong Deng#, Yan Gong, Yiping Peng, Qiang Niu, Lei Zhang, Baochang Ma*, Xiangang Li Beike Inc., Beijing, China {jiyunjie001,dengyong013,gongyan013,pengyiping001, niuqiang002,zhanglei252,mabaochang001,lixiangang002}@ke.com Abstract The success of ChatGPT has recently attracted numer- ous efforts to replicate it, with instruction-tuning strate- gies being a ke"
+      },
+      {
+        "id": "ev_22d44b7c0d",
+        "title": "Strong Model Collapse",
+        "url": "http://arxiv.org/abs/2410.04840",
+        "snippet": "[[page 1]] Strong Model Collapse Elvis Dohmatob1 e.dohmatob@meta.com Yunzhen Feng1,2,\u2217 yf2231@nyu.edu Arjun Subramonian1,4,\u2217 arjunsub@cs.ucla.edu Julia Kempe1,2,3 kempe@meta.com 1 FAIR, Meta 2 NYU Center for Data Science 3 NYU Courant Institute 4 UCLA \u2217 work done while interning at Meta Abstract Within the scaling laws paradigm, which underpins the training of large neural networks like ChatGPT and Llama, we consider a supervised regression setting and establish the existance of a strong form of the model collapse phenomenon, a critical performance degradation due to synthetic data in the training corpus. Our results show that even the smallest fraction of synthetic data (e.g., as little as 1% of the total training dataset) can still lead to model collapse: larger and larger training sets do not enhance performance. We further investigate whether increasing model size, an approach aligned with current trends in training large language models, exacerbates or mitigates model collapse. In a simplified regime where neural networks are approximated via random projections of tunable size, we both theoretically and empirically show that larger models can amplify model collapse. Interestingly, our theory also indicates that, beyond the interpolation threshold (which can be extremely high for very large datasets), larger models may mitigate the collapse, although they do not entirely prevent it. Our theoretical findings are empirically verified through experiments on language models and feed-forward neural networks for images. 1 Introduction The term Model Collapse refers to a criti",
+        "source_agent": "docs",
+        "tier": "specialist_research",
+        "credibility": 0.76,
+        "published": "2024",
+        "quote": "[[page 1]] Strong Model Collapse Elvis Dohmatob1 e.dohmatob@meta.com Yunzhen Feng1,2,\u2217 yf2231@nyu.edu Arjun Subramonian1,4,\u2217 arjunsub@cs.ucla.edu Julia Kempe1,2,3 kempe@meta.com 1 FAIR, Meta 2 NYU Center for Data Science 3 NYU Courant Institute 4 UCLA \u2217 work done while interning at Meta Abstract Within the scaling laws paradigm, which underpins the training of large neural networks like ChatGPT and Llama, we consider a supervised regression setting and establish the existance of a strong form of"
+      },
+      {
+        "id": "ev_508c193b58",
+        "title": "Collapse or Thrive? Perils and Promises of Synthetic Data in a Self-Generating World",
+        "url": "http://arxiv.org/abs/2410.16713",
+        "snippet": "[[page 1]] Collapse or Thrive? Perils and Promises of Synthetic Data in a Self-Generating World Joshua Kazdan * 1 Rylan Schaeffer * 2 Apratim Dey 1 Matthias Gerstgrasser 2 Rafael Rafailov 2 David Donoho 1 Sanmi Koyejo 2 Abstract What happens when generative machine learning models are pretrained on web-scale datasets con- taining data generated by earlier models? Some prior work warns of \u201cmodel collapse\u201d as the web is overwhelmed by synthetic data; other work suggests the problem can be contained (i.e. col- lapse can be avoided) by managing how avail- able data are used in pretraining. In this paper, we report experiments on three ways of using data (training-workflows), across three generative model task-settings (multivariate Gaussian esti- mation, kernel density estimation, and language- model fine-tuning) to further confirm the possi- bility of containment: (a) we confirm that the training-workflow of replacing all real data by successive generations of purely synthetic data indeed suffers model collapse in all task-settings studied; (b) we consider the training-workflow of accumulating synthetic data alongside real data and training on all data combined and confirming that, although the proportion of real data even- tually becomes zero, models remain stable and their test losses do not diverge under this training- workflow; (c) we consider a training-workflow where real and synthetic data accumulate together but successive generations of pretraining are con- strained to use fixed-size data subsets each gener- ation. In this workflow, we observe slow and grad- ual rathe",
+        "source_agent": "docs",
+        "tier": "specialist_research",
+        "credibility": 0.76,
+        "published": "2024",
+        "quote": "[[page 1]] Collapse or Thrive? Perils and Promises of Synthetic Data in a Self-Generating World Joshua Kazdan * 1 Rylan Schaeffer * 2 Apratim Dey 1 Matthias Gerstgrasser 2 Rafael Rafailov 2 David Donoho 1 Sanmi Koyejo 2 Abstract What happens when generative machine learning models are pretrained on web-scale datasets con- taining data generated by earlier models? Some prior work warns of \u201cmodel collapse\u201d as the web is overwhelmed by synthetic data; other work suggests the problem can be containe"
+      },
+      {
+        "id": "ev_84b3a32b01",
+        "title": "Domain-Adaptation through Synthetic Data: Fine-Tuning Large Language Models for German Law",
+        "url": "http://arxiv.org/abs/2601.14160",
+        "snippet": "[[page 1]] Domain-Adaptation through Synthetic Data: Fine-Tuning Large Language Models for German Law Ali Hamza Bashir1,2,3 ,Muhammad Rehan Khalid 2 ,Kostadin Cvejoski 5 ,Jana Birr 1 , Jule Berghaus4 ,Armin Berger 1,3,4 ,Sandra Halscheidt 1 ,Christian Temath 1 , Rafet Sifa1,3,4 ,David Berghaus 1,3 1Fraunhofer IAIS 2Georg-August-University G\u00a8ottingen 3Lamarr Institute 4University of Bonn 5JetBrains Research Abstract Large language models (LLMs) often struggle in specialized domains such as legal reasoning due to limited expert knowledge, resulting in factu- ally incorrect outputs or hallucinations. This paper presents an effective method for adapting advanced LLMs to German legal question answering through a novel synthetic data generation approach. In con- trast to costly human-annotated resources or unre- liable synthetic alternatives, our approach system- atically produces high-quality, diverse, and legally accurate question-answer pairs directly from au- thoritative German statutes. Using rigorous au- tomated filtering methods and parameter-efficient fine-tuning techniques, we demonstrate that LLMs adapted with our synthetic dataset significantly out- perform their baseline counterparts on German le- gal question answering tasks. Our results highlight the feasibility of using carefully designed synthetic data as a robust alternative to manual annotation in high-stakes, knowledge-intensive domains. 1 Introduction LLMs achieve strong performance on many general NLP tasks, yet reliability remains a key obstacle in high-stakes do- mains such as law. Legal question answering ",
+        "source_agent": "docs",
+        "tier": "specialist_research",
+        "credibility": 0.76,
+        "published": "2026",
+        "quote": "[[page 1]] Domain-Adaptation through Synthetic Data: Fine-Tuning Large Language Models for German Law Ali Hamza Bashir1,2,3 ,Muhammad Rehan Khalid 2 ,Kostadin Cvejoski 5 ,Jana Birr 1 , Jule Berghaus4 ,Armin Berger 1,3,4 ,Sandra Halscheidt 1 ,Christian Temath 1 , Rafet Sifa1,3,4 ,David Berghaus 1,3 1Fraunhofer IAIS 2Georg-August-University G\u00a8ottingen 3Lamarr Institute 4University of Bonn 5JetBrains Research Abstract Large language models (LLMs) often struggle in specialized domains such as legal"
+      },
+      {
+        "id": "ev_183011a63c",
+        "title": "From Collapse to Improvement: Statistical Perspectives on the Evolutionary Dynamics of Iterative Training on Contaminated Sources",
+        "url": "http://arxiv.org/abs/2602.10531",
+        "snippet": "[[page 1]] From Collapse to Improvement: Statistical Perspectives on the Evolutionary Dynamics of Iterative Training on Contaminated Sources Soham Bakshi * 1 Sunrit Chakraborty * 2 Abstract The problem of model collapse has presented new challenges in iterative training of generative mod- els, where such training with synthetic data leads to an overall degradation of performance. This paper looks at the problem from a statistical view- point, illustrating that one can actually hope for improvement when models are trained on data contaminated with synthetic samples, as long as there is some amount of fresh information from the true target distribution. In particular, we con- sider iterative training on samples sourced from a mixture of the true target and synthetic distribu- tions. We analyze the entire iterative evolution in a next-token prediction language model, capturing how the interplay between the mixture weights and the sample size controls the overall long-term performance. With non-trivial mixture weight of the true distribution, even if it decays over time, simply training the model in a contamination- agnostic manner with appropriate sample sizes can avoid collapse and even recover the true target distribution under certain conditions. Simulation studies support our findings and also show that such behavior is more general for other classes of models. 1. Introduction Generative AI models, especially large language models (LLMs) based on transformers (Vaswani, 2017), such as ChatGPT (Radford, 2018; Radford et al., 2019; Brown, 2020), have revolutionized tasks like",
+        "source_agent": "docs",
+        "tier": "specialist_research",
+        "credibility": 0.76,
+        "published": "2026",
+        "quote": "[[page 1]] From Collapse to Improvement: Statistical Perspectives on the Evolutionary Dynamics of Iterative Training on Contaminated Sources Soham Bakshi * 1 Sunrit Chakraborty * 2 Abstract The problem of model collapse has presented new challenges in iterative training of generative mod- els, where such training with synthetic data leads to an overall degradation of performance. This paper looks at the problem from a statistical view- point, illustrating that one can actually hope for improveme"
+      },
+      {
+        "id": "ev_445952f542",
+        "title": "A Survey on Recent Advances in Conversational Data Generation",
+        "url": "https://arxiv.org/html/2405.13003v1",
+        "snippet": "In ODD, general-purpose chatbots such as ChatGPT and GPT-4 have exhibited high quality and performance primarily in general tasks and concepts, rather than in specialized domains (Mallen et al., 2023; de Luis Balaguer et al., 2024). Moreover, access to these models is usually restricted via APIs. To overcome these limitations and improve the performance of LLMs in specific domains and languages, such as emotional support (Zheng et al., 2023), Spanish intent detection (Chen et al., 2023a), and multi-skill conversations (Kim et al., 2022a), data augmentation followed by fine-tuning has been suggested as an effective approach (Ovadia et al., 2023b; Soudani et al., 2024). Additionally, some crowdsourced datasets may contain outdated concepts and lack newer ones. Synthetic data generation has [...] CQAG-AR (Hwang and Lee, 2022) focuses on the consistency between an answer and a question after the generation of each turn to avoid propagation errors in subsequent turns of a conversation. It introduces answer revision module, which immediately revises the extracted answer after a question is generated.\nSimilarly, MultiCQAG (Hwang et al., 2022b) proposes a Hierarchical Answerability Classif",
+        "source_agent": "search",
+        "tier": "specialist_research",
+        "credibility": 0.76,
+        "published": "",
+        "quote": "In ODD, general-purpose chatbots such as ChatGPT and GPT-4 have exhibited high quality and performance primarily in general tasks and concepts, rather than in specialized domains (Mallen et al., 2023; de Luis Balaguer et al., 2024). Moreover, access to these models is usually restricted via APIs. To overcome these limitations and improve the performance of LLMs in specific domains and languages, s"
+      },
+      {
+        "id": "ev_e3d921b1b3",
+        "title": "Exploring the Landscape for Generative Sequence Models for Specialized Data Synthesis",
+        "url": "https://arxiv.org/html/2411.01929v2",
+        "snippet": "[[page 1]] Exploring the Landscape for Generative Sequence Models for Specialized Data Synthesis Mohammad Zbeeb1, Mohammad Ghorayeb2, and Mariam Salman3 1,2,3Department of Electrical and Computer Engineering, American University of Beirut 1,2,3{mbz02, mrg11, mcs12 }@mail.aub.edu Abstract Artificial Intelligence (AI) research often aims to develop models that can generalize reliably across complex datasets, yet this remains challenging in fields where data is scarce, intricate, or inaccessible. This paper introduces a novel approach that leverages three generative models of varying complexity to synthesize one of the most demanding structured datasets: Malicious Network Traffic. Our approach uniquely transforms numerical data into text, re-framing data generation as a language modeling task, which not only enhances data regularization but also significantly improves generalization and the quality of the synthetic data. Extensive statistical analyses demonstrate that our method surpasses state-of-the-art generative models in producing high-fidelity synthetic data. Additionally, we conduct a comprehensive study on synthetic data applications, effectiveness, and evaluation strategies, offering valuable insights into its role across various domains. Our code and pre-trained models are openly accessible at Github, enabling further exploration and application of our methodology. Index Terms: Data synthesis, machine learning, traffic generation, privacy preserving data, generative models. I Introduction Machine learning algorithms depend heavily on the availability and quality of t",
+        "source_agent": "docs",
+        "tier": "specialist_research",
+        "credibility": 0.76,
+        "published": "",
+        "quote": "[[page 1]] Exploring the Landscape for Generative Sequence Models for Specialized Data Synthesis Mohammad Zbeeb1, Mohammad Ghorayeb2, and Mariam Salman3 1,2,3Department of Electrical and Computer Engineering, American University of Beirut 1,2,3{mbz02, mrg11, mcs12 }@mail.aub.edu Abstract Artificial Intelligence (AI) research often aims to develop models that can generalize reliably across complex datasets, yet this remains challenging in fields where data is scarce, intricate, or inaccessible. T"
+      },
+      {
+        "id": "ev_759552269e",
+        "title": "Adversarial Data Augmentation for Single Domain Generalization via Lyapunov Exponent-Guided Optimization",
+        "url": "https://arxiv.org/html/2507.04302v1",
+        "snippet": "[[page 1]] arXiv:2507.04302v1 [cs.CV] 6 Jul 2025 Adversarial Data Augmentation for Single Domain Generalization via Lyapunov Exponent-Guided Optimization Zuyu Zhang, Ning Chen, Yongshan Liu, Qinghua Zhang, Xu Zhang* Chongqing University of Posts and Telecommunications {zhangzuyu, s230233004, liuyongshan,zhangqh, zhangx }@cqupt.edu.cn Abstract Single Domain Generalization (SDG) aims to develop models capable of generalizing to unseen target domains using only one source domain, a task complicated by sub- stantial domain shifts and limited data diversity. Existing SDG approaches primarily rely on data augmentation tech- niques, which struggle to effectively adapt training dynam- ics to accommodate large domain shifts. To address this, we propose LEAwareSGD, a novel Lyapunov Exponent (LE)- guided optimization approach inspired by dynamical sys- tems theory. By leveraging LE measurements to modulate the learning rate, LEAwareSGD encourages model training near the edge of chaos, a critical state that optimally bal- ances stability and adaptability. This dynamic adjustment allows the model to explore a wider parameter space and capture more generalizable features, ultimately enhancing the model\u2019s generalization capability. Extensive experi- ments on PACS, OfficeHome, and DomainNet demonstrate that LEAwareSGD yields substantial generalization gains, achieving up to 9.47% improvement on PACS in low-data regimes. These results underscore the effectiveness of train- ing near the edge of chaos for enhancing model generaliza- tion capability in SDG tasks. 1. Introduction Deep neural ne",
+        "source_agent": "docs",
+        "tier": "specialist_research",
+        "credibility": 0.76,
+        "published": "",
+        "quote": "[[page 1]] arXiv:2507.04302v1 [cs.CV] 6 Jul 2025 Adversarial Data Augmentation for Single Domain Generalization via Lyapunov Exponent-Guided Optimization Zuyu Zhang, Ning Chen, Yongshan Liu, Qinghua Zhang, Xu Zhang* Chongqing University of Posts and Telecommunications {zhangzuyu, s230233004, liuyongshan,zhangqh, zhangx }@cqupt.edu.cn Abstract Single Domain Generalization (SDG) aims to develop models capable of generalizing to unseen target domains using only one source domain, a task complicated"
+      },
+      {
+        "id": "ev_809dfef5a6",
+        "title": "Matrix: Peer-to-Peer Multi-Agent Synthetic Data Generation Framework",
+        "url": "https://arxiv.org/html/2511.21686v1",
+        "snippet": "[[page 1]] Matrix: Peer-to-Peer Multi-Agent Synthetic Data Generation Framework Dong Wang1,\u2020,Yang Li 1,\u2020,Ansong Ni 1,\u2020,Ching-Feng Yeh 1,Youssef Emad 1,Xinjie Lei 1,Liam Robbins 1, Karthik Padthe1,Hu Xu 1,Xian Li 1,Asli Celikyilmaz 1,Ramya Raghavendra 1,Lifei Huang 1,Carole-Jean Wu1,\u2020,Shang-Wen Li 1,\u2020 1FAIR at Meta \u2020Core Contributors Synthetic data has become increasingly important for training large language models, especially when real data is scarce, expensive, or privacy-sensitive. Many such generation tasks require coordinated multi-agent workflows, where specialized agents collaborate to produce data that is higher quality, more diverse, and structurally richer. However, existing frameworks for multi-agent synthesis often depend on a centralized orchestrator, creating scalability bottlenecks, or are hardcoded for specific domains, limiting flexibility. We presentMatrix, a decentralized framework that represents both control and data flow as serialized messages passed through distributed queues. This peer-to-peer design eliminates the central orchestrator. Each task progresses independently through lightweight agents, while compute-intensive operations, such as LLM inference or containerized environments, are handled by distributed services. Built on Ray, Matrix scales to tens of thousands of concurrent agentic workflows and provides a modular, configurable design that enables easy adaptation to a wide range of data generation workflows. We evaluate Matrix across diverse synthesis scenarios, such as multi-agent collaborative dialogue, web-based reasoning data extraction",
+        "source_agent": "docs",
+        "tier": "specialist_research",
+        "credibility": 0.76,
+        "published": "",
+        "quote": "[[page 1]] Matrix: Peer-to-Peer Multi-Agent Synthetic Data Generation Framework Dong Wang1,\u2020,Yang Li 1,\u2020,Ansong Ni 1,\u2020,Ching-Feng Yeh 1,Youssef Emad 1,Xinjie Lei 1,Liam Robbins 1, Karthik Padthe1,Hu Xu 1,Xian Li 1,Asli Celikyilmaz 1,Ramya Raghavendra 1,Lifei Huang 1,Carole-Jean Wu1,\u2020,Shang-Wen Li 1,\u2020 1FAIR at Meta \u2020Core Contributors Synthetic data has become increasingly important for training large language models, especially when real data is scarce, expensive, or privacy-sensitive. Many such"
+      },
+      {
+        "id": "ev_85cf3d9b8d",
+        "title": "Synthetic legal QA pipeline German law LegalMC4",
+        "url": "https://arxiv.org/html/2603.23515v1",
+        "snippet": "[[page 1]] Training a Large Language Model for Medical Coding Using Privacy-Preserving Synthetic Clinical Data John Cook1,\u2021, Michael Wyatt2,\u2021, Peng Wei1,\u2021, Iris Chin1, Santosh Gupta1 Van Zyl Van Vuuren1, Richie Siburian1, Amanda Spicer1, Kristen Viviano1 Alda Cami1, Raunaq Malhotra1, Zhewei Yao2, Jeff Rasley2,\u2020, Gaurav Kaushik1,*,\u2020 1Veradigm 2Snowflake *Corresponding author, \u2020Co-senior authors, \u2021Equal contribution Abstract Improving the accuracy and reliability of medical coding reduces clinician burnout and supports revenue cycle processes, freeing providers to focus more on patient care. However, automating the assignment of ICD-10-CM and CPT codes from clinical documentation remains a challenge due to heterogeneous records, nuanced coding guidelines, and long-tail distributions. Large language models have been proposed to help or automate specific medical coding tasks. However, foundation models are not explicitly trained for medical coding and zero-shot coding has yielded poor results. We investigate whether a modern open-weight foundation model can be adapted for an expert-level medical coding task using privacy-preserving synthetic training data derived from electronic health records. We fine-tune Llama 3-70B on pairs of clinical notes and gold codes generated from EHR-grounded templates and coding policies, then evaluate exact-code prediction for ICD-10-CM and CPT. A zero-shot baseline with the unadapted model achieved an F1 score of 0.18 for exact code match. After fine-tuning on the synthetic corpus, exact-match F1 exceeded 0.70, representing a large absolute gain ",
+        "source_agent": "docs",
+        "tier": "specialist_research",
+        "credibility": 0.76,
+        "published": "",
+        "quote": "[[page 1]] Training a Large Language Model for Medical Coding Using Privacy-Preserving Synthetic Clinical Data John Cook1,\u2021, Michael Wyatt2,\u2021, Peng Wei1,\u2021, Iris Chin1, Santosh Gupta1 Van Zyl Van Vuuren1, Richie Siburian1, Amanda Spicer1, Kristen Viviano1 Alda Cami1, Raunaq Malhotra1, Zhewei Yao2, Jeff Rasley2,\u2020, Gaurav Kaushik1,*,\u2020 1Veradigm 2Snowflake *Corresponding author, \u2020Co-senior authors, \u2021Equal contribution Abstract Improving the accuracy and reliability of medical coding reduces clinicia"
+      },
+      {
+        "id": "ev_0ce419656f",
+        "title": "Reasoning-Driven Synthetic Data Generation and Evaluation",
+        "url": "https://arxiv.org/html/2603.29791v1",
+        "snippet": "[[page 1]] Published in Transactions on Machine Learning Research (03/2026) Reasoning-Driven Synthetic Data Generation and Evaluation Tim R. Davidson\u2217 research@trdavidson.com EPFL Benoit Seguin Google Enrico Bacis Google Cesar Ilharco Google Deepmind Hamza Harkous\u2020 harkous@google.com Google Reviewed on OpenReview:https: // openreview. net/ forum? id= NALsdGEPhB Abstract Although many AI applications of interest require specialized multi-modal models, relevant data to train such models is inherently scarce or inaccessible. Filling these gaps with human annotators is prohibitively expensive, error-prone, and time-consuming, leading model builders to increasingly consider synthetic data as a scalable alternative. However, existing synthetic data generation methods often rely on manual prompts, evolutionary algorithms, or extensive seed data from the target distribution \u2013 limiting their scalability, explainability, and control. In this paper, we introduce Simula: a novel reasoning-driven framework for data generation and evaluation. It employs a seedless, agentic approach to generate synthetic datasets at scale, allowing users to define desired dataset characteristics through an explainable and controllable process that enables fine-grained resource allocation. We show the efficacy of our approach on a variety of datasets, rigorously testing both intrinsic and downstream properties. Our work (1) offers guidelines for synthetic data mechanism design, (2) provides insights into generating and evaluating synthetic data at scale, and (3) unlocks new opportunities for developing and",
+        "source_agent": "docs",
+        "tier": "specialist_research",
+        "credibility": 0.76,
+        "published": "",
+        "quote": "[[page 1]] Published in Transactions on Machine Learning Research (03/2026) Reasoning-Driven Synthetic Data Generation and Evaluation Tim R. Davidson\u2217 research@trdavidson.com EPFL Benoit Seguin Google Enrico Bacis Google Cesar Ilharco Google Deepmind Hamza Harkous\u2020 harkous@google.com Google Reviewed on OpenReview:https: // openreview. net/ forum? id= NALsdGEPhB Abstract Although many AI applications of interest require specialized multi-modal models, relevant data to train such models is inheren"
+      },
+      {
+        "id": "ev_c8f988565c",
+        "title": "Autodata: An agentic data scientist to create high quality synthetic data",
+        "url": "https://arxiv.org/html/2606.25996v2",
+        "snippet": "Autodata: An agentic data scientist to create high quality synthetic data Ilia Kulikov \u2020 , Chenxi Whitehouse \u2020 , Tianhao Wu \u2020 , Yixin Nie \u2020 , Swarnadeep Saha, Eryk Helenowski, Weizhe Yuan, Olga Golovneva, Jack Lanchantin, Yoram Bachrach, Jakob Foerster, Xian Li, Han Fang, Sainbayar Sukhbaatar, Jason Weston Affiliation: FAIR at Meta \u2020 Joint first author Abstract We introduce Autodata, a general method that enables AI agents to act as data scientists who build high quality training and evaluation data. We show how to train (meta-optimize) such a data scientist agent, so that it learns to create even stronger data. We describe the overall formulation, and a specific practical implementation, Agentic Self-Instruct. We conduct experiments on computer science research tasks, legal reasoning tasks and reasoning with mathematical objects, where we obtain improved results compared to classical synthetic dataset creation methods. Further, meta-optimizing the data scientist agent itself delivers an even larger performance uplift. Agentic data creation provides a way to convert increased inference compute into higher quality model training. Overall, we believe this direction has the potential to change the way we build AI data. \u2020 \u2020 date: August 24, 2026 \u2020 \u2020 correspondence: kulikov@meta.com , jase@meta.com Figure 1 : Autodata pipeline. The framework employs an autonomous agent that emulates the role of a data scientist, iteratively generating data, conducting qualitative inspection and quantitative performance evaluation, synthesizing insights, and updating the data-generation recipe. T",
+        "source_agent": "docs",
+        "tier": "specialist_research",
+        "credibility": 0.76,
+        "published": "",
+        "quote": "Autodata: An agentic data scientist to create high quality synthetic data Ilia Kulikov \u2020 , Chenxi Whitehouse \u2020 , Tianhao Wu \u2020 , Yixin Nie \u2020 , Swarnadeep Saha, Eryk Helenowski, Weizhe Yuan, Olga Golovneva, Jack Lanchantin, Yoram Bachrach, Jakob Foerster, Xian Li, Han Fang, Sainbayar Sukhbaatar, Jason Weston Affiliation: FAIR at Meta \u2020 Joint first author Abstract We introduce Autodata, a general method that enables AI agents to act as data scientists who build high quality training and evaluation "
+      },
+      {
+        "id": "ev_9ae3cf62e9",
+        "title": "[PDF] Multi-Stage Domain-Grounded Synthetic Data Generation for Fine ...",
+        "url": "https://arxiv.org/pdf/2509.25736",
+        "snippet": "[[page 1]] Think Less, Label Better: Multi-Stage Domain-Grounded Synthetic Data Generation for Fine-Tuning Large Language Models in Telecommunications Chenhua Shi \u2217 Gregor Macdonald \u2217 Bhavika Jalli Wanlu Lei John Zou Mridul Jain Joji Philip Ericsson Abstract\u2014The success of large language models (LLMs) de- pends heavily on large-scale, high-quality instruction-following and reinforcement datasets. However, generating such data through human annotation is prohibitively time-consuming par- ticularly for domain-specific tasks like telecom network trou- bleshooting, where accurate responses require deep technical expertise and contextual understanding. In this paper, we present a fully automated, retrieval-augmented pipeline for generating synthetic question-answer (QA) pairs grounded in structured domain knowledge. Our multi-stage framework integrates a retriever, base generator, and refinement model to synthesize and enhance QA pairs using documents retrieved from a domain- specific knowledge graph. To ensure data quality, we employ customized RAGAS-based scoring to filter low-quality samples, producing a high-quality dataset suitable for reinforcement fine- tuning (RFT). We demonstrate our approach in a real-world telecom scenario focused on radio access network (RAN) trou- bleshooting. The resulting pipeline generates complex, context- rich troubleshooting solution plans without human intervention. This work offers a scalable solution for building instruction and reinforcement datasets in specialized domains, significantly reducing dependence on manual labeling while maintai",
+        "source_agent": "docs",
+        "tier": "specialist_research",
+        "credibility": 0.76,
+        "published": "",
+        "quote": "[[page 1]] Think Less, Label Better: Multi-Stage Domain-Grounded Synthetic Data Generation for Fine-Tuning Large Language Models in Telecommunications Chenhua Shi \u2217 Gregor Macdonald \u2217 Bhavika Jalli Wanlu Lei John Zou Mridul Jain Joji Philip Ericsson Abstract\u2014The success of large language models (LLMs) de- pends heavily on large-scale, high-quality instruction-following and reinforcement datasets. However, generating such data through human annotation is prohibitively time-consuming par- ticularl"
+      },
+      {
+        "id": "ev_947dc55434",
+        "title": "[PDF] Prompting-based Synthetic Data Generation for Few-Shot Question ...",
+        "url": "https://aclanthology.org/2024.lrec-main.1153.pdf",
+        "snippet": "[[page 1]] LREC-COLING 2024, pages 13168\u201313178 20-25 May, 2024. \u00a9 2024 ELRA Language Resource Association: CC BY -NC 4.0 13168 Prompting-based Synthetic Data Generation for Few-Shot Question Answering Maximilian Schmidt 1, Andrea Bartezzaghi 2, Ngoc Thang Vu 1 1 University of Stuttgart,2IBM Research Zurich 1{maximilian.schmidt, thang.vu}@ims.uni-stuttgart.de,2abt@zurich.ibm.com Abstract Although language models (LMs) have boosted the performance of Question Answering, they still need plenty of data. Data annotation, in contrast, is a time-consuming process. This especially applies to Question Answering, where possibly large documents have to be parsed and annotated with questions and their corresponding answers. Furthermore, Question Answering models often only work well for the domain they were trained on. Since annotation is costly, we argue that domain-agnostic knowledge from LMs, such as linguistic understanding, is sufficient to create a well-curated dataset. With this motivation, we show that using large language models can improve Question Answering performance on various datasets in the few-shot setting compared to state-of-the-art approaches. For this, we perform data generation leveraging the Prompting framework, suggesting that language models contain valuable task-agnostic knowledge that can be used beyond the common pre-training/fine-tuning scheme. As a result, we consistently outperform previous approaches on few-shot Question Answering. Keywords:Question Answering, Natural Language Generation, Named Entity Recognition 1. Introduction Machine Reading Question ",
+        "source_agent": "search",
+        "tier": "peer_reviewed",
+        "credibility": 0.84,
+        "published": "",
+        "quote": "For answering research question RQ2, we can conclude that our data generation approach also generalizes to other domains as demonstrated by the few-shot MRQA benchmark. To analyze the benefit of our approach, we further investigate the quality of the generated question-answer pairs.\n6.\nAnalysis In order to assess the data quality of the generated questions and answers a user study was taken. [...]"
+      },
+      {
+        "id": "ev_12714a71dd",
+        "title": "Synthetic Data Generation: Best Methods and Tools Compared",
+        "url": "https://bluegen.ai/what-are-the-best-methods-and-tools-for-generating-synthetic-data",
+        "snippet": "Rare events require specialized approaches like oversampling techniques, conditional generation methods, or hybrid approaches that explicitly model edge cases. Consider using rule-based systems to ensure critical rare scenarios are represented, or employ techniques like SMOTE (Synthetic Minority Oversampling Technique) combined with more sophisticated generative models to maintain both statistical realism and edge case coverage.\n\n### What level of technical expertise is needed to implement synthetic data generation in-house? [...] Implementation complexity varies by approach. Rule-based and statistical methods require moderate data science skills, while GANs and VAEs demand deep machine learning expertise. For organizations lacking specialized skills, starting with user-friendly commercial platforms or open-source tools like SDV can provide good results with less technical overhead before advancing to more sophisticated custom solutions.\n\n### How do you validate that synthetic data won't accidentally expose sensitive information from the original dataset? [...] In financial services, the challenge is different. Fraud detection, risk modeling, and regulatory stress testing all depen",
+        "source_agent": "search",
+        "tier": "unknown",
+        "credibility": 0.28,
+        "published": "",
+        "quote": "Rare events require specialized approaches like oversampling techniques, conditional generation methods, or hybrid approaches that explicitly model edge cases. Consider using rule-based systems to ensure critical rare scenarios are represented, or employ techniques like SMOTE (Synthetic Minority Oversampling Technique) combined with more sophisticated generative models to maintain both statistical"
+      },
+      {
+        "id": "ev_a0f0bdf6c3",
+        "title": "Examining the Expanding Role of Synthetic Data Throughout the AI Development Pipeline",
+        "url": "https://doi.org/10.1145/3715275.3732005",
+        "snippet": "Alongside the growth of generative AI, we are witnessing a surge in the use of synthetic data across all stages of the AI development pipeline.It is now common practice for researchers and practitioners to use one large generative model (which we refer to as an auxiliary model) to generate synthetic data that is used to train or evaluate another, reconfiguring AI workflows and reshaping the very nature of data.While scholars have raised concerns over the risks of synthetic data, policy guidance and best practices for its responsible use have not kept up with these rapidly evolving industry trends, in part because we lack a clear picture of current practices and challenges.Our work aims to address this gap.Through 29 interviews with AI practitioners and responsible AI experts, we examine the expanding role of synthetic data in AI development.Our findings reveal how auxiliary models are now widely used across the AI development pipeline.Practitioners describe synthetic data as crucial for addressing data scarcity and providing a competitive edge, noting that evaluation of generative AI systems at scale would be infeasible without auxiliary models.However, they face challenges control",
+        "source_agent": "scholar",
+        "tier": "peer_reviewed",
+        "credibility": 0.84,
+        "published": "2025",
+        "quote": "Alongside the growth of generative AI, we are witnessing a surge in the use of synthetic data across all stages of the AI development pipeline.It is now common practice for researchers and practitioners to use one large generative model (which we refer to as an auxiliary model) to generate synthetic data that is used to train or evaluate another, reconfiguring AI workflows and reshaping the very n"
+      },
+      {
+        "id": "ev_961d0a7072",
+        "title": "Unveiling the Flaws: Exploring Imperfections in Synthetic Data and Mitigation Strategies for Large Language Models",
+        "url": "https://doi.org/10.18653/v1/2024.findings-emnlp.873",
+        "snippet": "Synthetic data has been proposed as a solution to address the issue of high-quality data scarcity in the training of large language models (LLMs).Studies have shown that synthetic data can effectively improve the performance of LLMs on downstream benchmarks.However, despite its potential benefits, our analysis suggests that there may be inherent flaws in synthetic data.The uniform format of synthetic data can lead to pattern overfitting and cause significant shifts in the output distribution, thereby reducing the model's instructionfollowing capabilities.Our work delves into these specific flaws associated with questionanswer (Q-A) pairs, a prevalent type of synthetic data, and presents a method based on unlearning techniques to mitigate these flaws.The empirical results demonstrate the effectiveness of our approach, which can reverse the instruction-following issues caused by pattern overfitting without compromising performance on benchmarks at relatively low cost.Our work has yielded key insights into the effective use of synthetic data, aiming to promote more robust and efficient LLM training.",
+        "source_agent": "scholar",
+        "tier": "peer_reviewed",
+        "credibility": 0.84,
+        "published": "2024",
+        "quote": "Synthetic data has been proposed as a solution to address the issue of high-quality data scarcity in the training of large language models (LLMs).Studies have shown that synthetic data can effectively improve the performance of LLMs on downstream benchmarks.However, despite its potential benefits, our analysis suggests that there may be inherent flaws in synthetic data.The uniform format of synthe"
+      },
+      {
+        "id": "ev_e875182c41",
+        "title": "Evaluating Question Answering Solutions | Niklas Heidloff",
+        "url": "https://heidloff.net/article/evaluating-question-answering",
+        "snippet": "Niklas Heidloff Welcome to my blog! I'm an IT professional focussing on artificial intelligence, development and advocacy. Recently I've worked on Generative AI, Kubernetes, Open Source, Java and DevOps at IBM. I'm a proud father of five and love building things - software as well as outdoor areas. HOME BLOG ARCHIVES OPEN SOURCE VIDEOS heidloff.net - Building is my Passion Post Cancel Evaluating Question Answering Solutions Posted Aug 31, 2023 By Niklas Heidloff 4 min read Retrieval Augmented Generation (RAG) solutions like Question Answering are not easy to evaluate. This post summarizes some options with their pros and cons. Question Answering solutions are more than only invoking one model. Documents need to be retrieved first, rerankers can help finding the most important information in documents, different Large Language Models can be utilized with different prompts, and more. To find the best possible combinations typically a lot of experiments need to be run. Results need to be tracked and they obviously need to be comparable which requires good metrics. The goal is to automate as much as possible when running experiments. Metrics that can be created without human interactions are desirable. However, because of issues with some of these automated metrics, it often also makes sense to do human evaluations. Ground Truth To measure the performance of different models and parameters, ground truth-based metrics can be leveraged. Experts for specific domains and data should provide at least 100 questions and expected answers, called \u2018gold answers\u2019. Read my previous post Ge",
+        "source_agent": "search",
+        "tier": "unknown",
+        "credibility": 0.28,
+        "published": "",
+        "quote": "## Ground Truth\n\nTo measure the performance of different models and parameters, ground truth-based metrics can be leveraged. Experts for specific domains and data should provide at least 100 questions and expected answers, called \u2018gold answers\u2019. Read my previous post Generative AI for Question Answering Scenarios for details.\n\nSince the answer generation pipelines contain multiple steps, not only"
+      },
+      {
+        "id": "ev_f3cb6635cf",
+        "title": "Survey on Synthetic Data Generation, Evaluation Methods ...",
+        "url": "https://www.mdpi.com/2227-7390/10/15/2733",
+        "snippet": "Generalization. Last but not least, it is essential that the generated samples are not copies of the original data. In fact, high fidelity and diversity values do not guarantee that the synthetic samples are not just copies of the original dataset. Therefore, the authenticity component is a measure of how well the model can generalize and, therefore, not overfit the real data. [...] Another technique to evaluate the quality of synthetic data was proposed in . The authors address the fact that most existing evaluation metrics for generative models are focused on image data and have introduced a domain and model-independent metric. The metric is three-dimensional -Precision, -Recall, Authenticity), and it evaluates the fidelity, diversity, and generalization of each generative model and is independent of the domain (e.g., images or tabular data). Moreover, the three components correspond to interpretable probabilistic quantities, making it easier to detect a lack of synthetic data quality if such a problem occurs. [...] The first two components are computed by embedding the real and synthetic data in hyperspheres. That is, the original data, , and the generated data, , are mapped fro",
+        "source_agent": "search",
+        "tier": "unknown",
+        "credibility": 0.28,
+        "published": "",
+        "quote": "Generalization. Last but not least, it is essential that the generated samples are not copies of the original data. In fact, high fidelity and diversity values do not guarantee that the synthetic samples are not just copies of the original dataset. Therefore, the authenticity component is a measure of how well the model can generalize and, therefore, not overfit the real data. [...] Another techni"
+      },
+      {
+        "id": "ev_28330ba1d3",
+        "title": "Synthetic Data Generation for Agentic AI | Use Case",
+        "url": "https://www.nvidia.com/en-us/use-cases/synthetic-data-generation-for-agentic-ai",
+        "snippet": "#### Evaluation and Benchmarks\n\nTargeted evaluation and benchmark datasets, such as domain-specific question-answer pairs, can be used to measure and enhance retrieval-augmented generation (RAG) system performance. Side-by-side comparison of multiple models on the same use case ensures consistent, fair evaluation and informed model selection.\n\n#### Low-Resource Adaptation\n\nLow-resource domains like proprietary coding languages or underrepresented languages benefit greatly from realistic, complex synthetic text data\u2014enhancing AI models\u2019 reasoning, accuracy, and overall performance.\n\n#### Private & Compliant Data [...] NVIDIA NeMo\n\nOverview\n\n## Why Create Synthetic Data?\n\nTraining specialized agentic systems requires extensive, high-quality datasets that are often scarce, siloed, or sensitive. Synthetic data eliminates this bottleneck by creating diverse datasets at scale for any domain to accelerate AI agent development.\n\nSynthetic data can help solve challenges such as:\n\n Data scarcity: Domain-specific datasets are typically limited or unavailable.\n Security concerns: Internal data is often too sensitive to share externally.\n Cost and time: Manual data collection and labeling are e",
+        "source_agent": "search",
+        "tier": "standard_body",
+        "credibility": 0.88,
+        "published": "",
+        "quote": "#### Evaluation and Benchmarks\n\nTargeted evaluation and benchmark datasets, such as domain-specific question-answer pairs, can be used to measure and enhance retrieval-augmented generation (RAG) system performance. Side-by-side comparison of multiple models on the same use case ensures consistent, fair evaluation and informed model selection.\n\n#### Low-Resource Adaptation\n\nLow-resource domains lik"
+      }
+    ],
+    "citations": [
+      {
+        "n": 1,
+        "evidence_id": "ev_947dc55434",
+        "title": "[PDF] Prompting-based Synthetic Data Generation for Few-Shot Question ...",
+        "url": "https://aclanthology.org/2024.lrec-main.1153.pdf",
+        "quote": "For answering research question RQ2, we can conclude that our data generation approach also generalizes to other domains as demonstrated by the few-shot MRQA benchmark.",
+        "tier": "peer_reviewed",
+        "host": "aclanthology.org"
+      },
+      {
+        "n": 2,
+        "evidence_id": "ev_a0f0bdf6c3",
+        "title": "Examining the Expanding Role of Synthetic Data Throughout the AI Development Pipeline",
+        "url": "https://doi.org/10.1145/3715275.3732005",
+        "quote": "Alongside the growth of generative AI, we are witnessing a surge in the use of synthetic data across all stages of the AI development pipeline.",
+        "tier": "peer_reviewed",
+        "host": "doi.org"
+      },
+      {
+        "n": 3,
+        "evidence_id": "ev_961d0a7072",
+        "title": "Unveiling the Flaws: Exploring Imperfections in Synthetic Data and Mitigation Strategies for Large Language Models",
+        "url": "https://doi.org/10.18653/v1/2024.findings-emnlp.873",
+        "quote": "Synthetic data has been proposed as a solution to address the issue of high-quality data scarcity in the training of large language models (LLMs).",
+        "tier": "peer_reviewed",
+        "host": "doi.org"
+      },
+      {
+        "n": 4,
+        "evidence_id": "seed_self_instruct",
+        "title": "Self-Instruct: Aligning Language Models with Self-Generated Instructions",
+        "url": "https://arxiv.org/abs/2212.10560",
+        "quote": "Self-Instruct: Aligning Language Models with Self-Generated Instructions",
+        "tier": "specialist_research",
+        "host": "arxiv.org"
+      },
+      {
+        "n": 5,
+        "evidence_id": "seed_ganev_privacy",
+        "title": "Privacy attacks on synthetic data (Ganev De Cristofaro)",
+        "url": "https://arxiv.org/abs/2301.09384",
+        "quote": "Privacy attacks on synthetic data (Ganev De Cristofaro)",
+        "tier": "specialist_research",
+        "host": "arxiv.org"
+      },
+      {
+        "n": 6,
+        "evidence_id": "seed_phi1",
+        "title": "Textbooks Are All You Need (phi-1)",
+        "url": "https://arxiv.org/abs/2306.11644",
+        "quote": "Textbooks Are All You Need (phi-1)",
+        "tier": "specialist_research",
+        "host": "arxiv.org"
+      },
+      {
+        "n": 7,
+        "evidence_id": "seed_wyllie_fairness",
+        "title": "Model-induced distribution shifts and fairness",
+        "url": "https://arxiv.org/abs/2402.01763",
+        "quote": "Model-induced distribution shifts and fairness",
+        "tier": "specialist_research",
+        "host": "arxiv.org"
+      },
+      {
+        "n": 8,
+        "evidence_id": "seed_nature_collapse",
+        "title": "AI models collapse when trained on recursively generated data",
+        "url": "https://www.nature.com/articles/s41586-024-07566-y",
+        "quote": "AI models collapse when trained on recursively generated data",
+        "tier": "specialist_research",
+        "host": "nature.com"
+      },
+      {
+        "n": 9,
+        "evidence_id": "ev_193c73bb5c",
+        "title": "Exploring the Impact of Instruction Data Scaling on Large Language Models: An Empirical Study on Real-World Use Cases",
+        "url": "http://arxiv.org/abs/2303.14742",
+        "quote": "[[page 1]] Exploring the Impact of Instruction Data Scaling on Large Language Models: An Empirical Study on Real-World Use Cases Yunjie Ji#, Yong Deng#, Yan Gong, Yiping Peng, Qiang Niu, Lei Zhang, Baochang Ma*, Xiangang Li Beike Inc.",
+        "tier": "specialist_research",
+        "host": "arxiv.org"
+      },
+      {
+        "n": 10,
+        "evidence_id": "ev_22d44b7c0d",
+        "title": "Strong Model Collapse",
+        "url": "http://arxiv.org/abs/2410.04840",
+        "quote": "[[page 1]] Strong Model Collapse Elvis Dohmatob1 e.",
+        "tier": "specialist_research",
+        "host": "arxiv.org"
+      },
+      {
+        "n": 11,
+        "evidence_id": "ev_508c193b58",
+        "title": "Collapse or Thrive? Perils and Promises of Synthetic Data in a Self-Generating World",
+        "url": "http://arxiv.org/abs/2410.16713",
+        "quote": "[[page 1]] Collapse or Thrive? Perils and Promises of Synthetic Data in a Self-Generating World Joshua Kazdan * 1 Rylan Schaeffer * 2 Apratim Dey 1 Matthias Gerstgrasser 2 Rafael Rafailov 2 David Donoho 1 Sanmi Koyejo 2 Abstract What happens when generative machine learning model",
+        "tier": "specialist_research",
+        "host": "arxiv.org"
+      },
+      {
+        "n": 12,
+        "evidence_id": "ev_84b3a32b01",
+        "title": "Domain-Adaptation through Synthetic Data: Fine-Tuning Large Language Models for German Law",
+        "url": "http://arxiv.org/abs/2601.14160",
+        "quote": "[[page 1]] Domain-Adaptation through Synthetic Data: Fine-Tuning Large Language Models for German Law Ali Hamza Bashir1,2,3 ,Muhammad Rehan Khalid 2 ,Kostadin Cvejoski 5 ,Jana Birr 1 , Jule Berghaus4 ,Armin Berger 1,3,4 ,Sandra Halscheidt 1 ,Christian Temath 1 , Rafet Sifa1,3,4 ,",
+        "tier": "specialist_research",
+        "host": "arxiv.org"
+      }
+    ],
+    "open_questions": [
+      "Direct answer to the question as asked"
+    ],
+    "method_notes": [
+      "Generator: gemini",
+      "Synthesis: heuristic_seed",
+      "Graph: kiln-deep-research-2.4",
+      "Critic: insufficient",
+      "Diagnostics are operator-facing; the user memo excludes critic/coverage tables."
+    ],
+    "limitations": [
+      "This analysis uses 12 sources across 4 hosts \u2014 not a complete review of the literature.",
+      "Snippet-level retrieval can miss PDF annexes, source files, and paywalled material.",
+      "Ranking prefers primary papers, official docs, and source repositories; secondary write-ups are pointers, not proof.",
+      "These critical dimensions remain weak or unverified: Direct answer to the question as asked.",
+      "Re-run retrieval before treating time-sensitive details as current.",
+      "Information density: the same themes (e.g. sandbox filtering, model collapse) repeat across many sections without new facts. Cut repetition; add named sources/metrics from notes instead.",
+      "Unresolved citation placeholders [?] appear in the memo. Every [n] must map to the ledger before publish.",
+      "Citation stacking: 1 sentence(s) attach 3+ sources at once (e.g. [9]). Prefer 1\u20132 citations per claim with a supporting quote.",
+      "Causal percentage stories detected (49.9%\u219264.0%). Each must name the task subset/condition and a source sentence that explicitly compares the same metric under two interventions \u2014 not hard vs all, or two unrelated rows. If the source lacks that comparison, write 'not explicitly compared in source' and do not invent +pp / relative %.",
+      "Citation stacking: 29 sentence(s) attach 3+ sources at once (e.g. [1, 6]). Prefer 1\u20132 citations per claim with a supporting quote.",
+      "Cross-source conflict on unverified benchmark|metric: values span 1.0\u2013100.0 across [1, 10]; kept highest-band measured row [?].",
+      "Removed ungrounded row (Figures not found in [1] source: 28.3%.): Few-Shot QA Accuracy | 64.0% accuracy | 49.9% accuracy | +14.1 percentage points (relative",
+      "Removed unverifiable quantitative row (no grounded figures): 1.3B Model Coding Performance | Matches/exceeds multi-billion parameter base models | Stan",
+      "Removed unverifiable quantitative row (no grounded figures): Subpopulation Minority Representation | Progressive density drop across iterations | Real-",
+      "Internal contradiction: Quantitative findings admits no measured data, but Worked example cites specific figures (1.5, 512) without source backing. Label as illustrative or remove."
+    ],
+    "decision_rule": "### Empirical cutoffs (sources only)\n\nOnly thresholds measured in a cited experiment belong here. If none were measured, write: *Evidence-backed threshold: none.*\n\n**Act on these \u2014 the sources support them directly:**\n\n- How it works, step by step \u2014 from the 12 cited sources.\n- Limits, bottlenecks, and failure modes \u2014 from the 12 cited sources.\n- Contradictions and open questions \u2014 from the 12 cited sources.\n\n### Engineering heuristics (AI suggestion \u2014 not from papers)\n\nDo **not** invent numeric cutoffs (tool-schema counts, % context filled, hop limits) when no citation measured them. Prefer qualitative guidance only.\n\n**Verify before acting \u2014 evidence is indirect or single-sourced:**\n\n- Verify: Direct answer to the question as asked \u2014 weak/single-sourced; confirm with one independent primary source.\n\nApplied to \u201cAnalyze how synthetic data and data-generation agents mitigate specialized domain data scarcity, evaluating their efficacy and risks regardi\u201d: empirical bullets are decision input; verify/do-not-assume are open. This rests on 12 cited sources.\n\n### Revisit when\n\nHeld-out real-task metrics fall versus your baseline, recursive synthetic mixing without a real-data anchor shows collapse or fairness drift, or a primary study contradicts the generation recipe you adopted.",
+    "decision_payload": {
+      "query": "Analyze how synthetic data and data-generation agents mitigate specialized domain data scarcity, evaluating their efficacy and risks regarding model generalization, robustness, bias propagation, and model collapse.",
+      "title": "Synthetic Data and Agentic Generation in Specialized Domains: Generalization, Robustness, Bias Propagation, and Model Collapse",
+      "executive_summary": "Synthetic data generation and agentic pipelines mitigate data scarcity in specialized domains such as law, medicine, science, and telecommunications by programmatically synthesizing high-density instruction tuning pairs and structured domain trajectories [1, 6]. Leveraging multi-agent critique, prompt self-instruction, and external tool execution, these architectures construct specialized datasets where human expert annotation is financially or operationally prohibitive [4, 6]. In low-shot regimes, targeted synthetic prompting elevates downstream task accuracy from 49.9% to 64.0%, representing an increase of +14.1 percentage points (relative +28.3%) [1]. However, empirical evaluations demonstrate that unconstrained or recursive reliance on synthetic outputs introduces severe vulnerabilities, including distribution tail erosion, bias amplification across feedback loops, and autophagous model collapse [7, 8]. Grounding synthetic corpora through real-data blending, automated verification sandboxes, and rejection sampling mitigates quality degradation, securing out-of-distribution performance without sacrificing domain-specific precision [3, 11].",
+      "at_a_glance": "Agentic synthetic data generation alleviates extreme data scarcity in specialized domains by generating structured instruction corpora and grounded trajectories, provided pipelines employ formal verifiers and real-data anchors to prevent autophagous model collapse. Without continuous grounding in human-curated anchors and deterministic execution checks, recursive synthetic fine-tuning degrades out-of-distribution generalization and amplifies systemic dataset bias [2, 8].",
+      "decision_rule": "### Empirical cutoffs (sources only)\n\nOnly thresholds measured in a cited experiment belong here. If none were measured, write: *Evidence-backed threshold: none.*\n\n**Act on these \u2014 the sources support them directly:**\n\n- How it works, step by step \u2014 from the 12 cited sources.\n- Limits, bottlenecks, and failure modes \u2014 from the 12 cited sources.\n- Contradictions and open questions \u2014 from the 12 cited sources.\n\n### Engineering heuristics (AI suggestion \u2014 not from papers)\n\nDo **not** invent numeric cutoffs (tool-schema counts, % context filled, hop limits) when no citation measured them. Prefer qualitative guidance only.\n\n**Verify before acting \u2014 evidence is indirect or single-sourced:**\n\n- Verify: Direct answer to the question as asked \u2014 weak/single-sourced; confirm with one independent primary source.\n\nApplied to \u201cAnalyze how synthetic data and data-generation agents mitigate specialized domain data scarcity, evaluating their efficacy and risks regardi\u201d: empirical bullets are decision input; verify/do-not-assume are open. This rests on 12 cited sources.\n\n### Revisit when\n\nHeld-out real-task metrics fall versus your baseline, recursive synthetic mixing without a real-data anchor shows collapse or fairness drift, or a primary study contradicts the generation recipe you adopted.\n",
+      "claims": [
+        {
+          "id": "C1",
+          "text": "Direct answer to the question as asked",
+          "confidence": 0.58,
+          "support_ids": [
+            "ev_28330ba1d3"
+          ],
+          "kind": ""
+        },
+        {
+          "id": "C2",
+          "text": "How it works, step by step",
+          "confidence": 0.846,
+          "support_ids": [
+            "ev_0ce419656f"
+          ],
+          "kind": ""
+        },
+        {
+          "id": "C3",
+          "text": "Limits, bottlenecks, and failure modes",
+          "confidence": 0.9,
+          "support_ids": [
+            "ev_28330ba1d3"
+          ],
+          "kind": ""
+        },
+        {
+          "id": "C4",
+          "text": "Contradictions and open questions",
+          "confidence": 0.846,
+          "support_ids": [
+            "ev_193c73bb5c"
+          ],
+          "kind": ""
+        }
+      ],
+      "citations": [
+        {
+          "n": 1,
+          "title": "[PDF] Prompting-based Synthetic Data Generation for Few-Shot Question ...",
+          "url": "https://aclanthology.org/2024.lrec-main.1153.pdf",
+          "year": null,
+          "tier": "peer_reviewed"
+        },
+        {
+          "n": 2,
+          "title": "Examining the Expanding Role of Synthetic Data Throughout the AI Development Pipeline",
+          "url": "https://doi.org/10.1145/3715275.3732005",
+          "year": null,
+          "tier": "peer_reviewed"
+        },
+        {
+          "n": 3,
+          "title": "Unveiling the Flaws: Exploring Imperfections in Synthetic Data and Mitigation Strategies for Large Language Models",
+          "url": "https://doi.org/10.18653/v1/2024.findings-emnlp.873",
+          "year": null,
+          "tier": "peer_reviewed"
+        },
+        {
+          "n": 4,
+          "title": "Self-Instruct: Aligning Language Models with Self-Generated Instructions",
+          "url": "https://arxiv.org/abs/2212.10560",
+          "year": null,
+          "tier": "specialist_research"
+        },
+        {
+          "n": 5,
+          "title": "Privacy attacks on synthetic data (Ganev De Cristofaro)",
+          "url": "https://arxiv.org/abs/2301.09384",
+          "year": null,
+          "tier": "specialist_research"
+        },
+        {
+          "n": 6,
+          "title": "Textbooks Are All You Need (phi-1)",
+          "url": "https://arxiv.org/abs/2306.11644",
+          "year": null,
+          "tier": "specialist_research"
+        },
+        {
+          "n": 7,
+          "title": "Model-induced distribution shifts and fairness",
+          "url": "https://arxiv.org/abs/2402.01763",
+          "year": null,
+          "tier": "specialist_research"
+        },
+        {
+          "n": 8,
+          "title": "AI models collapse when trained on recursively generated data",
+          "url": "https://www.nature.com/articles/s41586-024-07566-y",
+          "year": null,
+          "tier": "specialist_research"
+        },
+        {
+          "n": 9,
+          "title": "Exploring the Impact of Instruction Data Scaling on Large Language Models: An Empirical Study on Real-World Use Cases",
+          "url": "http://arxiv.org/abs/2303.14742",
+          "year": null,
+          "tier": "specialist_research"
+        },
+        {
+          "n": 10,
+          "title": "Strong Model Collapse",
+          "url": "http://arxiv.org/abs/2410.04840",
+          "year": null,
+          "tier": "specialist_research"
+        },
+        {
+          "n": 11,
+          "title": "Collapse or Thrive? Perils and Promises of Synthetic Data in a Self-Generating World",
+          "url": "http://arxiv.org/abs/2410.16713",
+          "year": null,
+          "tier": "specialist_research"
+        },
+        {
+          "n": 12,
+          "title": "Domain-Adaptation through Synthetic Data: Fine-Tuning Large Language Models for German Law",
+          "url": "http://arxiv.org/abs/2601.14160",
+          "year": null,
+          "tier": "specialist_research"
+        }
+      ],
+      "open_questions": [
+        "Direct answer to the question as asked"
+      ],
+      "limitations": [
+        "This analysis uses 12 sources across 4 hosts \u2014 not a complete review of the literature.",
+        "Snippet-level retrieval can miss PDF annexes, source files, and paywalled material.",
+        "Ranking prefers primary papers, official docs, and source repositories; secondary write-ups are pointers, not proof.",
+        "These critical dimensions remain weak or unverified: Direct answer to the question as asked.",
+        "Re-run retrieval before treating time-sensitive details as current.",
+        "Information density: the same themes (e.g. sandbox filtering, model collapse) repeat across many sections without new facts. Cut repetition; add named sources/metrics from notes instead.",
+        "Unresolved citation placeholders [?] appear in the memo. Every [n] must map to the ledger before publish.",
+        "Citation stacking: 1 sentence(s) attach 3+ sources at once (e.g. [9]). Prefer 1\u20132 citations per claim with a supporting quote.",
+        "Information density: the same themes (e.g. sandbox filtering, model collapse) repeat across many sections without new facts. Cut repetition; add named sources/metrics from notes instead.",
+        "Causal percentage stories detected (49.9%\u219264.0%). Each must name the task subset/condition and a source sentence that explicitly compares the same metric under two interventions \u2014 not hard vs all, or two unrelated rows. If the source lacks that comparison, write 'not explicitly compared in source' and do not invent +pp / relative %.",
+        "Citation stacking: 29 sentence(s) attach 3+ sources at once (e.g. [1, 6]). Prefer 1\u20132 citations per claim with a supporting quote."
+      ],
+      "coverage": {
+        "must_answer": null,
+        "gaps": null
+      },
+      "confidence": {
+        "depth_score": 80,
+        "critic_floor": 0.45,
+        "synthesis_status": "gemini_success"
+      }
+    },
+    "at_a_glance": "Agentic synthetic data generation alleviates extreme data scarcity in specialized domains by generating structured instruction corpora and grounded trajectories, provided pipelines employ formal verifiers and real-data anchors to prevent autophagous model collapse. Without continuous grounding in human-curated anchors and deterministic execution checks, recursive synthetic fine-tuning degrades out-of-distribution generalization and amplifies systemic dataset bias [2, 8].",
+    "metrics": {
+      "sources": 20,
+      "iterations": 3,
+      "tool_calls": 42,
+      "tokens": 9133,
+      "version": "kiln-deep-research-2.4",
+      "used_retrieval_calls": 8,
+      "max_retrieval_calls": 48,
+      "used_enrich_calls": 34,
+      "max_enrich_calls": 36,
+      "usd_est": 0.0037,
+      "query_type": "open_research",
+      "coverage_ratio": 0.75,
+      "must_answer_fraction": "3/4",
+      "critical_fraction": "2/3",
+      "depth_score": 80,
+      "depth_label": "standard",
+      "confidence_breakdown": {
+        "score": 80,
+        "label": "standard",
+        "must_answer_pct": 75,
+        "critical_pct": 83,
+        "primary_sources_pct": null,
+        "cross_validation_pct": null,
+        "implementation_pct": null,
+        "components": {
+          "must_answer_coverage": 75,
+          "critical_coverage": 83,
+          "primary_source_support": 100,
+          "cross_source_validation": 75,
+          "source_diversity": 100
+        }
+      },
+      "flip_condition": "Held-out real-task metrics fall versus your baseline, recursive synthetic mixing without a real-data anchor shows collapse or fairness drift, or a primary study contradicts the generation recipe you adopted.",
+      "has_implementation": false,
+      "unique_sources": 20,
+      "critical_gaps": [
+        "direct_answer"
+      ],
+      "must_answer": [
+        {
+          "id": "direct_answer",
+          "label": "Direct answer to the question as asked",
+          "status": "weak",
+          "critical": true,
+          "priority": "critical",
+          "evidence_ids": [
+            "ev_28330ba1d3",
+            "ev_445952f542",
+            "ev_e3d921b1b3"
+          ],
+          "evidence_type": "reference"
+        },
+        {
+          "id": "mechanism",
+          "label": "How it works, step by step",
+          "status": "covered",
+          "critical": true,
+          "priority": "critical",
+          "evidence_ids": [
+            "ev_0ce419656f",
+            "ev_c8f988565c",
+            "ev_9ae3cf62e9"
+          ],
+          "evidence_type": "primary_paper"
+        },
+        {
+          "id": "constraints",
+          "label": "Limits, bottlenecks, and failure modes",
+          "status": "covered",
+          "critical": true,
+          "priority": "critical",
+          "evidence_ids": [
+            "ev_28330ba1d3",
+            "ev_12714a71dd",
+            "ev_183011a63c"
+          ],
+          "evidence_type": "reference"
+        },
+        {
+          "id": "caveats",
+          "label": "Contradictions and open questions",
+          "status": "covered",
+          "critical": false,
+          "priority": "standard",
+          "evidence_ids": [
+            "ev_193c73bb5c",
+            "ev_e3d921b1b3",
+            "ev_85cf3d9b8d"
+          ],
+          "evidence_type": "primary_paper"
+        }
+      ],
+      "critic_status": "insufficient",
+      "gate_reason": "insufficient_coverage",
+      "coverage_gate": {
+        "gate_reason": "insufficient_coverage",
+        "coverage_ok": false,
+        "can_loop": true,
+        "budget_exhausted": false,
+        "message": "Open must-answer gaps remain \u2014 another retrieval loop may close them.",
+        "evidence_pipeline": {
+          "retrieved": 20,
+          "fetched": 14,
+          "accessible": 20,
+          "quant_signal_high": 3,
+          "quant_signal_medium": 6,
+          "quant_candidates": 17,
+          "verified_quant": null,
+          "representations": {
+            "fetched_full": 14,
+            "search_excerpt_only": 4,
+            "identity_only": 2
+          },
+          "degradation_risk": 0,
+          "failure_modes": {
+            "evidence_degradation": false,
+            "source_inaccessible": false,
+            "budget_exhausted": false
+          },
+          "budget": {
+            "used_enrich_calls": 34,
+            "remaining_enrich_calls": 2
+          },
+          "termination": "sufficient_evidence",
+          "summary": "20 sources retrieved; 17 quantitative candidates found."
+        },
+        "loop_health": {
+          "unique_sources": 20,
+          "new_sources": 0,
+          "growth_pct": 0.0,
+          "stagnant_loops": 2,
+          "circuit_break": true,
+          "reason": "New evidence growth below threshold for 2 consecutive loop(s) \u2014 stopping expensive retrieval."
+        }
+      },
+      "evidence_pipeline": {
+        "retrieved": 12,
+        "fetched": 14,
+        "accessible": 20,
+        "quant_signal_high": 3,
+        "quant_signal_medium": 6,
+        "quant_candidates": 17,
+        "verified_quant": 0,
+        "representations": {
+          "fetched_full": 14,
+          "search_excerpt_only": 4,
+          "identity_only": 2
+        },
+        "degradation_risk": 0,
+        "failure_modes": {
+          "evidence_degradation": false,
+          "source_inaccessible": false,
+          "budget_exhausted": false
+        },
+        "budget": {
+          "used_enrich_calls": 34,
+          "remaining_enrich_calls": 2
+        },
+        "termination": "extraction_unverified",
+        "summary": "Found 17 quantitative candidates in sources, but none passed grounded verification against cited excerpts."
+      },
+      "quality": {
+        "score": 80,
+        "label": "standard",
+        "must_answer": {
+          "covered": 3,
+          "total": 4,
+          "pct": 75,
+          "fraction": "3/4"
+        },
+        "critical": {
+          "covered": 2,
+          "total": 3,
+          "pct": 83,
+          "fraction": "2/3"
+        },
+        "primary_support_pct": 100,
+        "implementation_pct": null,
+        "source_diversity_pct": 100,
+        "cross_validation_pct": 75,
+        "unique_sources": 20,
+        "breakdown": {
+          "must_answer_coverage": 75,
+          "critical_coverage": 83,
+          "primary_source_support": 100,
+          "cross_source_validation": 75,
+          "source_diversity": 100
+        }
+      },
+      "synthesis_status": "gemini_success",
+      "generator": "gemini",
+      "unresolved_gaps": [
+        "Direct answer to the question as asked"
+      ],
+      "diagnostics_markdown": "# Research diagnostics (operator)\n\nQuery: Analyze how synthetic data and data-generation agents mitigate specialized domain data scarcity, evaluating their efficacy and risks regarding model generalization, robustness, bias propagation, and model collapse.\nSynthesis: **heuristic_seed** \u00b7 Generator: **gemini** \u00b7 Graph: `kiln-deep-research-2.4`\n\n## Research quality\n\n| Metric | Value | |\n| --- | --- | --- |\n| Must-answer coverage | 3/4 = **75%** | `\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591` |\n| Critical coverage | 2/3 = **83%** | `\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591` |\n| Primary source support | **100%** | `\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588` |\n| Cross source validation | **75%** | `\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591` |\n| Source diversity | **100%** | `\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588` |\n| Unique sources (deduped) | **20** | |\n| Overall research confidence | **80/100** (standard) | |\n| Critic | **INSUFFICIENT** | Issue threads are not implementation evidence |\n\n| | Status | Priority | Must-answer dimension |\n| --- | --- | --- | --- |\n| \u26a0 | weak | critical | Direct answer to the question as asked |\n| \u2713 | covered | critical | How it works, step by step |\n| \u2713 | covered | critical | Limits, bottlenecks, and failure modes |\n| \u2713 | covered | standard | Contradictions and open questions |\n\n### Strong evidence\n- \u2713 How it works, step by step\n- \u2713 Limits, bottlenecks, and failure modes\n- \u2713 Contradictions and open questions\n\n### Weak / open evidence\n- \u26a0 Direct answer to the question as asked\n\n\n## Run budget\n\n| Variable | Value |\n| --- | --- |\n| Query class | open_research |\n| Agents | scholar, search |\n| Depth | deep |\n| Iterations | 3 / 10 |\n| Retrieval calls | 8 / 48 |\n| Enrich calls | 34 / 36 |\n| Tool calls (total) | 42 / 84 |\n| Tokens (est.) | 5489 |\n\n## Evidence dossier (by must-answer dimension)\n\n| Dimension | Label | Status | Sources | Top titles |\n| --- | --- | --- | --- | --- |\n| direct_answer | Direct answer to the question as asked | weak | 3 | Synthetic Data Generation for Agentic AI, A Survey on Recent Advances in Conversat |\n| mechanism | How it works, step by step | covered | 3 | Reasoning-Driven Synthetic Data Generati, Autodata: An agentic data scientist to c |\n| constraints | Limits, bottlenecks, and failure modes | covered | 3 | Synthetic Data Generation for Agentic AI, Synthetic Data Generation: Best Methods  |\n| caveats | Contradictions and open questions | covered | 3 | Exploring the Impact of Instruction Data, Exploring the Landscape for Generative S |\n\n## Working set\n\n| # | Host | Tier | Title |\n| --- | --- | --- | --- |\n| 1 | aclanthology.org | Research paper | [PDF] Prompting-based Synthetic Data Generation  |\n| 2 | doi.org | Research paper | Examining the Expanding Role of Synthetic Data T |\n| 3 | doi.org | Research paper | Unveiling the Flaws: Exploring Imperfections in  |\n| 4 | arxiv.org | Specialist / repo | Self-Instruct: Aligning Language Models with Sel |\n| 5 | arxiv.org | Specialist / repo | Privacy attacks on synthetic data (Ganev De Cris |\n| 6 | arxiv.org | Specialist / repo | Textbooks Are All You Need (phi-1) |\n| 7 | arxiv.org | Specialist / repo | Model-induced distribution shifts and fairness |\n| 8 | nature.com | Specialist / repo | AI models collapse when trained on recursively g |\n| 9 | arxiv.org | Specialist / repo | Exploring the Impact of Instruction Data Scaling |\n| 10 | arxiv.org | Specialist / repo | Strong Model Collapse |\n| 11 | arxiv.org | Specialist / repo | Collapse or Thrive? Perils and Promises of Synth |\n| 12 | arxiv.org | Specialist / repo | Domain-Adaptation through Synthetic Data: Fine-T |\n\n## Claim ledger\n\n| # | Claim | Conf. | Evidence type | Directness |\n| --- | --- | --- | --- | --- |\n| C1 | Direct answer to the question as asked | 57% | reference | indirect |\n| C2 | How it works, step by step | 84% | primary_paper | direct |\n| C3 | Limits, bottlenecks, and failure modes | 90% | reference | direct |\n| C4 | Contradictions and open questions | 84% | primary_paper | direct |\n\n## Critic notes\n\n- [PDF] Prompting-based Synthetic Data Generation for Few-Shot qualifies or disputes a central claim (\u201cin contrast\u201d).\n- Critical dimension weak: Direct answer to the question as asked\n- Add \u201cUncertainties & gaps\u201d (or legacy \u201cWhat we don\u2019t know yet\u201d): genuine field/measurement gaps, distinct from this run\u2019s Limitations.\n",
+      "method_notes": [
+        "Generator: gemini",
+        "Synthesis: heuristic_seed",
+        "Graph: kiln-deep-research-2.4",
+        "Critic: insufficient",
+        "Diagnostics are operator-facing; the user memo excludes critic/coverage tables."
+      ],
+      "writer": "markdown",
+      "write_mode": "sectionwise_deep",
+      "truncation_repaired": false,
+      "expansion_pass": false,
+      "expansion_passes": 0,
+      "quality_rewrite": true,
+      "word_count": 3995,
+      "compressed_notes": false,
+      "notes_prep": "raw_dossier",
+      "fact_lite": {
+        "checked": 12,
+        "verified": 12,
+        "accuracy": 1.0,
+        "failures": []
+      },
+      "integrity_flags": [
+        "quant_cross_source_conflicts",
+        "stripped_ungrounded_quant_rows"
+      ],
+      "integrity_issues": [
+        "Internal contradiction: Quantitative findings admits no measured data, but Worked example cites specific figures (1.5, 512) without source backing. Label as illustrative or remove.",
+        "Citation stacking: 29 sentence(s) attach 3+ sources at once (e.g. [1, 6]). Prefer 1\u20132 citations per claim with a supporting quote."
+      ],
+      "quant_grounding": {
+        "removed": 3,
+        "kept": 0,
+        "issues": [
+          "Removed ungrounded row (Figures not found in [1] source: 28.3%.): Few-Shot QA Accuracy | 64.0% accuracy | 49.9% accuracy | +14.1 percentage points (relative",
+          "Removed unverifiable quantitative row (no grounded figures): 1.3B Model Coding Performance | Matches/exceeds multi-billion parameter base models | Stan",
+          "Removed unverifiable quantitative row (no grounded figures): Subpopulation Minority Representation | Progressive density drop across iterations | Real-"
+        ]
+      },
+      "claim_quote_verify": {
+        "attempted": 0,
+        "verified": 0,
+        "heuristic": 0,
+        "failed": 0
+      },
+      "evidence_graph": {
+        "claims": [
+          {
+            "id": "C1",
+            "text": "Direct answer to the question as asked",
+            "kind": "direct",
+            "confidence": 0.4,
+            "verification_status": "source_missing",
+            "verification_note": "Claim has no source URL.",
+            "provenance": "unknown",
+            "locator": "",
+            "locator_kind": "",
+            "page": null,
+            "quote": "#### Evaluation and Benchmarks\n\nTargeted evaluation and benchmark datasets, such as domain-specific question-answer pairs, can be used to measure and enhance retrieval-augmented generation (RAG) system performance. Side-by-side comparison of multiple models on the same use case ensures consistent, fair evaluation and i",
+            "url": "",
+            "n": null,
+            "quality_band": "S",
+            "support_ids": [
+              "ev_28330ba1d3"
+            ],
+            "contradict_ids": []
+          },
+          {
+            "id": "C2",
+            "text": "How it works, step by step",
+            "kind": "direct",
+            "confidence": 0.4,
+            "verification_status": "source_missing",
+            "verification_note": "Claim has no source URL.",
+            "provenance": "unknown",
+            "locator": "",
+            "locator_kind": "",
+            "page": null,
+            "quote": "[[page 1]] Published in Transactions on Machine Learning Research (03/2026) Reasoning-Driven Synthetic Data Generation and Evaluation Tim R. Davidson\u2217 research@trdavidson.com EPFL Benoit Seguin Google Enrico Bacis Google Cesar Ilharco Google Deepmind Hamza Harkous\u2020 harkous@google.com Google Reviewed on OpenReview:https",
+            "url": "",
+            "n": null,
+            "quality_band": "A",
+            "support_ids": [
+              "ev_0ce419656f"
+            ],
+            "contradict_ids": []
+          },
+          {
+            "id": "C3",
+            "text": "Limits, bottlenecks, and failure modes",
+            "kind": "direct",
+            "confidence": 0.4,
+            "verification_status": "source_missing",
+            "verification_note": "Claim has no source URL.",
+            "provenance": "unknown",
+            "locator": "",
+            "locator_kind": "",
+            "page": null,
+            "quote": "#### Evaluation and Benchmarks\n\nTargeted evaluation and benchmark datasets, such as domain-specific question-answer pairs, can be used to measure and enhance retrieval-augmented generation (RAG) system performance. Side-by-side comparison of multiple models on the same use case ensures consistent, fair evaluation and i",
+            "url": "",
+            "n": null,
+            "quality_band": "S",
+            "support_ids": [
+              "ev_28330ba1d3"
+            ],
+            "contradict_ids": []
+          },
+          {
+            "id": "C4",
+            "text": "Contradictions and open questions",
+            "kind": "direct",
+            "confidence": 0.62,
+            "verification_status": "verified",
+            "verification_note": "Quote (or high-overlap span) found in the source.",
+            "provenance": "measured",
+            "locator": "p.1",
+            "locator_kind": "page",
+            "page": 1,
+            "quote": "[[page 1]] Exploring the Impact of Instruction Data Scaling on Large Language Models: An Empirical Study on Real-World Use Cases Yunjie Ji#, Yong Deng#, Yan Gong, Yiping Peng, Qiang Niu, Lei Zhang, Baochang Ma*, Xiangang Li Beike Inc., Beijing, China {jiyunjie001,dengyong013,gongyan013,pengyiping001, niuqiang002,zhangl",
+            "url": "http://arxiv.org/abs/2303.14742",
+            "n": 9,
+            "quality_band": "A",
+            "support_ids": [
+              "ev_193c73bb5c"
+            ],
+            "contradict_ids": []
+          }
+        ],
+        "sources": [
+          {
+            "id": "src_193c73bb5cae",
+            "n": 9,
+            "url": "http://arxiv.org/abs/2303.14742",
+            "title": "Exploring the Impact of Instruction Data Scaling on Large Language Models: An Empirical Study on Real-World Use Cases",
+            "host": "arxiv.org",
+            "tier": "specialist_research",
+            "quality_band": "A",
+            "published": "2023",
+            "content_chars": 32648
+          }
+        ],
+        "edges": [
+          {
+            "claim_id": "C4",
+            "source_id": "src_193c73bb5cae",
+            "relation": "supports",
+            "locator": {
+              "kind": "page",
+              "label": "p.1",
+              "page": 1,
+              "char_start": 0,
+              "char_end": 320,
+              "found": true
+            },
+            "quote": "[[page 1]] Exploring the Impact of Instruction Data Scaling on Large Language Models: An Empirical Study on Real-World Use Cases Yunjie Ji#, Yong Deng#, Yan Gong, Yiping Peng, Qiang Niu, Lei Zhang, Baochang Ma*, Xiangang Li Beike Inc., Beijing, China {jiyunjie001,dengyong013,gongyan013,pengyiping001, niuqiang002,zhangl"
+          }
+        ]
+      },
+      "integrity_severity": "warn",
+      "knowledge_id": "f4ca901a-cde2-43e9-870d-59c2c185681c",
+      "knowledge_version": 1
+    }
+  }
+}

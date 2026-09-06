@@ -155,14 +155,27 @@ def _openalex(query: str) -> list[dict]:
         loc = item.get("primary_location") or {}
         source = loc.get("source") or {}
         doi = str(item.get("doi") or "").replace("https://doi.org/", "")
-        url = (loc.get("landing_page_url") or "").strip() or (f"https://doi.org/{doi}" if doi else "") or (item.get("id") or "")
+        # Prefer OpenAlex's own "free copy" pointer over the (often paywalled)
+        # publisher landing page / DOI redirect — enrich can't get full text
+        # from a paywall, so a DOI-first URL silently starves the writer of
+        # real content for exactly the primary-research papers it needs most.
+        best_oa = item.get("best_oa_location") or {}
+        oa_url = (best_oa.get("pdf_url") or best_oa.get("landing_page_url") or "").strip()
+        if not oa_url:
+            oa_url = str((item.get("open_access") or {}).get("oa_url") or "").strip()
+        primary_url = (loc.get("landing_page_url") or "").strip() or (f"https://doi.org/{doi}" if doi else "")
+        url = oa_url or primary_url or (item.get("id") or "")
         if not is_citable_url(url):
             filtered_out_by_url += 1
             continue
         year = str(item.get("publication_year") or "")
         eid = "ev_" + hashlib.sha1((url or title).encode()).hexdigest()[:10]
+        # Classify by the *publisher's* location, not the free-copy substitute
+        # above — a journal paper mirrored on arXiv is still peer-reviewed;
+        # only the DOI/venue metadata should decide that, not which host we
+        # ended up reading the text from.
         publication_type = _publication_type(
-            url,
+            primary_url or url,
             doi,
             [source.get("type"), source.get("display_name"), item.get("type"), item.get("type_crossref")],
         )
@@ -170,7 +183,12 @@ def _openalex(query: str) -> list[dict]:
         if "arxiv" in url.lower():
             logger.info(f"openalex_arxiv_paper: title={title[:60]}, url={url}, publication_type={publication_type}")
         fallback = SourceTier.PEER_REVIEWED if publication_type == "peer_reviewed" else SourceTier.SPECIALIST_RESEARCH
-        tier, score = credibility_score(url, year, fallback)
+        # Same reasoning as publication_type above: tier_for() hardcodes
+        # arxiv.org -> SPECIALIST_RESEARCH regardless of `fallback` once the
+        # host is recognized, so scoring off the OA-substituted `url` would
+        # silently demote a peer-reviewed paper just because its free copy
+        # happens to be on arXiv. Score the publisher location instead.
+        tier, score = credibility_score(primary_url or url, year, fallback)
         if publication_type == "preprint":
             tier, score = SourceTier.SPECIALIST_RESEARCH, min(score, 0.76)
         out.append(
@@ -230,7 +248,7 @@ def _semantic_scholar(query: str) -> list[dict]:
                     params={
                         "query": _openalex_query(query),
                         "limit": 8,
-                        "fields": "title,abstract,url,year,externalIds,publicationTypes,venue",
+                        "fields": "title,abstract,url,year,externalIds,publicationTypes,venue,openAccessPdf",
                     },
                     headers=headers,
                 )
@@ -276,13 +294,27 @@ def _semantic_scholar(query: str) -> list[dict]:
         external = item.get("externalIds") or {}
         doi = str(external.get("DOI") or "").strip()
         arxiv = str(external.get("ArXiv") or "").strip()
-        url = (f"https://doi.org/{doi}" if doi else "") or (f"https://arxiv.org/abs/{arxiv}" if arxiv else "") or str(item.get("url") or "")
+        oa_pdf = str((item.get("openAccessPdf") or {}).get("url") or "").strip()
+        primary_url = (f"https://doi.org/{doi}" if doi else "") or str(item.get("url") or "")
+        # Free copy first: a DOI link is frequently paywalled and enrich can't
+        # read past that, while arXiv/openAccessPdf are readable full text.
+        url = (
+            oa_pdf
+            or (f"https://arxiv.org/abs/{arxiv}" if arxiv else "")
+            or primary_url
+        )
         if not is_citable_url(url):
             continue
         year = str(item.get("year") or "")
-        publication_type = _publication_type(url, doi, list(item.get("publicationTypes") or []) + [item.get("venue")])
+        # Classify by the publisher/DOI reference, not the free-copy `url`
+        # above — tier_for() hardcodes arxiv.org -> specialist regardless of
+        # fallback, which would wrongly demote a genuinely peer-reviewed
+        # paper just because its free copy happens to be on arXiv.
+        publication_type = _publication_type(
+            primary_url or url, doi, list(item.get("publicationTypes") or []) + [item.get("venue")]
+        )
         fallback = SourceTier.PEER_REVIEWED if publication_type == "peer_reviewed" else SourceTier.SPECIALIST_RESEARCH
-        tier, score = credibility_score(url, year, fallback)
+        tier, score = credibility_score(primary_url or url, year, fallback)
         if publication_type == "preprint":
             tier, score = SourceTier.SPECIALIST_RESEARCH, min(score, 0.76)
         out.append(

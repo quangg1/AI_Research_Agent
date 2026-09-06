@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "computedAt": "2026-09-05T00:36:19.732Z",
+  "profiles": {
+    "deployment-practical": {
+      "skill": "deployment-practical",
+      "invocations": 0,
+      "successes": 0,
+      "successRate": 0,
+      "avgTokens": 0,
+      "avgCostUsd": 0,
+      "commonScenarios": [],
+      "qualityScore": 0,
+      "qualityDelta": 0,
+      "lastUpdated": "2026-09-05T00:36:19.731Z"
+    },
+    "doc-coauthoring": {
+      "skill": "doc-coauthoring",
+      "invocations": 0,
+      "successes": 0,
+      "successRate": 0,
+      "avgTokens": 0,
+      "avgCostUsd": 0,
+      "commonScenarios": [],
+      "qualityScore": 0,
+      "qualityDelta": 0,
+      "lastUpdated": "2026-09-05T00:36:19.731Z"
+    },
+    "extension-value-audit": {
+      "skill": "extension-value-audit",
+      "invocations": 0,
+      "successes": 0,
+      "successRate": 0,
+      "avgTokens": 0,
+      "avgCostUsd": 0,
+      "commonScenarios": [],
+      "qualityScore": 0,
+      "qualityDelta": 0,
+      "lastUpdated": "2026-09-05T00:36:19.731Z"
+    },
+    "file-style-conventions": {
+      "skill": "file-style-conventions",
+      "invocations": 0,
+      "successes": 0,
+      "successRate": 0,
+      "avgTokens": 0,
+      "avgCostUsd": 0,
+      "commonScenarios": [],
+      "qualityScore": 0,
+      "qualityDelta": 0,
+      "lastUpdated": "2026-09-05T00:36:19.731Z"
+    },
+    "github-actions-ci": {
+      "skill": "github-actions-ci",
+      "invocations": 0,
+      "successes": 0,
+      "successRate": 0,
+      "avgTokens": 0,
+      "avgCostUsd": 0,
+      "commonScenarios": [],
+      "qualityScore": 0,
+      "qualityDelta": 0,
+      "lastUpdated": "2026-09-05T00:36:19.731Z"
+    },
+    "self-learning": {
+      "skill": "self-learning",
+      "invocations": 0,
+      "successes": 0,
+      "successRate": 0,
+      "avgTokens": 0,
+      "avgCostUsd": 0,
+      "commonScenarios": [],
+      "qualityScore": 0,
+      "qualityDelta": 0,
+      "lastUpdated": "2026-09-05T00:36:19.731Z"
+    },
+    "skill-creator": {
+      "skill": "skill-creator",
+      "invocations": 0,
+      "successes": 0,
+      "successRate": 0,
+      "avgTokens": 0,
+      "avgCostUsd": 0,
+      "commonScenarios": [],
+      "qualityScore": 0,
+      "qualityDelta": 0,
+      "lastUpdated": "2026-09-05T00:36:19.731Z"
+    },
+    "skill-feedback-adaptation": {
+      "skill": "skill-feedback-adaptation",
+      "invocations": 0,
+      "successes": 0,
+      "successRate": 0,
+      "avgTokens": 0,
+      "avgCostUsd": 0,
+      "commonScenarios": [],
+      "qualityScore": 0,
+      "qualityDelta": 0,
+      "lastUpdated": "2026-09-05T00:36:19.732Z"
+    },
+    "skill-official-updater": {
+      "skill": "skill-official-updater",
+      "invocations": 0,
+      "successes": 0,
+      "successRate": 0,
+      "avgTokens": 0,
+      "avgCostUsd": 0,
+      "commonScenarios": [],
+      "qualityScore": 0,
+      "qualityDelta": 0,
+      "lastUpdated": "2026-09-05T00:36:19.732Z"
+    },
+    "skill-usage-insights": {
+      "skill": "skill-usage-insights",
+      "invocations": 0,
+      "successes": 0,
+      "successRate": 0,
+      "avgTokens": 0,
+      "avgCostUsd": 0,
+      "commonScenarios": [],
+      "qualityScore": 0,
+      "qualityDelta": 0,
+      "lastUpdated": "2026-09-05T00:36:19.732Z"
+    },
+    "vitest-extension-testing": {
+      "skill": "vitest-extension-testing",
+      "invocations": 0,
+      "successes": 0,
+      "successRate": 0,
+      "avgTokens": 0,
+      "avgCostUsd": 0,
+      "commonScenarios": [],
+      "qualityScore": 0,
+      "qualityDelta": 0,
+      "lastUpdated": "2026-09-05T00:36:19.732Z"
+    }
+  }
+}

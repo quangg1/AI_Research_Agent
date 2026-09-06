@@ -51,6 +51,31 @@ def host_of(url: str) -> str:
         return ""
 
 
+ARXIV_ID_RE = re.compile(r"/(?:abs|pdf|html)/(\d{4}\.\d{4,5})(v\d+)?", re.I)
+
+
+def arxiv_html_url(url: str) -> str:
+    """Rewrite an arXiv /abs/ (or /pdf/) link to its full-text /html/ rendering.
+
+    /abs/ID is the abstract landing page — a short blurb plus nav chrome, so
+    enrich fetches on it come back empty (looks_like_nav_chrome or <80 chars)
+    while the exact same paper via /html/ID yields the full paper text. This
+    was silently starving every arXiv "abs" source of full_text: 9/20 sources
+    in a real run had full_text, and every one that succeeded was already an
+    /html/ link — none of the /abs/ links did.
+    """
+    raw = (url or "").strip()
+    parsed = urlparse(raw)
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    if host not in {"arxiv.org", "export.arxiv.org"}:
+        return raw
+    m = ARXIV_ID_RE.search(parsed.path or "")
+    if not m:
+        return raw
+    arxiv_id, version = m.group(1), m.group(2) or ""
+    return f"https://arxiv.org/html/{arxiv_id}{version}"
+
+
 def is_citable_url(url: str) -> bool:
     """True for a specific landing page, not a site root like https://huggingface.co/."""
     raw = (url or "").strip()
@@ -230,6 +255,45 @@ TIER_INLINE = {
 INLINE_TIER_WORDS = frozenset(TIER_INLINE.values()) | {"repo"}
 MULTI_CITE_RE = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
 
+TIER_BAND_LABEL = {
+    "peer_reviewed": "Peer-Reviewed Publications",
+    "official_regulation": "Official Documentation & Standards",
+    "standard_body": "Standards Body Documentation",
+    "intergovernmental": "Intergovernmental & Institutional Sources",
+    "specialist_research": "Specialist Research & Preprints",
+    "industry_association": "Industry Association Sources",
+    "news_analysis": "News & Analysis",
+    "vendor_or_consultancy": "Vendor & Consultancy Sources",
+}
+
+
+def format_source_quality_section(citations: list) -> str:
+    """One bullet per tier band, citing every source in that band.
+
+    The writer LLM is asked to write this section itself and is unreliable
+    at it — two consecutive real memos each left one or more bands with an
+    empty citation list ("Band B — Specialist ...: ") despite specialist
+    citations being used throughout the body. Build it from the ledger
+    instead, the same way References already is.
+    """
+    by_tier: dict[str, list[int]] = {}
+    for raw in citations:
+        c = _as_dict(raw)
+        n = c.get("n")
+        tier = (c.get("tier") or "").strip().lower()
+        if n is None or tier not in TIER_BAND_LABEL:
+            continue
+        by_tier.setdefault(tier, []).append(int(n))
+    lines = []
+    for tier, label in TIER_BAND_LABEL.items():
+        nums = by_tier.get(tier)
+        if not nums:
+            continue
+        tag = TIER_INLINE.get(tier, "")
+        group = ", ".join(f"{n} {tag}".strip() for n in sorted(nums))
+        lines.append(f"- **{label}**: [{group}]")
+    return "\n".join(lines)
+
 
 def inline_tier_label(citation: dict) -> str:
     url = (citation.get("url") or "").lower()
@@ -261,9 +325,29 @@ def annotate_inline_citation_tiers(md: str, citations: list) -> str:
         inner = match.group(1)
         if "## References" in (md[max(0, match.start() - 80) : match.start()]):
             return match.group(0)
+        # A LaTeX interval like "$c \in [0, 1]$" has the same shape as a
+        # citation-number list. Skip when an odd number of "$" precede the
+        # match — i.e. we're inside an open math span (real memo output:
+        # "$c \in [0, 1 peer]$" from annotating [0, 1] as citations 0 and 1).
+        if md.count("$", 0, match.start()) % 2 == 1:
+            return match.group(0)
         return f"[{_annotate_inner(inner)}]"
 
     return MULTI_CITE_RE.sub(_repl, md or "")
+
+
+def _cited_numbers(md: str) -> set[int]:
+    """Citation numbers actually used as an [n] marker in the prose (not the
+    References list's own numbering)."""
+    heading = re.search(r"(?im)^##\s+(?:Core\s+references|References)\s*$", md or "")
+    body = (md or "")[: heading.start()] if heading else (md or "")
+    nums: set[int] = set()
+    for match in MULTI_CITE_RE.finditer(body):
+        for piece in match.group(1).split(","):
+            piece = piece.strip()
+            if piece.isdigit():
+                nums.add(int(piece))
+    return nums
 
 
 def bind_markdown_to_ledger(md: str, citations: list) -> str:
@@ -278,7 +362,14 @@ def bind_markdown_to_ledger(md: str, citations: list) -> str:
         return text
 
     md = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", _keep_link, md or "")
-    refs = format_reference_list(citations)
+    # A ranked-but-never-cited source (real memo output: 4/12 references never
+    # appeared as [n] anywhere in the body — collected but unused, padding
+    # the reference list rather than reflecting what the memo actually draws
+    # on) shouldn't get a References entry just because build_ledger ranked
+    # it into the top-k candidate pool.
+    cited = _cited_numbers(md)
+    used = [c for c in citations if _as_dict(c).get("n") in cited] if cited else citations
+    refs = format_reference_list(used)
     reference_heading = re.search(r"(?im)^##\s+(?:Core\s+references|References)\s*$", md)
     if reference_heading:
         head = md[: reference_heading.start()].rstrip()

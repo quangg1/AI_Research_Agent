@@ -13,8 +13,9 @@ from app.domain.research_intent import is_comparison_query, is_mechanism_query, 
 from app.domain.schema import QueryType, ResearchBrief
 from app.domain.textutil import entity_candidates, user_goal
 from app.graph.serde import dump, pythonize
-from app.graph.state import ResearchState
+from app.graph.state import ResearchState, budget_from
 from app.llm.client import llm
+from app.llm.roles import use_role_model
 from app.observability.logging import event
 
 SECTOR_RE = re.compile(
@@ -45,6 +46,9 @@ async def briefing_node(state: ResearchState) -> dict:
         }
 
     raw = await asyncio.to_thread(_resolve_brief, query)
+    budget = budget_from(state)
+    if llm.last_tokens:
+        budget.used_tokens += llm.last_tokens
     brief = ResearchBrief.model_validate(apply_forced_depth(dump(raw)))
     payload = pythonize(
         {
@@ -81,6 +85,7 @@ async def briefing_node(state: ResearchState) -> dict:
         "status": "researching",
         "human_decision": decision or {"action": "start"},
         "llm_mode": llm.mode,
+        "budget": dump(budget),
         "traces": [{"node": "briefing", "action": action, "goal": merged.goal}],
     }
 
@@ -174,21 +179,22 @@ def _resolve_brief(query: str) -> ResearchBrief:
 def _llm_brief(query: str) -> ResearchBrief | None:
     if not llm.available:
         return None
-    payload = llm.generate_json(
-        prompt=(
-            f"User question:\n{query}\n\n"
-            "Build a research brief the user can edit before searching.\n"
-            "Infer the subject area from the question itself; do not assume a domain.\n"
-            "'sector' is the topic of this question. 'must_cover' lists what an answer must establish.\n"
-            "Always emit two competing hypotheses (H1 conservative/orchestration, H2 capability/model) "
-            "and 6-8 falsifiable subquestions, including one that seeks counter-evidence.\n"
-            "JSON keys: goal, query_type (factual|comparison|open_research), sector, geography, "
-            "time_horizon, decision_type, constraints (list), must_cover (list), sources_priority (list), "
-            "out_of_scope (list), deliverable, depth (always deep), assumptions (list), "
-            "hypotheses (list of 2 strings), subquestions (list)."
-        ),
-        system="You prepare editable research briefs for Kiln, a general research agent.",
-    )
+    with use_role_model(llm, "briefing"):
+        payload = llm.generate_json(
+            prompt=(
+                f"User question:\n{query}\n\n"
+                "Build a research brief the user can edit before searching.\n"
+                "Infer the subject area from the question itself; do not assume a domain.\n"
+                "'sector' is the topic of this question. 'must_cover' lists what an answer must establish.\n"
+                "Always emit two competing hypotheses (H1 conservative/orchestration, H2 capability/model) "
+                "and 6-8 falsifiable subquestions, including one that seeks counter-evidence.\n"
+                "JSON keys: goal, query_type (factual|comparison|open_research), sector, geography, "
+                "time_horizon, decision_type, constraints (list), must_cover (list), sources_priority (list), "
+                "out_of_scope (list), deliverable, depth (always deep), assumptions (list), "
+                "hypotheses (list of 2 strings), subquestions (list)."
+            ),
+            system="You prepare editable research briefs for Kiln, a general research agent.",
+        )
     if not isinstance(payload, dict):
         return None
     try:

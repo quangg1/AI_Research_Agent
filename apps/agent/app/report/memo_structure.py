@@ -23,19 +23,78 @@ _HEURISTIC_MARKERS = re.compile(
     r"based on\s*\[\d+|source\s*\[\d+|evidence-backed threshold:\s*none",
     re.I,
 )
+# A writer sometimes promotes its own transition sentence into a subheading,
+# e.g. "### Then we address alignment mechanisms..." — that reads as a
+# leftover instruction, not a section title.
+_LEAKED_TRANSITION_HEADING_RE = re.compile(
+    r"^(#{3,4})\s+((?:then|and|so|thus|next|now|furthermore|moreover|therefore|here)\b.*)$",
+    re.I,
+)
+# writer_system() unconditionally bans "ASCII art diagrams" and "fenced code
+# blocks" in the memo body, but the model doesn't reliably obey — seen twice
+# in real output: once as a content-free block of arrows/whitespace, once as
+# an elaborate (and misaligned) box diagram whose content duplicated prose
+# already given nearby. Since the rule has no exceptions, strip every fenced
+# block rather than trying to judge which ones are "informative enough".
+_FENCED_BLOCK_RE = re.compile(r"```[^\n]*\n([\s\S]*?)```\n?")
 
 
-def consolidate_memo_structure(markdown: str) -> str:
+def _strip_fenced_code_blocks(text: str) -> str:
+    return _FENCED_BLOCK_RE.sub("", text)
+
+
+def consolidate_memo_structure(
+    markdown: str,
+    *,
+    citations: list[dict] | None = None,
+    evidence: list[dict] | None = None,
+) -> str:
     """Post-write structural pass: one home per topic, no duplicate gap lists."""
     text = (markdown or "").strip()
     if not text:
         return text
     text = _strip_nested_contradictions(text)
+    text = _fix_leaked_transition_headings(text)
+    text = _strip_fenced_code_blocks(text)
     text = _merge_metric_gaps_into_uncertainties(text)
-    text = _polish_source_quality_section(text)
+    text = _polish_source_quality_section(text, citations)
     text = _sanitize_quantitative_table(text)
+    if citations is not None or evidence is not None:
+        text = _drop_ungrounded_quantitative_rows(text, citations=citations or [], evidence=evidence or [])
     text = _sanitize_decision_thresholds(text)
     return re.sub(r"\n{4,}", "\n\n\n", text).strip() + "\n"
+
+
+def _drop_ungrounded_quantitative_rows(
+    text: str, *, citations: list[dict], evidence: list[dict]
+) -> str:
+    """Second, stricter pass: drop rows whose figures do not verbatim-match the
+    cited source's excerpt (catches confabulated baseline/treatment pairs that
+    the lightweight filler-row filter above lets through because they DO have
+    a number, just not one the source actually reported)."""
+    from app.domain.quantitative_verify import sanitize_quantitative_table
+
+    new_text, _report = sanitize_quantitative_table(text, citations=citations, evidence=evidence)
+    return new_text
+
+
+def _fix_leaked_transition_headings(text: str) -> str:
+    """Demote a heading that is really a leaked transition sentence to a
+    bold lead-in line under the heading before it, keeping the content but
+    dropping the fake structure (no lost prose, no phantom subsection)."""
+    changed = False
+    out: list[str] = []
+    for line in text.splitlines():
+        match = _LEAKED_TRANSITION_HEADING_RE.match(line.strip())
+        sentence = match.group(2).strip() if match else ""
+        if match and len(sentence.split()) > 3:
+            if not sentence.endswith((".", "?", "!")):
+                sentence += "."
+            out.append(f"**{sentence}**")
+            changed = True
+            continue
+        out.append(line)
+    return "\n".join(out) if changed else text
 
 
 def _strip_nested_contradictions(text: str) -> str:
@@ -119,10 +178,40 @@ def merge_inline_citations(text: str) -> str:
     return f"{prose} {merged}"
 
 
-def _polish_source_quality_section(text: str) -> str:
+def _polish_source_quality_section(text: str, citations: list[dict] | None = None) -> str:
     section = _section(text, "Source quality")
+    used_citations = citations
+    if citations:
+        from app.domain.citations import _cited_numbers
+
+        cited = _cited_numbers(text)
+        if cited:
+            # Same reasoning as References: a ranked-but-never-cited source
+            # shouldn't get a tier-band entry either, or the two lists
+            # disagree about how many sources the memo actually draws on.
+            used_citations = [c for c in citations if (c.get("n") if isinstance(c, dict) else None) in cited]
     if not section:
+        # The writer sometimes skips this heading outright rather than
+        # leaving it half-filled (real memo output: no "## Source quality"
+        # anywhere in the body at all). deep_write.py's prompt requires it —
+        # insert one built from the ledger rather than publish without it.
+        if used_citations:
+            from app.domain.citations import format_source_quality_section
+
+            rebuilt = format_source_quality_section(used_citations)
+            if rebuilt:
+                return _insert_before_section(text, "References", f"## Source quality\n\n{rebuilt}")
         return text
+    if used_citations:
+        # The writer LLM is unreliable here — real memos have left a band's
+        # citation list empty ("Band B — Specialist ...: ") despite that
+        # tier's sources being cited throughout the body. Rebuild from the
+        # ledger instead of trying to repair LLM prose, same as References.
+        from app.domain.citations import format_source_quality_section
+
+        rebuilt = format_source_quality_section(used_citations)
+        if rebuilt:
+            return _replace_section(text, "Source quality", rebuilt)
     polished = _merge_source_quality_bullets(section)
     if polished.strip() == section.strip():
         return text

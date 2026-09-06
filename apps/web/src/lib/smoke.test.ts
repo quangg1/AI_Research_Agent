@@ -101,6 +101,21 @@ describe("kiln web smoke", () => {
     expect(fixed.indexOf("```text")).toBeLessThan(fixed.indexOf("[Step 1:"));
   });
 
+  it("does not fence a GFM table separator row as an ascii diagram", async () => {
+    const { fenceAsciiDiagrams } = await import("../components/MemoMarkdown");
+    const raw = [
+      "## Quantitative findings",
+      "",
+      "| Strategy / Architecture | Benchmark / Task Domain | Measured Outcome / Performance Delta | Source Citation |",
+      "|---|---|---|---|",
+      "| Multi-Agent System (MAS) | Repository README Generation | 98% structural consistency | [4 peer] |",
+      "| Multi-Agent Orchestration Patterns | Financial Document Processing | 1.15x token cost multiplier | [12 specialist] |",
+    ].join("\n");
+    const fixed = fenceAsciiDiagrams(raw);
+    expect(fixed).not.toContain("```text");
+    expect(fixed).toBe(raw);
+  });
+
   it("does not fence markdown horizontal rules as ascii diagrams", async () => {
     const { fenceAsciiDiagrams } = await import("../components/MemoMarkdown");
     const raw = "Paragraph one.\n\n---\n\n## Source quality\n\nBand A.";

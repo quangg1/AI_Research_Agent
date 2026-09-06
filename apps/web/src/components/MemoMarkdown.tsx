@@ -162,6 +162,13 @@ export function fenceAsciiDiagrams(text: string): string {
     if (!t || /^```/.test(t)) return false;
     // Markdown horizontal rules — not monospace diagrams
     if (/^(-{3,}|\*{3,}|_{3,})$/.test(t)) return false;
+    // GFM table separator row ("|---|---|---|", "| :--- | ---: |") — shares
+    // '|' and '-' with the box-drawing heuristic below, so it was matching
+    // and getting fenced. That strips the separator out from between the
+    // header and data rows, which breaks table parsing entirely: the header
+    // renders as plain prose, the separator as an orphan code block, and
+    // data rows as literal '|'-delimited text instead of a table.
+    if (/^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$/.test(t)) return false;
     // Rendered KaTeX / MathML must stay in markdown — code fences show raw HTML.
     if (/class="katex"|katex-block|<math[\s>]/i.test(line)) return false;
     // List bullets are prose, not monospace diagrams.

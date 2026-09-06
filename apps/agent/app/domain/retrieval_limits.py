@@ -9,7 +9,15 @@ RANK_NO_PRIMARY_CAP = 10
 ENRICH_FETCH_CAP: dict[str, tuple[int, int]] = {
     "quick": (3, 6),
     "standard": (6, 12),
-    "deep": (10, 18),
+    # Most deep runs finish in 1 critic iteration (see logs: critic passes on
+    # iteration 1 far more often than it loops) — a 10-of-24 first-iteration
+    # cap left ~14 already-budgeted enrich calls unused on those runs, so
+    # most of the ~20 retrieved sources stayed snippet-only even though the
+    # pool had paid for full-text on nearly all of them. Since
+    # merge_unique_evidence now actually keeps a fetched full_text instead of
+    # discarding it, raising this uses the same ENRICH_POOL budget more
+    # fully — richer writer notes and quant candidates at no extra cost.
+    "deep": (18, 24),
 }
 
 PLAN_SUBQUERY_CAPS = {"quick": 4, "standard": 8, "deep": 12}

@@ -73,6 +73,31 @@ QUANT_RE = re.compile(
     re.I,
 )
 
+# Heading-like line that starts a paper's Results/Findings/Evaluation section.
+# Full-text scrapes put abstract+intro first; the numbers we want to table live
+# past a naive head-of-document slice, so hunt for this section explicitly.
+_RESULTS_HEADING_RE = re.compile(
+    r"(?im)^[ \t]*(?:#{1,4}\s*)?(?:\d+[.)]\s*)?"
+    r"(?:results?|findings?|experiments?(?:\s+and\s+results?)?|evaluation(?:\s+results?)?|"
+    r"empirical\s+(?:results?|study)|quantitative\s+results?)\b\s*[:.]?\s*$"
+)
+
+
+def results_section_blob(full_text: str, *, max_len: int = 6000) -> str:
+    """Slice from the first Results/Findings/Evaluation heading onward.
+
+    Returns "" when no such heading is found so callers fall back to a
+    head-of-document slice instead of silently scanning the abstract.
+    """
+    text = full_text or ""
+    if not text.strip():
+        return ""
+    match = _RESULTS_HEADING_RE.search(text)
+    if not match:
+        return ""
+    return text[match.start() : match.start() + max_len]
+
+
 # Patterns for validating grounded quantitative claims
 BENCHMARK_RE = re.compile(
     r"\b(on|in)\s+([A-Z][A-Za-z0-9-]+(?:\s+[A-Z][A-Za-z0-9-]+)?)\b",
@@ -443,10 +468,15 @@ def numeric_evidence_score(ev: dict) -> float:
 
 
 def retrieval_rank_score(ev: dict, query: str = "") -> float:
-    from app.domain.research_intent import authority_score
+    from app.domain.research_intent import authority_score, topic_relevance_penalty
 
     weight = numeric_rank_weight(query)
-    return authority_score(ev) + numeric_evidence_score(ev) * weight
+    blob = " ".join(str(ev.get(k) or "") for k in ("title", "snippet", "quote"))
+    # A named-benchmark result fragment (e.g. "62.4% on SWE-bench") is on-topic
+    # for any ML-systems question even when it doesn't echo the query's exact
+    # wording — only penalize sources with no such signal AND no shared term.
+    penalty = 0.0 if BENCHMARK_RE.search(blob) else topic_relevance_penalty(ev, query)
+    return authority_score(ev) + numeric_evidence_score(ev) * weight + penalty
 
 
 def numeric_rank_weight(query: str = "") -> float:
@@ -479,9 +509,11 @@ def extract_quantitative_rows(evidence: list[dict], citations: list[dict] | None
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
     for ev in evidence or []:
+        full_text = ev.get("full_text") or ""
+        focused = results_section_blob(full_text)
         blob = (
             f"{ev.get('title', '')} {ev.get('snippet', '')} {ev.get('quote', '')} "
-            f"{(ev.get('full_text') or '')[:4500]}"
+            f"{focused or full_text[:4500]}"
         )
         url = (ev.get("url") or "").rstrip("/").lower()
         n = url_to_n.get(url, "?")

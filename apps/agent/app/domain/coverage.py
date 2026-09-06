@@ -305,6 +305,8 @@ def score_must_answer(query: str, evidence: list[dict], slots: list[dict] | None
         unique_n=len(tagged),
         unique_hosts=len({h for h in hosts if h}),
         critical_gaps=critical_gaps,
+        query=query,
+        evidence=usable,
     )
 
     return {
@@ -356,6 +358,8 @@ def _research_quality(
     unique_n: int,
     unique_hosts: int,
     critical_gaps: list,
+    query: str = "",
+    evidence: list[dict] | None = None,
 ) -> dict[str, Any]:
     must_pct = int(round(100 * covered / max(1, total)))
     crit_effective = crit_covered + 0.5 * crit_weak
@@ -363,6 +367,16 @@ def _research_quality(
     primary_pct = int(round(100 * min(1.0, primary_n / max(3, total // 2))))
     cross_pct = int(round(100 * min(1.0, covered / 4)))
     diversity_pct = int(round(100 * min(1.0, unique_hosts / 4)))
+
+    # Does this question actually need a numbers table? Skip the penalty for
+    # architecture/why-questions where a thin Quantitative findings section
+    # is expected, not a red flag.
+    from app.domain.adversarial import extract_quantitative_rows, numeric_rank_weight
+
+    wants_numbers = numeric_rank_weight(query) >= 1.0
+    quant_rows = len(extract_quantitative_rows(evidence or [])) if wants_numbers else 0
+    # 3 grounded rows = full credit, mirrors the primary_n<3 sparsity check below.
+    quant_pct = 100 if not wants_numbers else int(round(100 * min(1.0, quant_rows / 3)))
 
     wants_impl = _wants_implementation(slots)
     impl_slots = [
@@ -384,11 +398,12 @@ def _research_quality(
             0.35 * must_pct
             + 0.30 * crit_pct
             + 0.15 * primary_pct
-            + 0.10 * cross_pct
-            + 0.10 * fifth_pct
+            + 0.05 * cross_pct
+            + 0.05 * fifth_pct
+            + 0.10 * quant_pct
         )
     )
-    
+
     # Apply penalties for known limitations
     if any(s.get("status") == "weak" for s in slots if s.get("critical")):
         overall = min(overall, 80)
@@ -396,6 +411,10 @@ def _research_quality(
         overall = min(overall, 65)
     if primary_n == 0:
         overall = min(overall, 55)
+    # A numeric-heavy question with a near-empty measured table should not
+    # read as fully confident even when coverage/primary-source checks pass.
+    if wants_numbers and quant_rows < 2:
+        overall = min(overall, 70)
     
     # ADDITIONAL: Reduce confidence when gaps/unknowns are present
     # These penalties prevent 100/100 when report lists uncertainties
@@ -435,6 +454,13 @@ def _research_quality(
         "implementation_pct": fifth_pct if fifth_label == "implementation_evidence" else None,
         "source_diversity_pct": diversity_pct,
         "cross_validation_pct": cross_pct,
+        "quantitative_evidence_pct": quant_pct if wants_numbers else None,
+        # Nested {pct: ...} shape — report_integrity.confidence_breakdown reads these,
+        # not the flat _pct siblings above (kept for other/older callers).
+        "primary_sources": {"pct": primary_pct},
+        "cross_validation": {"pct": cross_pct},
+        "implementation": {"pct": fifth_pct} if fifth_label == "implementation_evidence" else {},
+        "quantitative_evidence": {"pct": quant_pct} if wants_numbers else {},
         "unique_sources": unique_n,
         "breakdown": {
             "must_answer_coverage": must_pct,
@@ -442,6 +468,7 @@ def _research_quality(
             "primary_source_support": primary_pct,
             "cross_source_validation": cross_pct,
             fifth_label: fifth_pct,
+            **({"quantitative_evidence_support": quant_pct} if wants_numbers else {}),
         },
     }
 

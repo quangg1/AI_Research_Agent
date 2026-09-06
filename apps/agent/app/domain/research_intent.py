@@ -323,23 +323,46 @@ def coverage_gaps(query: str, must_cover: list[str], evidence: list[dict]) -> li
     return gaps[:6]
 
 
+def _shares_no_distinctive_term(ev: dict, anchors: set[str]) -> bool:
+    blob = f"{ev.get('title', '')} {ev.get('snippet', '')} {ev.get('quote', '')}".lower()
+    return not any(term in blob for term in anchors)
+
+
 def topic_leakage_reasons(query: str, evidence: list[dict]) -> list[str]:
     """Flag when the retrieved set drifted away from what was asked."""
     goal = user_goal(query)
     anchors = set(distinctive_terms(goal, limit=10))
     if not anchors or not evidence:
         return []
-    off = 0
-    for ev in evidence:
-        blob = f"{ev.get('title', '')} {ev.get('snippet', '')} {ev.get('quote', '')}".lower()
-        if not any(term in blob for term in anchors):
-            off += 1
+    off = sum(1 for ev in evidence if _shares_no_distinctive_term(ev, anchors))
     if off and off / len(evidence) >= 0.4:
         return [
             f"{off} of {len(evidence)} sources share no distinctive term with the question — "
             "the evidence set drifted off topic."
         ]
     return []
+
+
+# Large enough to sink below any realistic authority_score + numeric_evidence_score
+# combination (roughly -3.5..+16) so an off-topic source is essentially never the
+# one chosen for extraction/citation, without being hard-dropped from the working
+# set — critic can still fall back to it if the on-topic evidence runs out.
+TOPIC_RELEVANCE_PENALTY = -10.0
+
+
+def topic_relevance_penalty(ev: dict, query: str) -> float:
+    """Rank penalty for a source sharing no distinctive term with the question.
+
+    Per-source counterpart to topic_leakage_reasons, which only warns in
+    aggregate (>=40% of the set) and never removes or demotes anything —
+    that let sources like an unrelated soccer-workload or green-banking paper
+    survive all the way into a synthetic-data-for-LLMs memo's References.
+    """
+    goal = user_goal(query)
+    anchors = set(distinctive_terms(goal, limit=10))
+    if not anchors:
+        return 0.0
+    return TOPIC_RELEVANCE_PENALTY if _shares_no_distinctive_term(ev, anchors) else 0.0
 
 
 def contradiction_signals(query: str, evidence: list[dict]) -> list[str]:

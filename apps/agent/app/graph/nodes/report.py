@@ -13,6 +13,7 @@ from app.domain.textutil import distinctive_terms
 from app.graph.serde import dump
 from app.graph.state import ResearchState, budget_from
 from app.llm.client import CreditsExhaustedError, llm
+from app.llm.roles import use_role_model
 from app.observability.logging import event
 from app.report.compose import (
     GRAPH_VERSION,
@@ -108,7 +109,7 @@ def _report_sync(state: ResearchState) -> dict:
     fact = verify_memo_citations(report.body_markdown or "", citations, retrieved)
     report.metrics["fact_lite"] = fact
     report.decision_rule = _sanitize_decision_rule(state.get("query") or "", report.decision_rule or "", citations, critic)
-    integrity = _apply_integrity(report, citations, critic)
+    integrity = _apply_integrity(report, citations, critic, retrieved, query=state.get("query") or "")
     report.body_markdown = integrity["body_markdown"]
     report.decision_rule = integrity["decision_rule"]
     report.at_a_glance = integrity["at_a_glance"]
@@ -508,7 +509,7 @@ def _llm_report(
             criteria=race,
             max_tokens=max(4096, report_max_tokens(depth) // 2),
         )
-    markdown = polish_citations(markdown)
+    markdown = polish_citations(markdown, citations=citations, evidence=evidence)
     expanded = False
     expand_passes = 0
     if word_count(markdown) < int(min_words * 0.92):
@@ -523,7 +524,7 @@ def _llm_report(
             max_passes=2,
         )
         expanded = expand_passes > 0
-        markdown = polish_citations(markdown)
+        markdown = polish_citations(markdown, citations=citations, evidence=evidence)
     if memo_looks_truncated(markdown):
         failed = compose_terminal_synthesis(
             query=state.get("query") or "",
@@ -575,7 +576,7 @@ def _llm_report(
             critic=critic,
             max_tokens=report_max_tokens(depth),
         )
-        markdown = polish_citations(markdown)
+        markdown = polish_citations(markdown, citations=citations, evidence=evidence)
     critic_notes = audit_memo(markdown, query=user_goal(state.get("query") or "")) if rewritten else audit_notes
     parsed = parse_report_markdown(markdown)
     sidecar = _extract_report_sidecar(markdown, citations) or {}
@@ -634,11 +635,12 @@ def _compress_notes(state: ResearchState, dossier: list[dict], citations: list[d
     if should_skip_llm_compress(depth) or not llm.available:
         return raw, "raw_dossier"
     try:
-        cleaned = llm.generate(
-            compress_prompt(raw, user_goal(state.get("query") or ""), depth=depth),
-            system=compress_system(),
-            max_tokens=compress_max_tokens(depth),
-        )
+        with use_role_model(llm, "report"):
+            cleaned = llm.generate(
+                compress_prompt(raw, user_goal(state.get("query") or ""), depth=depth),
+                system=compress_system(),
+                max_tokens=compress_max_tokens(depth),
+            )
     except CreditsExhaustedError:
         raise
     except Exception:
@@ -651,23 +653,25 @@ def _compress_notes(state: ResearchState, dossier: list[dict], citations: list[d
 
 
 def _generate_report_markdown(prompt: str, max_tokens: int) -> str:
-    return (
-        llm.generate(
-            prompt=prompt,
-            system=writer_system(),
-            max_tokens=max_tokens,
-        )
-        or ""
-    ).strip()
+    with use_role_model(llm, "writer"):
+        return (
+            llm.generate(
+                prompt=prompt,
+                system=writer_system(),
+                max_tokens=max_tokens,
+            )
+            or ""
+        ).strip()
 
 
 def _extract_report_sidecar(markdown: str, citations: list[dict]) -> dict | None:
     try:
-        payload = llm.generate_json(
-            prompt=claims_prompt(markdown, citations),
-            system="Extract structured fields from a Kiln memo. JSON only. Do not rewrite the memo.",
-            max_tokens=2048,
-        )
+        with use_role_model(llm, "integrity"):
+            payload = llm.generate_json(
+                prompt=claims_prompt(markdown, citations),
+                system="Extract structured fields from a Kiln memo. JSON only. Do not rewrite the memo.",
+                max_tokens=2048,
+            )
     except CreditsExhaustedError:
         return None
     return payload if isinstance(payload, dict) else None
@@ -716,7 +720,13 @@ def _template_report(state: ResearchState, evidence: list[dict], critic: dict) -
     )
 
 
-def _apply_integrity(report: Report, citations: list[dict], critic: dict) -> dict:
+def _apply_integrity(
+    report: Report,
+    citations: list[dict],
+    critic: dict,
+    evidence: list[dict] | None = None,
+    query: str = "",
+) -> dict:
     from app.domain.report_integrity import enforce_report_integrity
 
     out = enforce_report_integrity(
@@ -727,6 +737,8 @@ def _apply_integrity(report: Report, citations: list[dict], critic: dict) -> dic
         citations=citations,
         critic=critic,
         limitations=list(report.limitations or []),
+        evidence=evidence,
+        query=query,
     )
     return {
         **out,
@@ -873,8 +885,8 @@ def _regenerate_for_quality(state: ResearchState) -> dict:
         max_tokens_back=tok_back,
     )
     
-    markdown = polish_citations(markdown)
-    
+    markdown = polish_citations(markdown, citations=citations, evidence=retrieved)
+
     # Build new report
     from app.domain.schema import Report, CitationRef
     
@@ -922,7 +934,7 @@ def _regenerate_for_quality(state: ResearchState) -> dict:
         report.metrics["usd_est"] = round(budget.used_tokens / 1_000_000 * 0.40, 4)
     
     # Apply integrity checks
-    integrity = _apply_integrity(report, citations, critic)
+    integrity = _apply_integrity(report, citations, critic, retrieved, query=state.get("query") or "")
     report.body_markdown = integrity["body_markdown"]
     report.decision_rule = integrity["decision_rule"]
     report.at_a_glance = integrity["at_a_glance"]

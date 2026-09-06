@@ -30,6 +30,7 @@ export function DecisionCard({
     must_answer_pct?: number;
     critical_pct?: number;
     primary_sources_pct?: number;
+    quantitative_evidence_pct?: number;
   } | null;
 
   return (
@@ -48,6 +49,9 @@ export function DecisionCard({
               Must-answer {breakdown.must_answer_pct ?? "—"}% · Primary sources{" "}
               {breakdown.primary_sources_pct ?? "—"}%
               {breakdown.critical_pct != null ? ` · Critical ${breakdown.critical_pct}%` : ""}
+              {breakdown.quantitative_evidence_pct != null
+                ? ` · Measured evidence ${breakdown.quantitative_evidence_pct}%`
+                : ""}
             </p>
           )}
         </div>
@@ -84,10 +88,15 @@ function extractRecommendation(rule: string): string {
 
 function extractFlip(rule: string): string {
   const cleaned = rule.replace(/```[\s\S]*?```/g, " ");
+  // Deliberate callout phrases only — bare "unless"/"except" are common
+  // inside ordinary decision-rule prose (e.g. "...unless absolute accuracy
+  // overrides budget constraints") and were matching mid-sentence, cutting
+  // off the clause before them and keeping a trailing citation marker.
   const m =
-    /(?:flip|unless|except|reconsider|invalidate|revisit)[:\s]+([^\n]+)/i.exec(cleaned) ||
-    /###\s*Engineering heuristics[\s\S]*?\n[-*]\s+([^\n]+)/i.exec(cleaned);
-  const hit = (m?.[1] || "").replace(/\*\*/g, "").trim();
+    /(?:revisit if|flip condition|reconsider if|invalidat(?:e|ing) this)[:\s]+([^\n]+)/i.exec(
+      cleaned,
+    ) || /###\s*Engineering heuristics[\s\S]*?\n[-*]\s+([^\n]+)/i.exec(cleaned);
+  const hit = (m?.[1] || "").replace(/\*\*/g, "").replace(/\s*\[\d+[^\]]*\]\s*$/, "").trim();
   if (!hit || looksLikeDiagram(hit)) return "";
   return firstSentences(hit, 2) || hit;
 }

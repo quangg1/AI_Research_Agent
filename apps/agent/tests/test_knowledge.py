@@ -67,6 +67,33 @@ def test_related_question_only_augments():
         assert hit.mode == "augment"
 
 
+def test_high_embedding_similarity_but_low_keyword_overlap_does_not_reuse(monkeypatch):
+    """Real run: 0.98 cosine similarity but 0.27 fingerprint overlap between a
+    stored "single vs multi-agent" memo and a new question naming five agent
+    frameworks the stored answer never covered. `score = max(cosine, jaccard)`
+    let the embedding alone qualify it for "augment", which clamps the
+    retrieval budget to ~6 calls for a question that's mostly new content —
+    the run exhausted its whole budget re-issuing one deduped query and
+    published a 5-source memo. Reuse must require real keyword overlap too,
+    not just a similar embedding."""
+    monkeypatch.setattr(knowledge, "_embed", lambda goal: [1.0, 0.0])
+    saved = knowledge.save_answer(
+        "Evaluate whether transitioning from single-agent to multi-agent LLM "
+        "architectures improves reliability and efficiency in long-horizon "
+        "research tasks.",
+        _report("Single vs multi-agent", ["https://a.org/1"], depth=100),
+    )
+    assert saved
+    hit = knowledge.lookup(
+        "Compare OpenAI Agents, Anthropic Claude-based agents, LangGraph, "
+        "AutoGen, and CrewAI on task decomposition, tool orchestration, "
+        "inter-agent communication, and error propagation using benchmarks "
+        "for web research, code generation, and multi-hop reasoning, "
+        "measuring cost per successful task."
+    )
+    assert hit is None
+
+
 def test_merging_keeps_every_source_and_bumps_version():
     first = knowledge.save_answer(QUESTION, _report("CRISPR mechanism", ["https://a.org/1"], depth=60))
     merged = knowledge.save_answer(

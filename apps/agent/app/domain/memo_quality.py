@@ -11,6 +11,95 @@ from __future__ import annotations
 import re
 from typing import Any
 
+# Anchored to a real citation-marker shape ("2", "3 peer", "2, 5 peer") —
+# NOT "any bracketed text". A bare r"\[([^\]]+)\]" also matched markdown link
+# titles like "[Is Model Collapse Inevitable? ...](url)" produced by
+# bind_markdown_to_ledger's References section: since a title contains no
+# leading digit, _marker_numbers parsed zero citation numbers out of it, and
+# repl()'s `if not kept: return ""` silently deleted the entire title,
+# leaving a bare "(url) — `url`" behind — this is exactly the "References
+# lost every title" bug seen in production. Mirrors report_integrity.CITE_RE.
+_MARKER_RE = re.compile(r"\[(\d+(?:\s+[A-Za-z]+)?(?:\s*,\s*\d+(?:\s+[A-Za-z]+)?)*)\]")
+_MARKER_NUM_RE = re.compile(r"(\d+)(\s+[A-Za-z]+)?")
+
+
+def _marker_numbers(marker_text: str) -> list[tuple[int, str]]:
+    """Parse '1, 2 peer, 3' into [(1, ''), (2, ' peer'), (3, '')]."""
+    out: list[tuple[int, str]] = []
+    for piece in marker_text.split(","):
+        m = _MARKER_NUM_RE.match(piece.strip())
+        if m:
+            out.append((int(m.group(1)), m.group(2) or ""))
+    return out
+
+
+def declutter_citations(
+    body: str,
+    *,
+    max_distinct_per_sentence: int = 2,
+    max_per_source_per_paragraph: int = 2,
+) -> tuple[str, int]:
+    """Deterministic fix for citation stacking and source saturation.
+
+    Both are pure citation-*marker-placement* issues, not content problems —
+    the underlying claim is still true whether it carries 2 citations or 5.
+    Fixing them by asking the writer LLM to regenerate the whole memo (up to
+    ~3 calls per attempt, up to 2 attempts) is expensive and, per observed
+    runs, unreliable — the model doesn't reliably fix its own over-citing.
+    This trims markers directly: at most `max_distinct_per_sentence` distinct
+    sources per sentence, at most `max_per_source_per_paragraph` repeats of
+    the same source within one paragraph. The claims and remaining citations
+    are untouched — this only declutters redundant citation decoration.
+
+    Returns (new_body, markers_changed_count).
+    """
+    changed_total = 0
+    paragraphs = re.split(r"(\n\s*\n)", body or "")
+    out: list[str] = []
+    for part in paragraphs:
+        if not part.strip():
+            out.append(part)
+            continue
+        seen_in_paragraph: dict[int, int] = {}
+        sentences = re.split(r"(?<=[.!?])(\s+)", part)
+        new_sentences: list[str] = []
+        for chunk in sentences:
+            if not chunk.strip() or _MARKER_RE.search(chunk) is None:
+                new_sentences.append(chunk)
+                continue
+            all_nums: list[int] = []
+            for m in _MARKER_RE.finditer(chunk):
+                for n, _tier in _marker_numbers(m.group(1)):
+                    if n not in all_nums:
+                        all_nums.append(n)
+            allowed = set(all_nums[:max_distinct_per_sentence])
+
+            def repl(m: re.Match) -> str:
+                nonlocal changed_total
+                nums = _marker_numbers(m.group(1))
+                kept: list[tuple[int, str]] = []
+                for n, tier in nums:
+                    if n not in allowed:
+                        continue
+                    c = seen_in_paragraph.get(n, 0)
+                    if c >= max_per_source_per_paragraph:
+                        continue
+                    seen_in_paragraph[n] = c + 1
+                    kept.append((n, tier))
+                if len(kept) != len(nums):
+                    changed_total += 1
+                if not kept:
+                    return ""
+                return "[" + ", ".join(f"{n}{tier}" for n, tier in kept) + "]"
+
+            new_sentences.append(_MARKER_RE.sub(repl, chunk))
+        new_part = "".join(new_sentences)
+        # Tidy spacing left by a fully-removed marker ("text  ." / "text  and").
+        new_part = re.sub(r"[ \t]+([.,;:])", r"\1", new_part)
+        new_part = re.sub(r"[ \t]{2,}", " ", new_part)
+        out.append(new_part)
+    return "".join(out), changed_total
+
 
 def check_memo_quality(body_markdown: str, *, evidence: list[dict] | None = None) -> dict[str, Any]:
     """Check memo quality and return issues that should trigger regeneration.
@@ -252,7 +341,14 @@ def _detect_template_placeholders(body: str) -> tuple[int, list[str]]:
         r'TODO:?\s+\w+',
         r'FIXME:?\s+\w+',
         r'XXX:?\s+\w+',
-        r'\[?\?\]',  # Literal [?] markers
+        # Literal [?] unresolved-citation markers. The bracket must be
+        # present — an earlier `\[?\?\]` (optional bracket) also matched any
+        # real title ending in "?" right before a markdown link's "]", e.g.
+        # "...Which Multi-AI Agent Framework is Best?](url)". That false
+        # positive wasted 2 full LLM report-regeneration cycles on one real
+        # run chasing an "issue" a rewrite could never fix (the title is
+        # baked into the deterministic References list, not writer prose).
+        r'\[\?\]',
         r'\[n\]',  # Unresolved citation placeholders
         r'\{[A-Z_]+\}',  # Template variables like {FIELD_NAME}
         r'<[A-Z_]+>',  # Template variables like <FIELD_NAME>

@@ -1,3 +1,5 @@
+import re
+
 from app.report.memo_structure import consolidate_memo_structure, merge_inline_citations
 
 
@@ -18,6 +20,55 @@ Real debate home [2 peer].
     analysis = out.split("## Contradictions & debates")[0]
     assert "Contradictions and open questions" not in analysis
     assert "## Contradictions & debates" in out
+
+
+def test_strips_content_free_ascii_diagram():
+    """writer_system() says 'no ASCII art diagrams' but the model doesn't always
+    obey (real memo output: a fenced block of nothing but arrows/whitespace)."""
+    md = """## Worked example
+
+Intro sentence [1 peer].
+
+```
+ -> ->
+ |
+ <- <- <-
+```
+
+### Step 1: Real step
+Substantive content [2 peer].
+"""
+    out = consolidate_memo_structure(md)
+    assert "```" not in out
+    assert "->" not in out
+    assert "Substantive content" in out
+
+
+def test_strips_non_empty_fenced_diagram_too():
+    """writer_system() bans fenced code blocks unconditionally, not just
+    content-free ones — a real memo produced an elaborate (and misaligned)
+    box diagram whose content just duplicated nearby prose. The rule has no
+    "but this one has real words" exception, so neither does the stripper."""
+    md = """## Detailed analysis
+
+Multi-agent expansion generates instructions from seed data [1 peer].
+
+```
+Raw Domain Corpus
+│
+▼
+┌─────────────────────────┐
+│ Multi-Agent Expansion │
+└─────────────────────────┘
+```
+
+### Step 1: Real step
+Substantive content [2 peer].
+"""
+    out = consolidate_memo_structure(md)
+    assert "```" not in out
+    assert "Multi-Agent Expansion" not in out
+    assert "Substantive content" in out
 
 
 def test_merge_metric_gaps_into_uncertainties():
@@ -81,6 +132,52 @@ Run limits.
     sq = out.split("## Limitations")[0]
     assert sq.count("Band A papers") == 1
     assert "[1, 6, 8, 9 peer]" in sq
+
+
+def test_source_quality_rebuilt_from_ledger_when_citations_given():
+    """Regression: two consecutive real memos left a Source quality band's
+    citation group empty ("Band B — Specialist ...: ") even though those
+    tiers were cited throughout the body — the LLM just doesn't reliably
+    fill this section in. When citations are available, rebuild it instead
+    of trying to repair whatever prose the writer produced."""
+    md = """## Source quality
+
+- Band A — Peer-Reviewed Publications: [1 peer, 2 peer]
+- Band B — Specialist Technical Reports & Preprints:
+- Band C — Industry Whitepapers & Commercial Documentation:
+
+## References
+"""
+    citations = [
+        {"n": 1, "url": "https://doi.org/1", "tier": "peer_reviewed"},
+        {"n": 2, "url": "https://doi.org/2", "tier": "peer_reviewed"},
+        {"n": 3, "url": "https://arxiv.org/html/1", "tier": "specialist_research"},
+        {"n": 4, "url": "https://arxiv.org/html/2", "tier": "specialist_research"},
+    ]
+    out = consolidate_memo_structure(md, citations=citations)
+    sq = out.split("## References")[0]
+    assert "[1 peer, 2 peer]" in sq
+    assert "[3 specialist, 4 specialist]" in sq
+    assert not re.search(r":\s*\n", sq)
+
+
+def test_source_quality_inserted_when_missing_entirely():
+    """Regression: a real deep-tier memo (which requires this section per
+    deep_write.py's prompt) had no "## Source quality" heading anywhere in
+    the body at all — not incomplete, just absent. The repair-only path
+    above can't fix a section that was never written; insert one instead."""
+    md = """## Detailed analysis
+
+Some content [1 specialist].
+
+## References
+
+1. Paper A
+"""
+    citations = [{"n": 1, "url": "https://arxiv.org/html/1", "tier": "specialist_research"}]
+    out = consolidate_memo_structure(md, citations=citations)
+    assert "## Source quality" in out
+    assert "[1 specialist]" in out.split("## References")[0]
 
 
 def test_sanitize_qualitative_quantitative_rows():

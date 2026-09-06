@@ -5,6 +5,7 @@ from typing import Any
 
 from app.domain.schema import AgentName, SubQuery
 from app.domain.textutil import (
+    GOAL_META_RE,
     content_terms,
     distinctive_terms,
     entity_candidates,
@@ -492,6 +493,60 @@ def subquestions_for(query: str, remaining_calls: int = 8) -> list[SubQuery]:
             rationale="Direct evidence for the question as asked.",
         )
     ]
+    # A question that names specific products/frameworks (e.g. "compare
+    # LangGraph and AutoGen") needs their own documentation as evidence, not
+    # a generic survey paper — otherwise the writer describes them from its
+    # own training data and cites whatever survey happened to be retrieved,
+    # which report_integrity's entity-citation check will later strip as
+    # unverified. Seed a docs-biased query per named subject, ahead of the
+    # generic slot followups below, so it survives the length cap even on a
+    # tight budget.
+    #
+    # Root cause traced live: after briefing runs, state["query"] is
+    # replaced with briefing._compose_query's blob — goal-line-1 followed by
+    # "Sector:/Must cover:/Constraints:" metadata lines — and the brief's
+    # own LLM-written goal line almost always PARAPHRASES AWAY the specific
+    # named subjects the user asked about (a real brief turned "compare
+    # OpenAI Agents, LangGraph, AutoGen, and CrewAI" into "...architectural
+    # trade-offs of transitioning from single-agent to multi-agent
+    # systems..."). `entity_candidates` calls `user_goal()` internally,
+    # which stops at the first such metadata line, so scanning `goal` alone
+    # found zero named entities even though they survived verbatim one line
+    # down, e.g. "Constraints: ...Must cover representative frameworks:
+    # OpenAI Agents, Anthropic Claude-based agents, LangGraph, AutoGen, and
+    # CrewAI." Pull the "Constraints:"/"Must cover:" lines' own content back
+    # in (stripped of their "Label:" prefix, in that priority order, ahead
+    # of `goal`) so entity detection sees where the brief actually records
+    # named comparison subjects. The other metadata labels (Sector,
+    # Geography, Horizon, Decision) are always generic category text, not
+    # named products — mixing them in just let words like "Comparative" or
+    # benchmark names crowd out the real subjects before the [:8] slice below.
+    lines_by_label: dict[str, list[str]] = {}
+    for ln in (ln.strip() for ln in (query or "").splitlines()):
+        m = GOAL_META_RE.match(ln)
+        if m:
+            lines_by_label.setdefault(m.group(1).lower(), []).append(GOAL_META_RE.sub("", ln, count=1).strip())
+    meta_content = " ".join(
+        content for label in ("constraints", "must cover") for content in lines_by_label.get(label, [])
+    )
+    named = entity_candidates(f"{meta_content} {goal}".strip(), limit=16)[:8]
+    for name in named:
+        out.append(
+            SubQuery(
+                agent=AgentName.SEARCH,
+                # Short and terse on purpose: normalize_plan_subqueries's
+                # dedupe_subqueries drops any sub_query sharing >=50% of its
+                # >3-char tokens with an earlier one. A shared 4-word suffix
+                # like "official documentation architecture features" made
+                # every entity's query a near-duplicate of the last (real
+                # bug: only the first-listed entity ever survived planning,
+                # regardless of how many were seeded here) — one shared
+                # token ("docs") keeps distinct names well under that
+                # threshold while still reading as a real search query.
+                question=f"{name} docs",
+                rationale=f"Fetch official documentation for the named subject: {name}",
+            )
+        )
     for slot in slots:
         if slot["id"] == "direct_answer":
             continue
@@ -514,7 +569,16 @@ def subquestions_for(query: str, remaining_calls: int = 8) -> list[SubQuery]:
         seen.add(key)
         unique.append(sub)
     max_n = max(2, min(6, remaining_calls + 1))
-    return unique[:max_n]
+    # The direct-answer entry plus every seeded entity-docs query must
+    # survive this cap — a 5-framework comparison question needs all 5, not
+    # whichever ones happened to fit before the generic dimension-followup
+    # cap kicked in (real bug: direct(1) + 6 entities = 7 raw entries got
+    # sliced to 6, always dropping the last-listed subjects, e.g. AutoGen
+    # and CrewAI, while the earlier-listed OpenAI/Agents/Anthropic survived
+    # every time regardless of remaining_calls). Only the generic slot
+    # followups after them are subject to the tighter budget-based cap.
+    guaranteed = 1 + len(named)
+    return unique[: max(max_n, guaranteed)]
 
 
 def _agent_for_slot(slot: dict[str, Any]) -> AgentName:

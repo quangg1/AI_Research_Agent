@@ -129,7 +129,14 @@ def _extract_methods(text: str, paper_id: str, cite_id: int, title: str) -> list
     concepts = []
     
     for pattern in METHOD_PATTERNS:
-        for match in re.finditer(pattern, text, re.I):
+        # Case-sensitive on purpose: every METHOD_PATTERNS entry uses
+        # [A-Z]/[a-z] to tell a proper-noun-looking method name apart from
+        # ordinary prose. re.I collapses that distinction — [A-Z]{2,}, meant
+        # to require a real acronym like "RAG", then matches any lowercase
+        # word ("obtain", "materials") sitting in front of a parenthetical,
+        # and [A-Z][a-z]+ (repeated) matches ordinary lowercase sentence
+        # words too, producing concept names like "believe that the X".
+        for match in re.finditer(pattern, text):
             method_name = match.group(1).strip()
             
             # Filter out generic terms
@@ -159,7 +166,8 @@ def _extract_frameworks(text: str, paper_id: str, cite_id: int, title: str) -> l
     concepts = []
     
     for pattern in FRAMEWORK_PATTERNS:
-        for match in re.finditer(pattern, text, re.I):
+        # Case-sensitive for the same reason as _extract_methods above.
+        for match in re.finditer(pattern, text):
             framework_name = match.group(1).strip()
             
             if _is_generic_term(framework_name):
@@ -319,7 +327,7 @@ def _deduplicate_concepts(concepts: list[dict]) -> list[dict]:
         
         # Skip very similar names (simple heuristic)
         is_similar = False
-        for seen in seen_names:
+        for seen in list(seen_names):
             # Check if one is substring of other
             if name in seen or seen in name:
                 # Keep the longer, more specific one

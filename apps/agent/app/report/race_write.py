@@ -10,6 +10,7 @@ import re
 from app.domain.decompose import derive_slots, must_cover_from_slots
 from app.domain.research_intent import user_goal
 from app.llm.client import CreditsExhaustedError, llm
+from app.llm.roles import use_role_model
 from app.report.deep_write import notes_max_chars, word_count, word_target, writer_system
 from app.report.memo_structure import consolidate_memo_structure, merge_inline_citations
 
@@ -146,8 +147,13 @@ def strip_visual_artifacts_section(markdown: str) -> str:
     return _VISUAL_SECTION.sub("\n", markdown or "")
 
 
-def polish_citations(markdown: str) -> str:
-    text = consolidate_memo_structure(markdown or "")
+def polish_citations(
+    markdown: str,
+    *,
+    citations: list[dict] | None = None,
+    evidence: list[dict] | None = None,
+) -> str:
+    text = consolidate_memo_structure(markdown or "", citations=citations, evidence=evidence)
     text = split_stacked_citation_sentences(destack_inline_citations(text))
     text = strip_visual_artifacts_section(text)
     return strip_spurious_hrules(text)
@@ -424,6 +430,7 @@ def _gen(prompt: str, max_tokens: int, system: str | None = None) -> str:
     slots = getattr(llm, "_slots", None) or []
     if not llm.available and not slots:
         return ""
-    return (
-        llm.generate(prompt, system=system or writer_system(), max_tokens=max_tokens) or ""
-    ).strip()
+    with use_role_model(llm, "writer"):
+        return (
+            llm.generate(prompt, system=system or writer_system(), max_tokens=max_tokens) or ""
+        ).strip()

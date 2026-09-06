@@ -85,23 +85,61 @@ def clear_embedding_cache() -> None:
         _cache_misses = 0
 
 
+# Gemini's embed_content accepts a list[str] as one batch request (one RPM
+# slot, not one per text). The old code called it once per text on a single
+# hardcoded key — a 20-text retrieve step meant 20 sequential calls on the
+# same key within a couple seconds, tripping that one key's free-tier RPM
+# while the other 15+ keys in the pool never touched the embed endpoint at
+# all. Batch it, and rotate across the whole key pool on failure.
+_EMBED_BATCH_SIZE = 100
+
+
 def _gemini_embed(texts: list[str]) -> list[list[float]] | None:
     try:
-        from google import genai
+        from app.llm.providers import split_api_keys
 
-        client = genai.Client(api_key=settings.google_api_key)
+        # settings.google_api_key is a ";"-joined pool (see llm/client.py's
+        # slot failover) — passing the raw multi-key string straight to
+        # genai.Client() sends one garbled, invalid credential and Gemini
+        # replies with a confusing 401 ACCESS_TOKEN_TYPE_UNSUPPORTED rather
+        # than "bad API key".
+        keys = split_api_keys(settings.google_api_key)
+        if not keys:
+            return None
+        clipped = [text[:8000] for text in texts]
         out: list[list[float]] = []
-        for text in texts:
-            result = client.models.embed_content(
-                model=settings.gemini_embed_model,
-                contents=text[:8000],
-            )
-            vector = list(result.embeddings[0].values) if result.embeddings else _hash_embed(text)
-            out.append(_l2(vector))
+        for start in range(0, len(clipped), _EMBED_BATCH_SIZE):
+            chunk = clipped[start : start + _EMBED_BATCH_SIZE]
+            vectors = _embed_chunk(chunk, keys)
+            if vectors is None:
+                return None
+            out.extend(vectors)
         return out
     except Exception as exc:
         logger.warning("embed_fallback_hash %s", exc)
         return None
+
+
+def _embed_chunk(chunk: list[str], keys: list[str]) -> list[list[float]] | None:
+    from google import genai
+
+    last_exc: Exception | None = None
+    for key in keys:
+        try:
+            client = genai.Client(api_key=key)
+            result = client.models.embed_content(model=settings.gemini_embed_model, contents=chunk)
+            embeddings = result.embeddings or []
+            if len(embeddings) != len(chunk):
+                last_exc = ValueError(f"embed count mismatch: got {len(embeddings)} for {len(chunk)}")
+                continue
+            return [_l2(list(e.values)) for e in embeddings]
+        except Exception as exc:
+            last_exc = exc
+            logger.warning("embed_key_failed rotating %s", exc)
+            continue
+    if last_exc:
+        raise last_exc
+    return None
 
 
 def _hash_embed(text: str) -> list[float]:

@@ -58,8 +58,9 @@ def retrieve_node(state: ResearchState) -> dict:
     Quality-first: retrieve k=3-5 per slot with slot-specific patterns/terms, not one global top-20.
     """
     query = state["query"]
+    budget = budget_from(state)
     evidence = tag_evidence_roles(list(state.get("evidence") or []), query)
-    
+
     # Add Qdrant corpus pool
     extra = search_qdrant(query, k=QDRANT_TOP_K) or []
     seen = {e.get("id") for e in evidence}
@@ -93,14 +94,21 @@ def retrieve_node(state: ResearchState) -> dict:
             "traces": [{"node": "retrieve", "n": 0, "off_topic_dropped": len(evidence)}],
         }
     
-    # Retrieve per dimension
-    ranked_by_slot: list[dict] = []
-    retrieved_ids: set[str] = set()
+    # Retrieve per dimension. Seed with what earlier iterations already found
+    # (filtered against the current on-topic pool) — a dimension marked
+    # "covered" is skipped below to save retrieval calls, but its evidence
+    # must stay in the working set, or the next coverage scoring pass sees
+    # it vanish and flips the slot back to "open", causing the depth/coverage
+    # score to oscillate iteration to iteration instead of climbing.
+    pool_ids = {e.get("id") for e in pool if e.get("id")}
+    prior_retrieved = [e for e in (state.get("retrieved") or []) if e.get("id") in pool_ids]
+    ranked_by_slot: list[dict] = list(prior_retrieved)
+    retrieved_ids: set[str] = {e.get("id") for e in ranked_by_slot if e.get("id")}
     total_rerank_calls = 0
-    
+
     from app.domain.coverage import _anchors, _blob
     anchors = _anchors(query)
-    
+
     for slot in slots:
         slot_id = slot.get("id") or ""
         slot_label = slot.get("label") or ""
@@ -135,6 +143,8 @@ def retrieve_node(state: ResearchState) -> dict:
                 k=min(5, len(slot_candidates)),
                 use_llm_reranker=True,
             )
+            if llm.last_tokens:
+                budget.used_tokens += llm.last_tokens
             slot_rerank_calls = max(
                 (int(c.get("rerank_external_calls") or 0) for c in slot_candidates),
                 default=0
@@ -149,8 +159,10 @@ def retrieve_node(state: ResearchState) -> dict:
                 candidate["dimension_label"] = slot_label
                 ranked_by_slot.append(candidate)
                 retrieved_ids.add(eid)
-    
-    # If no dimensions or all covered, fall back to global retrieve
+
+    # Nothing carried forward and nothing new this pass (no open dimensions,
+    # or hybrid_retrieve came up empty) — fall back to a global retrieve so
+    # the run isn't left with zero evidence.
     if not ranked_by_slot:
         ranked_by_slot = hybrid_retrieve(
             query,
@@ -158,6 +170,8 @@ def retrieve_node(state: ResearchState) -> dict:
             k=min(RETRIEVE_TOP_K, max(8, len(pool))),
             use_llm_reranker=llm.available,
         )
+        if llm.last_tokens:
+            budget.used_tokens += llm.last_tokens
         total_rerank_calls = max(
             (int(r.get("rerank_external_calls") or 0) for r in ranked_by_slot),
             default=0
@@ -172,6 +186,7 @@ def retrieve_node(state: ResearchState) -> dict:
     return {
         "retrieved": pythonize(ranked_by_slot),
         "status": "retrieved",
+        "budget": dump(budget),
         "traces": [
             {
                 "node": "retrieve",

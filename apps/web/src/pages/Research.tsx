@@ -1229,11 +1229,13 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                       </div>
                     )}
                     <p className="sub">
-                      This is the review gate (step 11/12), not the memo yet. Approve writes the report. Dig further sends the agent back to search again.
+                      This is the evidence gate (step 11/12), not the memo. Approving here only starts writing
+                      the draft — you'll get a second, separate screen to publish or send back once the memo is
+                      written. Dig further sends the agent back to search again.
                     </p>
                     <textarea placeholder="Optional follow-up for the next search loop" value={notes} onChange={(e) => setNotes(e.target.value)} />
                     <div className="btn-row">
-                      <button className="btn primary" type="button" onClick={() => resume("approve")} disabled={busy || !submitReady}>Approve — write memo</button>
+                      <button className="btn primary" type="button" onClick={() => resume("approve")} disabled={busy || !submitReady}>Approve evidence — start writing</button>
                       <button className="btn" type="button" onClick={() => resume("revise")} disabled={busy || !canRevise || !submitReady}>Dig further</button>
                     </div>
                     {!canRevise && (
@@ -1478,7 +1480,7 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
             )}
             {awaitingDraft && (
               <section className="panel review-box draft-panel">
-                <div className="hero-kicker">Memo draft</div>
+                <div className="hero-kicker">Final step — memo draft</div>
                 <h2>{interrupt?.title || "Review before publishing"}</h2>
                 {(gateReason === "insufficient_budget" ||
                   interrupt?.synthesis_status === "terminal_fallback") && (

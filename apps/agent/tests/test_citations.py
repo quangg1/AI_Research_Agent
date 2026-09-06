@@ -56,6 +56,21 @@ def test_bind_keeps_exactly_one_reference_section():
     assert out.count("https://arxiv.org/abs/2306.06678") == 2  # markdown target + rendered URL
 
 
+def test_bind_drops_ranked_but_never_cited_sources():
+    """Regression: build_ledger ranks up to k=12 candidate sources, but the
+    writer doesn't necessarily cite all of them — a real memo had 4/12
+    references never appear as [n] anywhere in the body, padding the list
+    with sources the memo never actually draws on."""
+    citations = [
+        {"n": 1, "evidence_id": "a", "title": "Used paper", "url": "https://arxiv.org/abs/2401.00001", "quote": "x", "tier": "peer_reviewed", "host": "arxiv.org"},
+        {"n": 2, "evidence_id": "b", "title": "Never cited paper", "url": "https://arxiv.org/abs/2401.00002", "quote": "x", "tier": "peer_reviewed", "host": "arxiv.org"},
+    ]
+    md = "## Findings\nCore claim here [1].\n"
+    out = bind_markdown_to_ledger(md, citations)
+    assert "2401.00001" in out
+    assert "2401.00002" not in out
+
+
 def test_healthcare_scholar_dropped_unless_asked():
     title = "A survey on retrieval-augmentation generation (RAG) models for healthcare applications"
     assert not _on_topic(title, "", "Compare BM25 plus a cross-encoder reranker")

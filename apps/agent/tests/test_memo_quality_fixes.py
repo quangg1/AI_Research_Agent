@@ -13,7 +13,7 @@ import pytest
 
 from app.domain.adversarial import extract_quantitative_rows, _has_valid_metric_and_condition
 from app.domain.citations import pick_quote
-from app.domain.memo_quality import check_memo_quality
+from app.domain.memo_quality import check_memo_quality, declutter_citations
 from app.retrieval.passage import best_passage_for_claim, _is_title_page_or_chrome
 
 
@@ -209,6 +209,34 @@ def test_citation_stacking_three_plus_sources_detected():
     assert any("Citation stacking" in issue for issue in quality["issues"])
 
 
+def test_declutter_trims_stacked_citation_markers():
+    body = "Multiple studies agree on this finding [1, 2, 3, 4, 5] and again [1, 2, 3].\n"
+    out, changed = declutter_citations(body)
+    assert "[1, 2]" in out
+    assert changed > 0
+
+
+def test_declutter_does_not_eat_reference_list_titles():
+    """Regression: a bare r"\\[([^\\]]+)\\]" also matched markdown link titles in
+    the References section (e.g. "[Is Model Collapse Inevitable? ...](url)").
+    Since a title has no leading digit, the old code parsed zero citation
+    numbers out of it and deleted the whole bracket, turning every reference
+    into a bare "(url) -- `url`" with the title silently gone (real memo
+    output, 2026-09-05 run)."""
+    body = (
+        "## References\n\n"
+        "1. [Advances in diffusion models for image data augmentation: a review of "
+        "methods, models, evaluation metrics and future research directions]"
+        "(https://doi.org/10.1007/s10462-025-11116-x) -- `https://doi.org/10.1007/s10462-025-11116-x`\n"
+        "2. [Is Model Collapse Inevitable? Breaking the Curse ofRecursion by "
+        "Accumulating Real and Synthetic Data](https://arxiv.org/html/2404.01413v1) "
+        "-- `https://arxiv.org/html/2404.01413v1`\n"
+    )
+    out, changed = declutter_citations(body)
+    assert out == body
+    assert changed == 0
+
+
 def test_template_placeholders_do_not_leak():
     """Test that literal placeholders like 'REVISIT IF: when' are detected."""
     memo_with_placeholders = """
@@ -231,6 +259,23 @@ def test_template_placeholders_do_not_leak():
     assert quality["template_placeholder_count"] > 0
     assert quality["should_regenerate"]
     assert any("placeholder" in issue.lower() for issue in quality["issues"])
+
+
+def test_reference_title_ending_in_question_mark_is_not_a_placeholder():
+    """Regression: r'\\[?\\]' (optional bracket) also matched "?]" from any
+    real title ending in "?" right before a markdown link's closing bracket
+    — e.g. "...Which Multi-AI Agent Framework is Best?](url)". On a real run
+    this forced 2 full LLM report-regeneration cycles chasing an "issue" a
+    rewrite could never fix, since the title comes from the deterministic
+    References list, not writer prose."""
+    memo = (
+        "## References\n\n"
+        "6. [Magentic-One, AutoGen, LangGraph, CrewAI, or OpenAI Swarm: "
+        "Which Multi-AI Agent Framework is Best?](https://example.com/post) "
+        "-- `https://example.com/post`\n"
+    )
+    quality = check_memo_quality(memo)
+    assert quality["template_placeholder_count"] == 0
 
 
 def test_pick_quote_uses_dimension_specific_passage():

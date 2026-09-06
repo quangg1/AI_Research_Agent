@@ -1,8 +1,83 @@
 # Hệ thống agent research
 
-Kiln không phải chatbot. Agent là pipeline có ngân sách tách pool, critic, HITL, citation integrity — chạy trong `apps/agent`, được Nest enqueue từ ngoài.
+**Last Updated: 2026-09-06**
 
-Tài liệu này mô tả topology, budget, depth policy, và luồng report writer. Cập nhật theo `graph/builder.py`, `domain/research_depth.py`, `domain/retrieval_limits.py`.
+Kiln không phải chatbot. Agent là pipeline có ngân sách tách pool, critic, HITL, citation integrity, **quality regeneration loops**, và **independent grounding audit** — chạy trong `apps/agent`, được Nest enqueue từ ngoài.
+
+Tài liệu này mô tả topology, budget, depth policy, luồng report writer, **quality assurance mechanisms**, và **trust evaluation system**. Cập nhật theo `graph/builder.py`, `domain/research_depth.py`, `domain/retrieval_limits.py`, `eval/trust_bench_e2e.py`.
+
+---
+
+## 🎯 Quality Breakthrough (2026 Q3)
+
+Hệ thống đã được nâng cấp với **7 cải tiến chất lượng** để ngăn hallucination và cải thiện độ tin cậy:
+
+### 1. Per-Dimension Retrieval
+- **Trước:** Global `hybrid_retrieve(query, pool, k=20)` cho tất cả dimensions
+- **Sau:** Mỗi dimension/slot có retrieval riêng với `k=3-5`, targeted query
+- **File:** `graph/nodes/collector.py` - `retrieve_node()`
+- **Lợi ích:** Evidence được filter chính xác cho từng câu hỏi nghiên cứu
+
+### 2. Source Tier Classification Fix
+- **Bug:** ArXiv papers bị label nhầm là "peer_reviewed"
+- **Fix:** 
+  - `schema.py`: `arxiv.org` → `SourceTier.SPECIALIST_RESEARCH`
+  - `scholar.py`: `_publication_type()` check arXiv indicators trước
+- **Impact:** Memo phân loại đúng `[X specialist]` vs `[X peer]`
+
+### 3. Overclaim Detection & Softening
+- **File:** `domain/overclaim.py` (new)
+- **Logic:** Post-process memo để softens absolute terms:
+  - "completely eliminat(e|es|ed|ing)" → "largely reduces"
+  - "never fail(s|ed)?" → "rarely fails"
+  - "guarantees? that every" → "ensures most"
+- **Exception:** Formal contexts (differential privacy, cryptographic proofs)
+- **Integration:** `report/compose.py` - `_user_memo_markdown()`
+
+### 4. Confidence Calibration with Penalties
+- **File:** `domain/coverage.py` - `_research_quality()`
+- **Penalties applied:**
+  - Open gaps: -3 points each (max -10)
+  - Weak evidence: -2 points each (max -5)
+  - Sparse primary sources (<3): -5 points
+  - Floor: Never drop below 55 (shallow threshold)
+- **Result:** Confidence scores reflect actual uncertainty
+
+### 5. Citation Relevance Checking
+- **File:** `domain/citation_relevance.py` (new)
+- **Check:** Verifies cited papers are actually about AI/ML claims
+- **Filters:** Rejects papers from irrelevant domains (biology, medicine, etc.)
+- **Example:** No citing neural regeneration papers for AI model claims
+
+### 6. Scholar Node Improvements
+- **Architecture:** OpenAlex primary + Semantic Scholar augmentation
+- **File:** `graph/nodes/scholar.py`
+- **Strategy:**
+  - Always call OpenAlex first (no rate limits)
+  - Call S2 only if OpenAlex returns <5 results
+  - S2 rate limiting: 2s intervals, 3s/6s retry backoff, 120s cooldown
+  - API key support: `S2_API_KEY` from environment
+- **Fallback:** Continue with OpenAlex-only if S2 fails
+- **Debug logging:** `openalex_query`, `openalex_filtering`, `openalex_arxiv_paper`
+
+### 7. Quality Regeneration Loops
+- **Files:** `graph/nodes/memo_gate.py`, `graph/nodes/report.py`
+- **Logic:** 
+  - Memo_gate runs quality checks before publish
+  - If quality issues detected → trigger `_regenerate_for_quality()`
+  - Max regenerations: `MAX_QUALITY_REGENERATIONS = 2`
+  - Stagnation detection prevents infinite loops
+- **Checks:** Source saturation, citation stacking, template leaks
+
+### Trust Bench E2E (Independent Audit)
+- **File:** `app/eval/trust_bench_e2e.py`
+- **Purpose:** Post-publish hallucination detection by independent LLM judge
+- **Workflow:**
+  1. `export`: Research run JSON → compact snapshot
+  2. `build`: Snapshot → audit packet (claims + source excerpts)
+  3. LLM judge: Evaluates SUPPORTED/NOT_SUPPORTED/CANNOT_VERIFY
+  4. `score`: Calculate hallucination rate, save history
+- **Output:** `data/eval/trust_bench_e2e_history.jsonl`
 
 ---
 
@@ -10,7 +85,7 @@ Tài liệu này mô tả topology, budget, depth policy, và luồng report wri
 
 User hỏi một quyết định LLM-systems. Hệ thống trả memo có claim, quote, contradiction — hoặc nói out of scope. Folklore bị chặn, không được khuyến nghị.
 
-### Sáu nguyên tắc trong code
+### Tám nguyên tắc trong code (Updated)
 
 | Nguyên tắc | Hiện ra ở đâu | Vì sao |
 | --- | --- | --- |
@@ -20,6 +95,8 @@ User hỏi một quyết định LLM-systems. Hệ thống trả memo có claim,
 | Ba nguồn, một collector | search / scholar / docs → collector | Web, paper, docs nội bộ; node không chọn thì return ngay |
 | Người duyệt ba lần | briefing + plan_gate + memo_gate (+ hitl) | Chốt brief → plan → memo trước khi publish |
 | Falsifiable | `data/eval/golden_set.json` + `eval/runner.py` + `eval/graph_routing.py` | Routing, graph gates, folklore — không cần live LLM |
+| **Quality-first with regeneration** | `memo_gate.py` + `report.py` quality loops | Memo có thể rewrite nếu fail quality checks |
+| **Independent grounding audit** | `eval/trust_bench_e2e.py` | LLM judge riêng verify citations sau publish |
 
 ### Coverage gate (HITL / memo)
 
@@ -71,7 +148,7 @@ Quick/standard vẫn còn trong `retrieval_limits.py` cho test/eval, nhưng **pr
 
 ---
 
-## Pipeline (một lần chạy)
+## Pipeline (một lần chạy) - Updated with Quality Loops
 
 ```
 START
@@ -81,31 +158,35 @@ START
   → search ∥ scholar ∥ docs
   → collector
   → enrich
-  → retrieve
-  → extract
+  → retrieve (per-dimension, k=3-5 mỗi slot)
+  → extract (+ dimension refinement nếu có papers)
   → critic
   → hitl               (approve / revise → planner)
-  → report
+  → report (+ quality checks)
+    ├─→ integrity gap → planner (integrity re-loop)
+    └─→ quality issues → _regenerate_for_quality (max 2 lần)
   → memo_gate          (duyệt memo; revise → critic)
+    └─→ quality fail → report regeneration
+  → [POST-PUBLISH] trust_bench_e2e audit (optional)
 END
 ```
 
-| Node | File | Việc | Rẽ |
-| --- | --- | --- | --- |
-| briefing | `graph/nodes/briefing.py` | ResearchBrief (goal, must_answer, depth=deep) | out_of_scope / cancel → report |
-| planner | `graph/nodes/planner.py` | Classify, budget pools, knowledge reuse, falsification sub-queries | cached → report; else plan_gate |
-| plan_gate | `graph/nodes/plan_gate.py` | Interrupt: user chỉnh plan / scholar textarea | cancel → report; ok → fan-out |
-| search | `graph/nodes/search.py` | Tavily / DDG; rank `retrieval_rank_score` | join collector |
-| scholar | `graph/nodes/scholar.py` | OpenAlex (+ Semantic Scholar fallback); ưu tiên snippet có benchmark số | join collector |
-| docs | `graph/nodes/docs.py` | Corpus nội bộ + Qdrant | join collector |
-| collector | `graph/nodes/collector.py` | Gộp evidence; charge **retrieval** pool | → enrich |
-| enrich | `graph/nodes/enrich.py` | Full-page fetch; charge **enrich** pool; slot-aware gap URLs | → retrieve |
-| retrieve | `collector.retrieve_node` | Hybrid rank + Qdrant | → extract |
-| extract | `graph/nodes/extract.py` | Quote + claim seed; micro-extract nếu còn retrieval budget | → critic |
-| critic | `graph/nodes/critic.py` | Coverage + contradiction + followup | sufficient / hết budget → hitl; else → planner |
-| hitl | `graph/nodes/hitl.py` | `interrupt(approve_report)` | revise → planner; approve → report |
-| report | `graph/nodes/report.py` | LLM memo (race/deep write) hoặc `compose` fallback | integrity gap → planner; else memo_gate |
-| memo_gate | `graph/nodes/memo_gate.py` | Interrupt duyệt memo cuối | revise → critic |
+| Node | File | Việc | Rẽ | New/Updated |
+| --- | --- | --- | --- | --- |
+| briefing | `graph/nodes/briefing.py` | ResearchBrief (goal, must_answer, depth=deep) | out_of_scope / cancel → report | |
+| planner | `graph/nodes/planner.py` | Classify, budget pools, knowledge reuse, falsification sub-queries | cached → report; else plan_gate | |
+| plan_gate | `graph/nodes/plan_gate.py` | Interrupt: user chỉnh plan / scholar textarea | cancel → report; ok → fan-out | |
+| search | `graph/nodes/search.py` | Tavily / DDG; rank `retrieval_rank_score` | join collector | |
+| scholar | `graph/nodes/scholar.py` | **OpenAlex primary + S2 augment**; ưu tiên snippet có benchmark số; rate limiting | join collector | ✅ Updated |
+| docs | `graph/nodes/docs.py` | Corpus nội bộ + Qdrant | join collector | |
+| collector | `graph/nodes/collector.py` | Gộp evidence; charge **retrieval** pool; **per-dimension retrieval k=3-5** | → enrich | ✅ Updated |
+| enrich | `graph/nodes/enrich.py` | Full-page fetch; charge **enrich** pool; slot-aware gap URLs | → retrieve | |
+| retrieve | `collector.retrieve_node` | **Per-dimension** hybrid rank + Qdrant | → extract | ✅ Updated |
+| extract | `graph/nodes/extract.py` | Quote + claim seed; **dimension refinement** với paper concepts; micro-extract nếu còn retrieval budget | → critic | ✅ Updated |
+| critic | `graph/nodes/critic.py` | Coverage + contradiction + followup; **confidence penalties** | sufficient / hết budget → hitl; else → planner | ✅ Updated |
+| hitl | `graph/nodes/hitl.py` | `interrupt(approve_report)` | revise → planner; approve → report | |
+| report | `graph/nodes/report.py` | LLM memo (race/deep write) hoặc `compose` fallback; **quality checks & regeneration**; **overclaim softening** | integrity gap → planner; quality fail → regenerate; else memo_gate | ✅ Updated |
+| memo_gate | `graph/nodes/memo_gate.py` | Interrupt duyệt memo cuối; **quality validation** | quality fail → report; revise → critic; approve → publish | ✅ Updated |
 
 **Adaptive skip:** `after_plan_gate` luôn fan-out `search`, `scholar`, `docs` khi có agent trong plan. Node không nằm trong `agents_to_run` return ngay — không gọi tool.
 
@@ -149,23 +230,28 @@ Phụ thuộc một chiều: node được gọi domain. Domain không được 
 | Luật | `domain/` | nodes, eval, report | FastAPI, LangGraph interrupt |
 | Adapter | `llm/`, `tools/`, `retrieval/`, `persistence/` | nodes + runtime | Quyết định out_of_scope |
 
-### `domain/` — file chính
+### `domain/` — file chính (Updated)
 
 | File | Luật |
 | --- | --- |
-| `schema.py` | Plan, Budget (split pools), Claim, Report, ResearchBrief |
+| `schema.py` | Plan, Budget (split pools), Claim, Report, ResearchBrief; **SourceTier classification** |
 | `research_depth.py` | Force deep + `configure_budget_pools` |
 | `retrieval_limits.py` | Caps search/scholar/enrich/planner |
 | `routing_policy.py` | Phân loại query, `heuristic_plan`, out_of_scope |
 | `research_intent.py` | goal, `authority_score`, topic leakage |
-| `adversarial.py` | Hypotheses, falsification queries, quantitative extract, source quality bands |
+| `adversarial.py` | Hypotheses, falsification queries, **quantitative extract with semantic gates**, source quality bands |
 | `knowledge.py` | Lookup / save memo đã nghiên cứu |
-| `coverage.py` | must_answer slots, `critic_should_pass` |
+| `coverage.py` | must_answer slots, `critic_should_pass`, **confidence penalties for gaps** |
 | `grounding.py` | FORBIDDEN folklore + `verify_claims` |
 | `report_integrity.py` | Contradiction quant vs decision rule; integrity re-loop |
 | `gap_enrich.py` | Slot-targeted full-text fetch (enrich pool) |
 | `citations.py` | Ledger, quote-in-source |
 | `credibility.py` | Host → tier → score |
+| **`overclaim.py`** | **NEW: Detects & softens absolute language** |
+| **`citation_relevance.py`** | **NEW: Validates paper relevance to AI/ML claims** |
+| **`paper_concepts.py`** | **NEW: Extracts methods, findings, limitations from papers** |
+| **`memo_quality.py`** | **NEW: Quality checks (saturation, stacking, leaks)** |
+| **`decompose.py`** | Enhanced: `synthesize_dimensions_from_evidence` for refinement |
 
 `eval/runner.py` import thẳng domain, không import `builder.py`.
 
@@ -219,17 +305,74 @@ Chỉ đổi `.env` → `docker compose up -d` (restart, không build).
 
 ---
 
-## File nguồn chính
+## Đánh giá & Trust Mechanisms
 
+### Tier-A: Deterministic Gates (Runtime)
+- **File:** `eval/trust_bench.py`
+- **Checks:** Numeric extraction, citation format, folklore blocking
+- **When:** During pipeline execution (inline)
+- **Action:** Block publication if fails
+
+### Tier-B: Independent Grounding Audit (Post-Publish)
+- **File:** `eval/trust_bench_e2e.py`
+- **Purpose:** Catch hallucinations that slipped past Tier-A
+- **Judge:** Independent LLM (different from memo writer)
+- **Process:**
+  ```
+  export: run JSON → snapshot
+  build: snapshot → audit packet (claims + excerpts)
+  judge: LLM evaluates SUPPORTED/NOT_SUPPORTED/CANNOT_VERIFY
+  score: Calculate hallucination rate
+  ```
+- **Output:** `data/eval/trust_bench_e2e_history.jsonl`
+- **Metrics:**
+  - `hallucination_rate = NOT_SUPPORTED / (SUPPORTED + NOT_SUPPORTED)`
+  - Flagged claims with reasons
+  - Historical trend tracking
+
+### Quality Metrics
+- **Source Diversity:** Track unique domains per dimension
+- **Citation Density:** Claims per 1000 words
+- **Confidence Score:** Calibrated with gap penalties
+- **Hallucination Rate:** From independent audit
+- **Regeneration Count:** Times memo had to be rewritten
+
+---
+
+## File nguồn chính (Updated 2026-09-06)
+
+### Core Pipeline
 - `apps/agent/app/graph/builder.py`
 - `apps/agent/app/graph/state.py`
 - `apps/agent/app/graph/nodes/`
-- `apps/agent/app/domain/research_depth.py`
-- `apps/agent/app/domain/retrieval_limits.py`
-- `apps/agent/app/report/race_write.py`
-- `apps/agent/app/report/deep_write.py`
-- `apps/agent/app/report/memo_structure.py`
 - `apps/agent/app/runtime.py`
 - `apps/agent/app/main.py`
+
+### Research Logic
+- `apps/agent/app/domain/research_depth.py`
+- `apps/agent/app/domain/retrieval_limits.py`
+- `apps/agent/app/domain/coverage.py` (+ confidence penalties)
+- `apps/agent/app/domain/adversarial.py` (+ semantic gates)
+
+### Quality Assurance (NEW)
+- `apps/agent/app/domain/overclaim.py` ⭐
+- `apps/agent/app/domain/citation_relevance.py` ⭐
+- `apps/agent/app/domain/paper_concepts.py` ⭐
+- `apps/agent/app/domain/memo_quality.py` ⭐
+
+### Report Generation
+- `apps/agent/app/report/race_write.py`
+- `apps/agent/app/report/deep_write.py`
+- `apps/agent/app/report/compose.py` (+ overclaim softening)
+- `apps/agent/app/report/memo_structure.py`
+
+### Evaluation & Trust
 - `apps/agent/app/eval/runner.py`
+- `apps/agent/app/eval/trust_bench.py`
+- `apps/agent/app/eval/trust_bench_e2e.py` ⭐
+- `apps/agent/tests/test_trust_bench_e2e.py` ⭐
+
+### Contracts
 - `packages/contracts/src/index.ts` (`AgentSnapshotSchema`)
+
+⭐ = New files added in 2026 Q3 quality upgrade

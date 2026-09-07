@@ -22,7 +22,7 @@ from app.report.compose import (
     memo_is_user_clean,
 )
 from app.domain.adversarial import method_notes_for_writer
-from app.report.adaptive_depth import calculate_adaptive_target, format_writer_guidance
+from app.report.adaptive_depth import calculate_adaptive_target, format_writer_guidance, should_use_graceful_degradation
 from app.report.deep_write import (
     claims_prompt,
     compress_max_tokens,
@@ -434,13 +434,27 @@ def _llm_report(
     min_words = adaptive_target["total_words"]
     adaptive_guidance = format_writer_guidance(adaptive_target)
     
+    # P5: Graceful degradation - downgrade from 'deep' to 'standard' if evidence is sparse
+    should_degrade, suggested_depth = should_use_graceful_degradation(adaptive_target)
+    if should_degrade and depth == "deep":
+        event("graceful_degradation_triggered", {
+            "original_depth": depth,
+            "new_depth": suggested_depth,
+            "reason": f"Evidence too sparse for deep synthesis (target: {min_words} words, "
+                     f"coverage: {adaptive_target['coverage_tier']}, "
+                     f"evidence_count: {adaptive_target['evidence_count']})"
+        })
+        depth = suggested_depth
+    
     # Log adaptive depth for transparency
     event("adaptive_depth_calculated", {
         "target_words": min_words,
         "coverage_tier": adaptive_target["coverage_tier"],
         "evidence_count": adaptive_target["evidence_count"],
         "dimension_count": adaptive_target["dimension_count"],
-        "rationale": adaptive_target["rationale"]
+        "rationale": adaptive_target["rationale"],
+        "final_depth": depth,
+        "degraded": should_degrade
     })
     
     dossier = filter_dossier_for_writer(
@@ -840,12 +854,26 @@ def _regenerate_for_quality(state: ResearchState) -> dict:
     min_words = adaptive_target["total_words"]
     adaptive_guidance = format_writer_guidance(adaptive_target)
     
+    # P5: Graceful degradation - downgrade from 'deep' to 'standard' if evidence is sparse
+    should_degrade, suggested_depth = should_use_graceful_degradation(adaptive_target)
+    if should_degrade and depth == "deep":
+        event("graceful_degradation_triggered_regen", {
+            "original_depth": depth,
+            "new_depth": suggested_depth,
+            "reason": f"Evidence too sparse for deep synthesis (target: {min_words} words, "
+                     f"coverage: {adaptive_target['coverage_tier']}, "
+                     f"evidence_count: {adaptive_target['evidence_count']})"
+        })
+        depth = suggested_depth
+    
     event("adaptive_depth_calculated_regen", {
         "target_words": min_words,
         "coverage_tier": adaptive_target["coverage_tier"],
         "evidence_count": adaptive_target["evidence_count"],
         "dimension_count": adaptive_target["dimension_count"],
-        "rationale": adaptive_target["rationale"]
+        "rationale": adaptive_target["rationale"],
+        "final_depth": depth,
+        "degraded": should_degrade
     })
     
     dossier = filter_dossier_for_writer(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
@@ -91,6 +92,104 @@ def _questions(state: ResearchState, agent: AgentName) -> list[str]:
     return [compact_retrieval_query(q, goal=state.get("query") or "", agent=agent.value) for q in raw[:limit]]
 
 
+def _classify_paper_domain(paper: dict) -> str:
+    """Classify evidence into domain (shared with scholar.py for consistency).
+    
+    Returns: "code" | "benchmark" | "docs" | "theory"
+    """
+    url = paper.get("url", "").lower()
+    title = paper.get("title", "").lower()
+    snippet = paper.get("snippet", "").lower()
+    blob = f"{url} {title} {snippet}"
+    
+    # Code: GitHub, GitLab, implementation
+    if any(host in url for host in ["github.com", "gitlab.com", "bitbucket.org", "codeberg.org"]):
+        return "code"
+    if re.search(r"\b(implementation|source code|library|package|repository)\b", title):
+        return "code"
+    
+    # Benchmark: evaluation, metrics, comparison
+    if re.search(r"\b(benchmark|evaluation|comparison|leaderboard|ablation)\b", title):
+        return "benchmark"
+    if re.search(r"\b(metric|performance comparison|empirical study)\b", title):
+        return "benchmark"
+    
+    # Docs: official documentation, API reference
+    if any(host in url for host in ["docs.", "documentation", "api.", "developer."]):
+        return "docs"
+    if re.search(r"\b(documentation|api reference|guide|tutorial|manual)\b", title):
+        return "docs"
+    
+    # Theory: papers, research, analysis
+    if any(host in url for host in ["arxiv.org", "aclanthology.org", "openreview.net", "acm.org", "ieee.org"]):
+        return "theory"
+    
+    return "theory"
+
+
+def _balanced_evidence_pool(papers: list[dict], max_code_ratio: float = 0.40) -> list[dict]:
+    """Enforce domain balance to prevent coding skew (same logic as scholar.py).
+    
+    Args:
+        papers: Raw search results from Tavily/DDG
+        max_code_ratio: Maximum fraction of code papers (default 40%)
+    
+    Returns:
+        Balanced evidence pool with enforced diversity
+    """
+    if not papers:
+        return []
+    
+    # Classify by domain
+    code_papers = []
+    theory_papers = []
+    benchmark_papers = []
+    doc_papers = []
+    
+    for p in papers:
+        domain = _classify_paper_domain(p)
+        if domain == "code":
+            code_papers.append(p)
+        elif domain == "theory":
+            theory_papers.append(p)
+        elif domain == "benchmark":
+            benchmark_papers.append(p)
+        else:
+            doc_papers.append(p)
+    
+    total = len(papers)
+    max_code = int(total * max_code_ratio)
+    
+    logger.info(
+        f"search_domain_balance_before: total={total}, code={len(code_papers)}, "
+        f"theory={len(theory_papers)}, benchmark={len(benchmark_papers)}, docs={len(doc_papers)}"
+    )
+    
+    # Build balanced pool
+    balanced = []
+    balanced.extend(code_papers[:max_code])
+    balanced.extend(theory_papers)
+    balanced.extend(benchmark_papers)
+    balanced.extend(doc_papers)
+    
+    # Backfill if needed
+    if len(balanced) < total:
+        remaining_code = code_papers[max_code:]
+        needed = total - len(balanced)
+        balanced.extend(remaining_code[:needed])
+    
+    balanced = balanced[:total]
+    
+    balanced_code = sum(1 for p in balanced if _classify_paper_domain(p) == "code")
+    code_ratio = balanced_code / len(balanced) if balanced else 0
+    logger.info(
+        f"search_domain_balance_after: total={len(balanced)}, code={balanced_code}, "
+        f"code_ratio={code_ratio:.2%}"
+    )
+    
+    return balanced
+
+
 def _search(query: str) -> tuple[list[dict], int]:
     key = cache.cache_key("search", query)
     hit = cache.get(key)
@@ -104,7 +203,11 @@ def _search(query: str) -> tuple[list[dict], int]:
     if not rows:
         external_calls += 1
         rows = retry_call(lambda: _ddg(query), attempts=2, default=[]) or []
-    return cache.put(key, rows), external_calls
+    
+    # NEW: Apply domain balancing to prevent coding skew
+    balanced_rows = _balanced_evidence_pool(rows, max_code_ratio=0.40)
+    
+    return cache.put(key, balanced_rows), external_calls
 
 
 def _tavily(query: str) -> list[dict]:

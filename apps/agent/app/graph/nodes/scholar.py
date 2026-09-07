@@ -34,6 +34,124 @@ OFF_DOMAIN_RE = re.compile(
     re.I,
 )
 
+
+def _classify_paper_domain(paper: dict) -> str:
+    """Classify paper into domain based on URL, title, venue.
+    
+    Prevents coding skew by identifying paper types for balanced retrieval.
+    
+    Returns:
+        "code" - Implementation/source code (GitHub, GitLab)
+        "benchmark" - Evaluation, metrics, comparison studies
+        "docs" - Official documentation, API references
+        "theory" - Research papers, arxiv, analysis (default)
+    """
+    url = paper.get("url", "").lower()
+    title = paper.get("title", "").lower()
+    snippet = paper.get("snippet", "").lower()
+    blob = f"{url} {title} {snippet}"
+    
+    # Code: GitHub, GitLab, implementation-focused
+    if any(host in url for host in ["github.com", "gitlab.com", "bitbucket.org", "codeberg.org"]):
+        return "code"
+    if re.search(r"\b(implementation|source code|library|package|repository)\b", title):
+        return "code"
+    
+    # Benchmark: evaluation, metrics, comparison
+    if re.search(r"\b(benchmark|evaluation|comparison|leaderboard|ablation)\b", title):
+        return "benchmark"
+    if re.search(r"\b(metric|performance comparison|empirical study)\b", title):
+        return "benchmark"
+    
+    # Docs: official documentation, API reference
+    if any(host in url for host in ["docs.", "documentation", "api.", "developer."]):
+        return "docs"
+    if re.search(r"\b(documentation|api reference|guide|tutorial|manual)\b", title):
+        return "docs"
+    
+    # Theory: papers, research, analysis (default for academic sources)
+    if any(host in url for host in ["arxiv.org", "aclanthology.org", "openreview.net", "acm.org", "ieee.org"]):
+        return "theory"
+    
+    # Default to theory for unknown
+    return "theory"
+
+
+def _balanced_evidence_pool(papers: list[dict], max_code_ratio: float = 0.40) -> list[dict]:
+    """Enforce domain balance at SOURCE to prevent coding skew.
+    
+    Strategy:
+    1. Classify papers by domain (code/theory/benchmark/docs)
+    2. Limit code papers to max_code_ratio of total
+    3. Preserve ranking within each domain
+    4. Fill remaining slots with other domains
+    
+    Args:
+        papers: Raw results from OpenAlex/Semantic Scholar/Tavily
+        max_code_ratio: Maximum fraction of code/implementation papers (default 40%)
+    
+    Returns:
+        Balanced evidence pool with enforced domain diversity
+    """
+    if not papers:
+        return []
+    
+    # Classify all papers by domain
+    code_papers = []
+    theory_papers = []
+    benchmark_papers = []
+    doc_papers = []
+    
+    for p in papers:
+        domain = _classify_paper_domain(p)
+        if domain == "code":
+            code_papers.append(p)
+        elif domain == "theory":
+            theory_papers.append(p)
+        elif domain == "benchmark":
+            benchmark_papers.append(p)
+        else:
+            doc_papers.append(p)
+    
+    total = len(papers)
+    max_code = int(total * max_code_ratio)
+    
+    # Log domain distribution for debugging
+    logger.info(
+        f"domain_balance_before: total={total}, code={len(code_papers)}, "
+        f"theory={len(theory_papers)}, benchmark={len(benchmark_papers)}, docs={len(doc_papers)}"
+    )
+    
+    # Build balanced pool
+    balanced = []
+    
+    # Add code papers up to limit (preserve ranking)
+    balanced.extend(code_papers[:max_code])
+    
+    # Add all non-code papers (theory, benchmark, docs)
+    balanced.extend(theory_papers)
+    balanced.extend(benchmark_papers)
+    balanced.extend(doc_papers)
+    
+    # If we don't have enough papers, backfill with remaining code papers
+    if len(balanced) < total:
+        remaining_code = code_papers[max_code:]
+        needed = total - len(balanced)
+        balanced.extend(remaining_code[:needed])
+    
+    # Truncate to original total if we somehow got more
+    balanced = balanced[:total]
+    
+    # Log balanced distribution
+    balanced_code = sum(1 for p in balanced if _classify_paper_domain(p) == "code")
+    code_ratio = balanced_code / len(balanced) if balanced else 0
+    logger.info(
+        f"domain_balance_after: total={len(balanced)}, code={balanced_code}, "
+        f"code_ratio={code_ratio:.2%}, target_max={max_code_ratio:.2%}"
+    )
+    
+    return balanced
+
 # Rate limiting for Semantic Scholar (1 req/sec without key, be conservative)
 _last_s2_call_time = 0.0
 _s2_rate_limit_lock = __import__("threading").Lock()
@@ -102,7 +220,8 @@ def _scholar_search(query: str) -> tuple[list[dict], int]:
     if _s2_is_rate_limited and now < _s2_rate_limit_until:
         cooldown_remaining = int(_s2_rate_limit_until - now)
         logger.info(f"semantic_scholar_skipped: in rate-limit cooldown for {cooldown_remaining}s, using OpenAlex only")
-        return openalex, calls
+        balanced = _balanced_evidence_pool(openalex, max_code_ratio=0.40)
+        return balanced, calls
     
     # Augment thin OpenAlex result sets with Semantic Scholar
     # Only call S2 if OpenAlex returned fewer than 5 results
@@ -112,7 +231,12 @@ def _scholar_search(query: str) -> tuple[list[dict], int]:
         calls += 1
         logger.info(f"semantic_scholar_enabled: augmenting {len(openalex)} OpenAlex results with {len(semantic)} S2 results")
     
-    return _dedupe_papers(openalex + semantic), calls
+    raw_results = _dedupe_papers(openalex + semantic)
+    
+    # NEW: Apply domain balancing to prevent coding skew
+    balanced_results = _balanced_evidence_pool(raw_results, max_code_ratio=0.40)
+    
+    return balanced_results, calls
 
 
 def _openalex_query(query: str) -> str:

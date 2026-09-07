@@ -228,7 +228,12 @@ def semantic_number_grounded(row: dict[str, Any], source: str) -> tuple[bool, st
     lists under Reflexive x Llama3, not Sequential x Claude. number_in_source
     alone passes this (0.878 really is in the text), so a claim can be
     "grounded" by bare substring match and still misattributed to the wrong
-    row/column of a multi-condition table."""
+    row/column of a multi-condition table.
+    
+    Now also checks: (1) key words from the entire row (Metric + Condition 
+    columns) must appear near the number in source, and (2) antonym pairs 
+    like failure/success must match.
+    """
     cells = row.get("cells") or []
     numbers = row.get("numbers") or []
     entities = _row_entity_tokens(cells)
@@ -243,6 +248,7 @@ def semantic_number_grounded(row: dict[str, Any], source: str) -> tuple[bool, st
             if not any(ent.lower() == attributed.lower() for ent in method_entities):
                 return False, f"{num} is attributed to {attributed} in source, not {method_entities[0]}."
 
+    # Original per-cell check for numbers with parenthetical labels
     for cell in cells:
         for num, label in _cell_number_labels(cell):
             if not number_in_source(num, source):
@@ -253,6 +259,43 @@ def semantic_number_grounded(row: dict[str, Any], source: str) -> tuple[bool, st
             local = _number_local_context(source, num, window=250)
             if local and key_word.lower() not in local.lower():
                 return False, f"{num} ({label}) not attributed to '{key_word}' near this figure in source."
+    
+    # NEW: Whole-row semantic check for naked numbers
+    # Extract all key words from Metric + Baseline/Condition columns (≥4 chars)
+    context_words = []
+    for cell in cells:
+        for word in re.findall(r"[A-Za-z+]{4,}", cell):
+            context_words.append(word)
+    
+    # Antonym pairs that should NOT co-occur (row vs source)
+    ANTONYM_PAIRS = [
+        (r"\b(failure|error|failed|errors)\b", r"\b(success|yield|passed|successful)\b"),
+        (r"\b(success|yield|passed|successful)\b", r"\b(failure|error|failed|errors)\b"),
+    ]
+    
+    for num in numbers:
+        if not number_in_source(num, source):
+            continue
+        
+        local = _number_local_context(source, num, window=250)
+        if not local:
+            continue
+        
+        # Check 1: Row keywords should appear in source context
+        local_lower = local.lower()
+        missing = [w for w in context_words if w.lower() not in local_lower]
+        # Allow some flexibility: if >50% of key words are missing, flag it
+        if len(missing) > len(context_words) * 0.5 and len(context_words) >= 2:
+            return False, f"{num}: key words {missing[:3]} from row not found near number in source."
+        
+        # Check 2: Antonym detection (row says failure, source says success)
+        row_text = " | ".join(cells).lower()
+        for row_pattern, source_pattern in ANTONYM_PAIRS:
+            if re.search(row_pattern, row_text, re.I) and re.search(source_pattern, local, re.I):
+                row_term = re.search(row_pattern, row_text, re.I).group(0)
+                src_term = re.search(source_pattern, local, re.I).group(0)
+                return False, f"{num}: row mentions '{row_term}' but source context has '{src_term}' (semantic mismatch)."
+    
     return True, ""
 
 

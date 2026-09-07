@@ -546,22 +546,78 @@ def followups_for_gaps(
     *,
     use_llm: bool = False,
 ) -> list[SubQuery]:
+    """Generate targeted followup queries for coverage gaps.
+    
+    Enhanced to create specific queries using:
+    - Dimension patterns for context
+    - Entity names for targeted search
+    - Domain-specific routing (arxiv/github/benchmark)
+    """
     ordered: list[dict] = list(coverage.get("critical_gaps") or [])
     known = {g.get("id") for g in ordered}
     for slot in coverage.get("slots") or []:
         if slot.get("status") in {"open", "weak"} and slot.get("id") not in known:
             ordered.append(slot)
             known.add(slot.get("id"))
+    
     out: list[SubQuery] = []
+    
+    # Extract entities for targeted queries
+    from app.domain.textutil import entity_candidates
+    entities = entity_candidates(user_goal(query), limit=8)
+    
     for gap in ordered[:limit]:
-        question, agent = rewrite_gap_query(query, gap, use_llm=use_llm)
+        gap_id = str(gap.get("id") or "").lower()
+        gap_label = gap.get("label") or ""
+        patterns = [p for p in (gap.get("patterns") or []) if p]
+        
+        # Enhance gap with patterns for more specific queries
+        gap_with_patterns = dict(gap)
+        if patterns and not gap.get("followup"):
+            # Add top patterns to gap text for rewrite_gap_query
+            pattern_text = " ".join(patterns[:3])
+            gap_with_patterns["followup"] = f"{gap_label}: {pattern_text}"
+        
+        # Route to appropriate agent based on gap type
+        if "implement" in gap_id or "code" in gap_id or "source" in gap_id:
+            # Implementation gap: prefer search for GitHub/code
+            gap_with_patterns["agent_hint"] = "search_implementation"
+        elif "benchmark" in gap_id or "evaluat" in gap_id or "metric" in gap_id:
+            # Evaluation gap: prefer scholar for academic papers
+            gap_with_patterns["agent_hint"] = "scholar_benchmark"
+        elif "theor" in gap_id or "concept" in gap_id or "mechanism" in gap_id:
+            # Theory gap: strongly prefer scholar
+            gap_with_patterns["agent_hint"] = "scholar_theory"
+        
+        question, agent = rewrite_gap_query(query, gap_with_patterns, use_llm=use_llm)
+        
+        # Override agent based on hint if provided
+        hint = gap_with_patterns.get("agent_hint", "")
+        if hint.startswith("scholar"):
+            agent = AgentName.SCHOLAR
+        elif hint.startswith("search") and "implementation" in hint:
+            agent = AgentName.SEARCH
+        
+        # Enhance question with arxiv/github prefix for better targeting
+        if agent == AgentName.SCHOLAR and entities:
+            # Add arxiv hint for theory/concept queries
+            if not question.lower().startswith("arxiv"):
+                entity_str = " ".join(entities[:2])
+                question = f"arxiv papers: {entity_str} {question}".strip()[:200]
+        elif agent == AgentName.SEARCH and "implementation" in hint:
+            # Add github hint for implementation queries
+            if not question.lower().startswith("github"):
+                entity_str = " ".join(entities[:2])
+                question = f"github source: {entity_str}".strip()[:200]
+        
         out.append(
             SubQuery(
                 agent=agent,
-                question=question[:200],
-                rationale=f"Fill must-answer gap: {gap.get('label') or gap.get('id')}",
+                question=question,
+                rationale=f"Fill must-answer gap: {gap_label}",
             )
         )
+    
     return out
 
 

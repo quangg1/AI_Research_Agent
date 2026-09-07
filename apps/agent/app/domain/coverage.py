@@ -264,6 +264,10 @@ def score_must_answer(query: str, evidence: list[dict], slots: list[dict] | None
         best = hits[0]
         ev_type = evidence_type_of(best, query)
         is_primary = ev_type in {"primary_paper", "official_repo", "official_docs"}
+        
+        # Count distinct works for this slot to prevent monoculture
+        distinct_works = len({work_identity(h.get("url", ""), h.get("title", "")) for h in hits})
+        
         strong = (
             best.get("_aspect", 0) >= 1
             and (
@@ -271,7 +275,9 @@ def score_must_answer(query: str, evidence: list[dict], slots: list[dict] | None
                 or (is_primary and best.get("_topic", 0) >= 1)
             )
             and not is_secondary_host(best.get("url") or "")
+            and distinct_works >= 2  # Require ≥2 distinct works for covered status
         )
+        # One work → at most weak, prevents SWE-Bench monoculture
         slot["status"] = "covered" if strong else "weak"
         slot["evidence_ids"] = [h.get("id") for h in hits[:3] if h.get("id")]
         slot["evidence_type"] = evidence_type_of(best, query)
@@ -480,6 +486,15 @@ def critic_should_pass(query: str, coverage: dict[str, Any], evidence: list[dict
     reasons: list[str] = []
     if not evidence:
         return False, ["No evidence collected."]
+    
+    # Entity gate: each named subject must have dedicated evidence
+    expected_entities = named_systems(query)
+    if expected_entities:
+        found_entities = entities_with_evidence(query, evidence, limit=99)
+        missing = [e for e in expected_entities if e not in found_entities]
+        if missing:
+            reasons.append(f"Named subjects with no dedicated evidence: {', '.join(missing)}")
+    
     for gap in coverage.get("critical_gaps") or []:
         status = gap.get("status") or "open"
         reasons.append(f"Critical dimension {status}: {gap.get('label') or gap.get('id')}")
@@ -679,8 +694,10 @@ def build_evidence_dossier(
 def entities_with_evidence(query: str, evidence: list[dict], limit: int = 4) -> list[str]:
     """Named subjects from the question that the evidence actually discusses.
 
-    Terms that appear in nearly every source are treated as background vocabulary
-    rather than distinguishing subjects, so no per-domain list is needed.
+    Returns named entities that have dedicated evidence. Does NOT filter out
+    entities appearing in most sources - that filter was correct for generic
+    topics but wrong for entity gates (a comparison query legitimately needs
+    every named subject to have evidence).
     """
     from app.domain.research_intent import named_systems
 
@@ -698,11 +715,9 @@ def entities_with_evidence(query: str, evidence: list[dict], limit: int = 4) -> 
         )
         if df == 0:
             continue
-        # A name every source mentions is the shared topic, not a subject being compared.
-        if n >= 3 and df == n:
-            continue
-        if n >= 5 and df >= 0.8 * n:
-            continue
+        # OLD LOGIC (removed): filtered entities appearing in most sources
+        # This was correct for generic topics but WRONG for entity gates
+        # A comparison query legitimately needs all named subjects
         scored.append((df, name))
     scored.sort(key=lambda x: x[0], reverse=True)
     return [name for _, name in scored[:limit]]

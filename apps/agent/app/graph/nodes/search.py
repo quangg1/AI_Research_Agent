@@ -130,6 +130,11 @@ def _classify_paper_domain(paper: dict) -> str:
 def _balanced_evidence_pool(papers: list[dict], max_code_ratio: float = 0.40) -> list[dict]:
     """Enforce domain balance to prevent coding skew (same logic as scholar.py).
     
+    Strategy (FIXED to prevent backfill violation):
+    1. Take ALL non-code papers first (diverse evidence)
+    2. Calculate code papers needed to reach max_code_ratio of final pool
+    3. Never exceed max_code_ratio, even when source pool is heavily skewed
+    
     Args:
         papers: Raw search results from Tavily/DDG
         max_code_ratio: Maximum fraction of code papers (default 40%)
@@ -158,33 +163,33 @@ def _balanced_evidence_pool(papers: list[dict], max_code_ratio: float = 0.40) ->
             doc_papers.append(p)
     
     total = len(papers)
-    max_code = int(total * max_code_ratio)
     
     logger.info(
         f"search_domain_balance_before: total={total}, code={len(code_papers)}, "
         f"theory={len(theory_papers)}, benchmark={len(benchmark_papers)}, docs={len(doc_papers)}"
     )
     
-    # Build balanced pool
+    # NEW STRATEGY: Build balanced pool without backfill violation
     balanced = []
-    balanced.extend(code_papers[:max_code])
     balanced.extend(theory_papers)
     balanced.extend(benchmark_papers)
     balanced.extend(doc_papers)
     
-    # Backfill if needed
-    if len(balanced) < total:
-        remaining_code = code_papers[max_code:]
-        needed = total - len(balanced)
-        balanced.extend(remaining_code[:needed])
+    non_code_count = len(balanced)
     
-    balanced = balanced[:total]
+    # Calculate max code papers to reach max_code_ratio
+    if non_code_count > 0:
+        max_code_count = int(non_code_count * (max_code_ratio / (1 - max_code_ratio)))
+    else:
+        max_code_count = int(total * max_code_ratio)
+    
+    balanced.extend(code_papers[:max_code_count])
     
     balanced_code = sum(1 for p in balanced if _classify_paper_domain(p) == "code")
     code_ratio = balanced_code / len(balanced) if balanced else 0
     logger.info(
         f"search_domain_balance_after: total={len(balanced)}, code={balanced_code}, "
-        f"code_ratio={code_ratio:.2%}"
+        f"code_ratio={code_ratio:.2%}, target_max={max_code_ratio:.2%}"
     )
     
     return balanced

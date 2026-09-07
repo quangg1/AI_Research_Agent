@@ -93,9 +93,11 @@ def after_critic(state: ResearchState, hitl_target: str = "hitl") -> str:
             sources_stagnant = (
                 recent[0]["unique_sources"] == recent[1]["unique_sources"] == recent[2]["unique_sources"]
             )
+            # FIXED: Lower threshold to 2% - only flag TRUE stagnation, not minor improvement
+            # (e.g., 60% → 64% → 68% is +4%/iter = good progress, should NOT stop)
             coverage_stagnant = (
-                abs(recent[2]["must_pct"] - recent[1]["must_pct"]) < 5
-                and abs(recent[1]["must_pct"] - recent[0]["must_pct"]) < 5
+                abs(recent[2]["must_pct"] - recent[1]["must_pct"]) < 2
+                and abs(recent[1]["must_pct"] - recent[0]["must_pct"]) < 2
             )
             score_stagnant = (
                 abs(recent[2]["depth_score"] - recent[1]["depth_score"]) < 3

@@ -525,8 +525,10 @@ def critic_should_pass(query: str, coverage: dict[str, Any], evidence: list[dict
     must_pct = (coverage.get("depth_score") or {}).get("must_answer", {}).get("pct")
     if must_pct is None:
         must_pct = int(round(100 * float(coverage.get("ratio") or 0)))
-    if must_pct < 60:
-        reasons.append(f"Must-answer coverage {must_pct}% (<60%).")
+    # FIXED: Align with memo_quality.py threshold (65%) to prevent dead zone
+    # where critic passes but memo_quality refuses regeneration
+    if must_pct < 65:
+        reasons.append(f"Must-answer coverage {must_pct}% (<65%).")
     slots = coverage.get("slots") or []
     if _wants_implementation(slots) and not coverage.get("has_implementation"):
         impl_open = [

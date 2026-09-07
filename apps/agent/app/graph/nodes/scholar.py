@@ -80,11 +80,13 @@ def _classify_paper_domain(paper: dict) -> str:
 def _balanced_evidence_pool(papers: list[dict], max_code_ratio: float = 0.40) -> list[dict]:
     """Enforce domain balance at SOURCE to prevent coding skew.
     
-    Strategy:
+    Strategy (FIXED to prevent backfill violation):
     1. Classify papers by domain (code/theory/benchmark/docs)
-    2. Limit code papers to max_code_ratio of total
-    3. Preserve ranking within each domain
-    4. Fill remaining slots with other domains
+    2. Take ALL non-code papers first (they're the minority)
+    3. Calculate how many code papers needed to reach max_code_ratio of final pool
+    4. Add that many code papers (preserving ranking)
+    
+    This ensures we NEVER exceed max_code_ratio, even when source pool is heavily skewed.
     
     Args:
         papers: Raw results from OpenAlex/Semantic Scholar/Tavily
@@ -114,7 +116,6 @@ def _balanced_evidence_pool(papers: list[dict], max_code_ratio: float = 0.40) ->
             doc_papers.append(p)
     
     total = len(papers)
-    max_code = int(total * max_code_ratio)
     
     # Log domain distribution for debugging
     logger.info(
@@ -122,25 +123,27 @@ def _balanced_evidence_pool(papers: list[dict], max_code_ratio: float = 0.40) ->
         f"theory={len(theory_papers)}, benchmark={len(benchmark_papers)}, docs={len(doc_papers)}"
     )
     
-    # Build balanced pool
+    # NEW STRATEGY: Build balanced pool without backfill violation
+    # 1. Add all non-code papers (they're diverse and valuable)
     balanced = []
-    
-    # Add code papers up to limit (preserve ranking)
-    balanced.extend(code_papers[:max_code])
-    
-    # Add all non-code papers (theory, benchmark, docs)
     balanced.extend(theory_papers)
     balanced.extend(benchmark_papers)
     balanced.extend(doc_papers)
     
-    # If we don't have enough papers, backfill with remaining code papers
-    if len(balanced) < total:
-        remaining_code = code_papers[max_code:]
-        needed = total - len(balanced)
-        balanced.extend(remaining_code[:needed])
+    non_code_count = len(balanced)
     
-    # Truncate to original total if we somehow got more
-    balanced = balanced[:total]
+    # 2. Calculate how many code papers to add to reach max_code_ratio
+    # If max_code_ratio = 0.4, then: code / (code + non_code) = 0.4
+    # Solving: code = 0.4 * (code + non_code) => code = (0.4 / 0.6) * non_code
+    if non_code_count > 0:
+        max_code_count = int(non_code_count * (max_code_ratio / (1 - max_code_ratio)))
+    else:
+        # Edge case: all papers are code (100% skew)
+        # Cap at original max_code_ratio of total
+        max_code_count = int(total * max_code_ratio)
+    
+    # 3. Add code papers up to calculated limit (preserve ranking)
+    balanced.extend(code_papers[:max_code_count])
     
     # Log balanced distribution
     balanced_code = sum(1 for p in balanced if _classify_paper_domain(p) == "code")

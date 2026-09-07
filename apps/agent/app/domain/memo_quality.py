@@ -143,13 +143,22 @@ def declutter_citations(
     return "".join(processed), changed_total
 
 
-def check_memo_quality(body_markdown: str, *, evidence: list[dict] | None = None) -> dict[str, Any]:
+def check_memo_quality(
+    body_markdown: str, 
+    *, 
+    evidence: list[dict] | None = None,
+    coverage: dict | None = None,
+) -> dict[str, Any]:
     """Check memo quality and return issues that should trigger regeneration.
+    
+    NOW PRODUCTION-AWARE: Only triggers regeneration for GENERATION issues.
+    Retrieval issues (coverage, missing dimensions) should trigger research loop, not regeneration.
     
     Returns:
         dict with:
-        - should_regenerate: bool
+        - should_regenerate: bool (only for generation issues)
         - issues: list of str describing problems
+        - is_retrieval_issue: bool (if issues are unfixable by regeneration)
         - duplicate_quote_ratio: float
         - citation_stacking_count: int
         - source_saturation_count: int
@@ -209,18 +218,28 @@ def check_memo_quality(body_markdown: str, *, evidence: list[dict] | None = None
             f"{'; '.join(composite_examples)}"
         )
     
+    # Calculate base regeneration trigger (generation issues only)
     should_regenerate = (
         duplicate_ratio > 0.40
         or stacking_count >= 2
         or saturation_count >= 2
         or filler_count >= 1
         or placeholder_count > 0
-        # composite_count removed - handled by labeling instead
     )
+    
+    # NEW: Check if this is actually a retrieval issue (production-aware)
+    is_retrieval_issue = False
+    if coverage:
+        is_retrieval_issue = _is_retrieval_issue(coverage)
+        if is_retrieval_issue:
+            # Don't regenerate for retrieval issues - they need research loop
+            should_regenerate = False
+            issues.insert(0, "⚠️ Coverage/evidence issues detected - requires research loop, not regeneration")
     
     return {
         "should_regenerate": should_regenerate,
         "issues": issues,
+        "is_retrieval_issue": is_retrieval_issue,
         "duplicate_quote_ratio": duplicate_ratio,
         "citation_stacking_count": stacking_count,
         "source_saturation_count": saturation_count,
@@ -471,3 +490,48 @@ def _detect_composite_worked_example(body: str) -> tuple[int, list[str]]:
         return (1, [f"Worked example cites {len(citation_numbers)} sources without 'Composite' label: {preview}..."])
     
     return (0, [])
+
+
+def _is_retrieval_issue(coverage: dict) -> bool:
+    """Determine if quality issues stem from retrieval (unfixable by regeneration).
+    
+    Production-aware: Don't waste regenerations on retrieval problems.
+    
+    Retrieval issues:
+    - Low coverage (<65%)
+    - Missing critical dimensions
+    - No primary sources
+    
+    These should trigger RESEARCH LOOP (more retrieval), not QUALITY LOOP (regeneration).
+    
+    Args:
+        coverage: Coverage dict from critic with depth_score, critical_gaps, etc.
+    
+    Returns:
+        True if issues are retrieval-related (don't regenerate)
+        False if issues are generation-related (can regenerate)
+    """
+    if not coverage:
+        return False
+    
+    # Check coverage level
+    depth_score = coverage.get("depth_score") or {}
+    must_answer = depth_score.get("must_answer") or {}
+    must_pct = must_answer.get("pct") or 0
+    
+    # Low coverage is a retrieval issue
+    if must_pct < 65:
+        return True
+    
+    # Missing critical dimensions is a retrieval issue
+    critical_gaps = coverage.get("critical_gaps") or []
+    if critical_gaps:
+        return True
+    
+    # No primary sources is a retrieval issue
+    primary_sources = coverage.get("primary_sources") or 0
+    if primary_sources == 0:
+        return True
+    
+    # Otherwise, it's a generation issue (can be fixed by regeneration)
+    return False

@@ -452,9 +452,14 @@ def _research_quality(
     if primary_n > 0 and primary_n < 3:
         gaps_penalty += 5  # Sparse primary sources = likely measurement gaps
     
-    # Apply penalties (but don't drop below existing caps)
+    # Apply penalties (no floor - allow score to drop to shallow if warranted)
     if gaps_penalty > 0:
-        overall = max(overall - gaps_penalty, 55)  # Never drop below shallow threshold
+        overall = max(overall - gaps_penalty, 0)
+    
+    # Coverage cap: must-answer < 50% should never read as "standard"
+    # Prevents 33% coverage from showing 62/100 · standard
+    if must_pct < 50:
+        overall = min(overall, 45)  # Force into "shallow" band
     
     # Work-concentration cap: one work dominating citations is a monoculture
     # Example: 8 papers, 6 from arxiv:2512.17419 → top_work_share = 0.75

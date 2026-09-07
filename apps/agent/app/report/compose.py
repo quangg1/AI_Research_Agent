@@ -586,8 +586,23 @@ def _user_memo_markdown(
     analysis = _analysis_sections(query, dossier, ledger, slots)
     comparison = _comparison_table(query, evidence, dossier, ledger, slots)
     findings = _findings_narrative(query, ledger, dossier, claims, critic)
+    
+    # Check if this is a shallow/partial answer
+    depth = (critic.get("depth_score") or {}) if critic else {}
+    label = depth.get("label", "")
+    must_answer = depth.get("must_answer") or {}
+    covered = must_answer.get("covered", 0)
+    total = must_answer.get("total", 1)
+    
     gap_note = ""
-    if synthesis_status == "terminal_fallback" or critic.get("status") == "insufficient":
+    if label == "shallow" or (total > 0 and covered / total < 0.5):
+        # Partial answer banner for shallow memos
+        gap_note = (
+            f"\n> **Partial answer** — covers {covered}/{total} must-answer dimensions. "
+            "The analysis below reflects collected evidence; uncovered items are listed "
+            "under Limitations.\n"
+        )
+    elif synthesis_status == "terminal_fallback" or critic.get("status") == "insufficient":
         if _user_open_questions(critic, terminal_followups):
             gap_note = (
                 "\n> **Note:** Some dimensions could not be verified within the research budget. "

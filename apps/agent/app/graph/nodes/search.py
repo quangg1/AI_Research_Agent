@@ -5,6 +5,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
+from app.config.thresholds import RetrievalThresholds
 from app.domain.research_depth import effective_depth
 from app.domain.retrieval_limits import (
     API_RESULTS_PER_QUERY,
@@ -127,7 +128,7 @@ def _classify_paper_domain(paper: dict) -> str:
     return "theory"
 
 
-def _balanced_evidence_pool(papers: list[dict], max_code_ratio: float = 0.40) -> list[dict]:
+def _balanced_evidence_pool(papers: list[dict], max_code_ratio: float = RetrievalThresholds.MAX_CODE_RATIO) -> list[dict]:
     """Enforce domain balance to prevent coding skew (same logic as scholar.py).
     
     Strategy (FIXED to prevent backfill violation):

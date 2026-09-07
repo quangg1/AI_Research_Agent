@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from app.config.thresholds import RetrievalThresholds
 from app.domain.adversarial import retrieval_rank_score
 from app.domain.citations import is_citable_url
 from app.domain.research_depth import effective_depth
@@ -77,7 +78,7 @@ def _classify_paper_domain(paper: dict) -> str:
     return "theory"
 
 
-def _balanced_evidence_pool(papers: list[dict], max_code_ratio: float = 0.40) -> list[dict]:
+def _balanced_evidence_pool(papers: list[dict], max_code_ratio: float = RetrievalThresholds.MAX_CODE_RATIO) -> list[dict]:
     """Enforce domain balance at SOURCE to prevent coding skew.
     
     Strategy (FIXED to prevent backfill violation):

@@ -8,12 +8,19 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.config.thresholds import (
+    AdaptiveDepthMultipliers,
+    CoverageThresholds,
+    QualityThresholds,
+    graceful_degradation_threshold,
+)
+
 
 def calculate_adaptive_target(
     dossier: list[dict],
     coverage: dict,
     *,
-    base_words_per_evidence: int = 80,
+    base_words_per_evidence: int = QualityThresholds.BASE_WORDS_PER_EVIDENCE,
     quality_multipliers: dict[str, float] | None = None
 ) -> dict[str, Any]:
     """Calculate adaptive word target based on actual evidence quality.
@@ -51,17 +58,17 @@ def calculate_adaptive_target(
     # Determine coverage tier and multiplier
     if quality_multipliers is None:
         quality_multipliers = {
-            "excellent": 1.3,  # >= 75% coverage, can write deeper synthesis
-            "good": 1.0,       # 65-74% coverage, standard depth
-            "fair": 0.8,       # 50-64% coverage, write shorter, admit gaps
-            "poor": 0.6        # < 50% coverage, minimal synthesis
+            "excellent": AdaptiveDepthMultipliers.EXCELLENT,
+            "good": AdaptiveDepthMultipliers.GOOD,
+            "fair": AdaptiveDepthMultipliers.FAIR,
+            "poor": AdaptiveDepthMultipliers.POOR
         }
     
-    if must_pct >= 75 and overall_depth_score >= 80:
+    if must_pct >= CoverageThresholds.MUST_COVERAGE_EXCELLENT and overall_depth_score >= CoverageThresholds.DEPTH_SCORE_EXCELLENT:
         coverage_tier = "excellent"
-    elif must_pct >= 65:
+    elif must_pct >= CoverageThresholds.MUST_COVERAGE_GOOD:
         coverage_tier = "good"
-    elif must_pct >= 50:
+    elif must_pct >= CoverageThresholds.MUST_COVERAGE_FAIR:
         coverage_tier = "fair"
     else:
         coverage_tier = "poor"
@@ -72,8 +79,8 @@ def calculate_adaptive_target(
     base_target = total_evidence_items * base_words_per_evidence
     adaptive_target = int(base_target * multiplier)
     
-    # Sanity bounds (never below 800, never above 7000)
-    adaptive_target = max(800, min(adaptive_target, 7000))
+    # Sanity bounds (from centralized config)
+    adaptive_target = max(QualityThresholds.MIN_MEMO_WORDS, min(adaptive_target, QualityThresholds.MAX_MEMO_WORDS))
     
     # Per-dimension target (for subsection guidance)
     if dimension_count > 0:
@@ -103,7 +110,7 @@ def calculate_adaptive_target(
 def should_use_graceful_degradation(
     adaptive_target_result: dict,
     *,
-    degradation_threshold_words: int = 1500
+    degradation_threshold_words: int = graceful_degradation_threshold()
 ) -> tuple[bool, str]:
     """Determine if memo should gracefully degrade from 'deep' to 'standard'.
     

@@ -3,6 +3,7 @@ from __future__ import annotations
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from app.config.thresholds import CoverageThresholds
 from app.graph.nodes.briefing import briefing_node, briefing_node_auto
 from app.graph.nodes.collector import collector_node, retrieve_node
 from app.graph.nodes.critic import critic_node
@@ -74,7 +75,7 @@ def after_critic(state: ResearchState, hitl_target: str = "hitl") -> str:
         })
         
         # EARLY STOP 1: Quality already excellent (save budget)
-        if must_pct >= 75 and depth_score >= 80:
+        if must_pct >= CoverageThresholds.MUST_COVERAGE_EXCELLENT and depth_score >= CoverageThresholds.DEPTH_SCORE_EXCELLENT:
             from app.observability.logging import event
             event(
                 "critic_early_stop_quality_sufficient",
@@ -93,11 +94,11 @@ def after_critic(state: ResearchState, hitl_target: str = "hitl") -> str:
             sources_stagnant = (
                 recent[0]["unique_sources"] == recent[1]["unique_sources"] == recent[2]["unique_sources"]
             )
-            # FIXED: Lower threshold to 2% - only flag TRUE stagnation, not minor improvement
+            # FIXED: Use centralized stagnation threshold
             # (e.g., 60% → 64% → 68% is +4%/iter = good progress, should NOT stop)
             coverage_stagnant = (
-                abs(recent[2]["must_pct"] - recent[1]["must_pct"]) < 2
-                and abs(recent[1]["must_pct"] - recent[0]["must_pct"]) < 2
+                abs(recent[2]["must_pct"] - recent[1]["must_pct"]) < CoverageThresholds.COVERAGE_STAGNATION_THRESHOLD_PCT
+                and abs(recent[1]["must_pct"] - recent[0]["must_pct"]) < CoverageThresholds.COVERAGE_STAGNATION_THRESHOLD_PCT
             )
             score_stagnant = (
                 abs(recent[2]["depth_score"] - recent[1]["depth_score"]) < 3

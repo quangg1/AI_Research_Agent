@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.config.thresholds import CoverageThresholds, QualityThresholds
+
 # Anchored to a real citation-marker shape ("2", "3 peer", "2, 5 peer") —
 # NOT "any bracketed text". A bare r"\[([^\]]+)\]" also matched markdown link
 # titles like "[Is Model Collapse Inevitable? ...](url)" produced by
@@ -520,7 +522,7 @@ def _is_retrieval_issue(coverage: dict) -> bool:
     must_pct = must_answer.get("pct") or 0
     
     # Low coverage is a retrieval issue
-    if must_pct < 65:
+    if must_pct < CoverageThresholds.MUST_COVERAGE_GOOD:
         return True
     
     # Missing critical dimensions is a retrieval issue

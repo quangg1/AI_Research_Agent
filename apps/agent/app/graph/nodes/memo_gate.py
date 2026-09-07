@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from langgraph.types import interrupt
 
+from app.config.thresholds import QualityThresholds
 from app.domain.knowledge import depth_of, mark_reused, save_answer
 from app.domain.structure_validation import validate_memo_structure
 from app.graph.serde import dump, pythonize
@@ -70,7 +71,7 @@ def memo_gate_node(state: ResearchState) -> dict:
 
     # Track regeneration attempts to prevent infinite loops
     quality_regen_count = int(state.get("quality_regeneration_count") or 0)
-    MAX_QUALITY_REGENERATIONS = 2  # Allow up to 2 rewrites
+    MAX_QUALITY_REGENERATIONS = QualityThresholds.MAX_QUALITY_REGENERATIONS
 
     # If quality issues detected AND under limit, trigger report rewrite from notes (not new search)
     if quality_check["should_regenerate"] and quality_regen_count < MAX_QUALITY_REGENERATIONS:
@@ -201,7 +202,7 @@ def memo_gate_node_auto(state: ResearchState) -> dict:
         
         # If quality issues detected, trigger rewrite from notes (not new search)
         quality_regen_count_auto = int(state.get("quality_regeneration_count") or 0)
-        MAX_QUALITY_REGENERATIONS = 2
+        MAX_QUALITY_REGENERATIONS = QualityThresholds.MAX_QUALITY_REGENERATIONS
         
         if quality_check["should_regenerate"] and quality_regen_count_auto < MAX_QUALITY_REGENERATIONS:
             event("memo_gate_auto_quality_fail", issues="; ".join(quality_check["issues"][:3]), attempt=quality_regen_count_auto + 1)

@@ -4,6 +4,7 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
+from app.config.thresholds import CoverageThresholds
 from app.domain.decompose import derive_slots, rewrite_gap_query
 from app.domain.research_intent import (
     PRIMARY_CODE_HOSTS,
@@ -525,10 +526,10 @@ def critic_should_pass(query: str, coverage: dict[str, Any], evidence: list[dict
     must_pct = (coverage.get("depth_score") or {}).get("must_answer", {}).get("pct")
     if must_pct is None:
         must_pct = int(round(100 * float(coverage.get("ratio") or 0)))
-    # FIXED: Align with memo_quality.py threshold (65%) to prevent dead zone
+    # FIXED: Align with memo_quality.py threshold to prevent dead zone
     # where critic passes but memo_quality refuses regeneration
-    if must_pct < 65:
-        reasons.append(f"Must-answer coverage {must_pct}% (<65%).")
+    if must_pct < CoverageThresholds.MUST_COVERAGE_GOOD:
+        reasons.append(f"Must-answer coverage {must_pct}% (<{CoverageThresholds.MUST_COVERAGE_GOOD}%).")
     slots = coverage.get("slots") or []
     if _wants_implementation(slots) and not coverage.get("has_implementation"):
         impl_open = [

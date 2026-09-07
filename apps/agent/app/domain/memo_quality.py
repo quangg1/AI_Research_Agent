@@ -155,6 +155,7 @@ def check_memo_quality(body_markdown: str, *, evidence: list[dict] | None = None
         - source_saturation_count: int
         - empty_filler_count: int
         - template_placeholder_count: int
+        - composite_worked_example_count: int
     """
     issues: list[str] = []
     
@@ -198,12 +199,21 @@ def check_memo_quality(body_markdown: str, *, evidence: list[dict] | None = None
             f"Examples: {'; '.join(placeholder_examples[:3])}"
         )
     
+    # Check 5: Composite worked example without label
+    composite_count, composite_examples = _detect_composite_worked_example(body_markdown)
+    if composite_count > 0:
+        issues.append(
+            f"Worked example cites multiple sources without 'Composite' label. "
+            f"{'; '.join(composite_examples)}"
+        )
+    
     should_regenerate = (
         duplicate_ratio > 0.40
         or stacking_count >= 2
         or saturation_count >= 2
         or filler_count >= 1
         or placeholder_count > 0
+        or composite_count > 0
     )
     
     return {
@@ -214,6 +224,7 @@ def check_memo_quality(body_markdown: str, *, evidence: list[dict] | None = None
         "source_saturation_count": saturation_count,
         "empty_filler_count": filler_count,
         "template_placeholder_count": placeholder_count,
+        "composite_worked_example_count": composite_count,
     }
 
 
@@ -429,3 +440,32 @@ def _detect_template_placeholders(body: str) -> tuple[int, list[str]]:
             examples.append(f"Empty section in: {context}")
     
     return (placeholder_count, examples[:5])
+
+
+def _detect_composite_worked_example(body: str) -> tuple[int, list[str]]:
+    """Detect Worked example sections citing ≥2 sources without 'Composite' label.
+    
+    Returns: (violation_count, examples)
+    """
+    # Extract Worked example section if present
+    match = re.search(r'##\s+Worked example\s*\n(.*?)(?=\n##\s+|\Z)', body, re.DOTALL | re.I)
+    if not match:
+        return (0, [])
+    
+    section_text = match.group(1)
+    
+    # Check if "Composite" label is present
+    has_composite_label = bool(re.search(r'\bComposite\b', section_text, re.I))
+    
+    # Count distinct citation numbers in the section
+    citation_numbers = set()
+    for m in _MARKER_RE.finditer(section_text):
+        for n, _tier in _marker_numbers(m.group(1)):
+            citation_numbers.add(n)
+    
+    # Violation: ≥2 distinct citations without "Composite" label
+    if len(citation_numbers) >= 2 and not has_composite_label:
+        preview = section_text[:150].replace('\n', ' ').strip()
+        return (1, [f"Worked example cites {len(citation_numbers)} sources without 'Composite' label: {preview}..."])
+    
+    return (0, [])

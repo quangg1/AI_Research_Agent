@@ -8,33 +8,33 @@ from __future__ import annotations
 import re
 from typing import Any
 
-# Core AI/ML/CS domains
+# Core AI/ML/CS domains (each item is a complete, valid regex)
 AI_ML_KEYWORDS = [
-    r"\b(artificial intelligence|machine learning|deep learning|neural network",
-    r"large language model|LLM|GPT|transformer|BERT",
-    r"synthetic data|data generation|generative model",
-    r"reinforcement learning|supervised learning",
-    r"natural language processing|NLP|computer vision",
-    r"model training|fine-tuning|pre-training)\b",
+    r"\b(artificial intelligence|machine learning|deep learning|neural network)\b",
+    r"\b(large language model|LLM|GPT|transformer|BERT)\b",
+    r"\b(synthetic data|data generation|generative model)\b",
+    r"\b(reinforcement learning|supervised learning)\b",
+    r"\b(natural language processing|NLP|computer vision)\b",
+    r"\b(model training|fine-tuning|pre-training)\b",
 ]
 
 # Domains that should NOT be cited for AI/ML claims
 OFF_TOPIC_DOMAINS = [
-    r"\b(neural regeneration|brain injury|neurodegeneration|alzheimer",
-    r"parkinson|stroke recovery|neurology|neuroscience|medical",
-    r"genotype|phenotype|evolution|biology|genetics|organism",
-    r"clinical trial|patient|hospital|disease|diagnosis)\b",
+    r"\b(neural regeneration|brain injury|neurodegeneration|alzheimer)\b",
+    r"\b(parkinson|stroke recovery|neurology|neuroscience|medical)\b",
+    r"\b(genotype|phenotype|evolution|biology|genetics|organism)\b",
+    r"\b(clinical trial|patient|hospital|disease|diagnosis)\b",
 ]
 
 # Acceptable venues for AI/ML research
 CS_AI_VENUES = [
-    r"\b(arxiv\.org/abs/.*cs\.|arxiv\.org/html/.*cs\.",
-    r"neurips|icml|iclr|acl|emnlp|naacl|cvpr|iccv|eccv",
-    r"aaai|ijcai|kdd|www|sigir|recsys|asonam",
+    r"\b(arxiv\.org/abs/.*cs\.|arxiv\.org/html/.*cs\.)\b",
+    r"\b(neurips|icml|iclr|acl|emnlp|naacl|cvpr|iccv|eccv)\b",
+    r"\b(aaai|ijcai|kdd|www|sigir|recsys|asonam)\b",
     r"IEEE.*Transactions.*(Pattern Analysis|Neural Networks|AI)",
     r"Journal.*(Machine Learning|Artificial Intelligence)",
     r"ACM.*Conference.*(Learning|Intelligence|Data)",
-    r"Springer.*(Lecture Notes.*Computer Science|Machine Learning))\b",
+    r"Springer.*(Lecture Notes.*Computer Science|Machine Learning)",
 ]
 
 

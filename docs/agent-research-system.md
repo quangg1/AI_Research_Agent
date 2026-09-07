@@ -1,16 +1,81 @@
 # Hệ thống agent research
 
-**Last Updated: 2026-09-06**
+**Last Updated: 2026-09-07**
 
-Kiln không phải chatbot. Agent là pipeline có ngân sách tách pool, critic, HITL, citation integrity, **quality regeneration loops**, và **independent grounding audit** — chạy trong `apps/agent`, được Nest enqueue từ ngoài.
+Kiln không phải chatbot. Agent là pipeline có ngân sách tách pool, critic, HITL, citation integrity, **quality regeneration loops**, **independent grounding audit**, **writer-level quality controls**, và **domain-balanced retrieval** — chạy trong `apps/agent`, được Nest enqueue từ ngoài.
 
-Tài liệu này mô tả topology, budget, depth policy, luồng report writer, **quality assurance mechanisms**, và **trust evaluation system**. Cập nhật theo `graph/builder.py`, `domain/research_depth.py`, `domain/retrieval_limits.py`, `eval/trust_bench_e2e.py`.
+Tài liệu này mô tả topology, budget, depth policy, luồng report writer, **quality assurance mechanisms**, **trust evaluation system**, và **writer instruction architecture**. Cập nhật theo `graph/builder.py`, `domain/research_depth.py`, `domain/retrieval_limits.py`, `eval/trust_bench_e2e.py`, `report/deep_write.py`.
+
+---
+
+## 🚀 Latest Writer-Level Quality Improvements (2026-09-07)
+
+### 8. STRICT Anti-Compositing Rule
+- **Problem:** Writer was INSTRUCTED to composite multiple sources, creating fake unified workflows
+- **Fix:** `report/deep_write.py` - writer_prompt line 362-372
+  - **FORBIDS** combining [5 repo] + [6 repo] into unified workflow
+  - Only allows composite if single-source evaluation or unavoidable (common building blocks)
+  - Requires `> **Composite**` marker when composite is necessary
+- **Impact:** No more fake "production RAG pipeline" synthesized from disparate GitHub repos
+
+### 9. Per-Dimension Subsection Enforcement
+- **Problem:** Comparison questions lack dedicated subsections per dimension
+- **Fix:** `report/deep_write.py` - writer_prompt line 347-357
+  - **REQUIRES** separate ### subsection for EACH comparison dimension
+  - Example: "How do different X, Y, Z affect..." → must have ### X, ### Y, ### Z
+  - Forbids merging into generic "### System components"
+  - Each subsection must compare AT LEAST 2 approaches with evidence [n]
+- **Impact:** Embedding models, reranking methods, context configs each get dedicated analysis
+
+### 10. Conceptual Accuracy Verification
+- **Problem:** No verification of mechanism descriptions against source quotes
+- **Fix:** `report/deep_write.py` - writer_system line 249-262
+  - Verify mechanism descriptions match cited source wording [n]
+  - Don't conflate similar concepts (truncation ≠ reflection, SSR ≠ general reranking)
+  - If source describes mechanism X, don't write about mechanism Y
+- **Impact:** Reduces conceptual errors in technical explanations
+
+### 11. Worked Example Source Consistency Check
+- **Problem:** No validation that workflow steps come from same source
+- **Fix:** `report/deep_write.py` - writer_system line 249-262
+  - Verify ALL workflow steps from SAME source [n] evaluation
+  - If steps from [5 repo] and [6 repo], these are SEPARATE systems
+  - Describe separately in Detailed analysis or clearly mark Composite
+- **Impact:** Prevents multi-source workflow synthesis without explicit labeling
+
+### 12. Domain-Balanced Retrieval (Fixed Logic Error)
+- **Problem:** Backfill logic re-introduced coding skew by adding excess code papers
+- **Fix:** `graph/nodes/scholar.py` + `search.py` - `_balanced_evidence_pool`
+  - NEW STRATEGY: Add ALL non-code papers first (theory, benchmark, docs)
+  - Calculate max code papers: `non_code_count * (0.4 / 0.6)` to reach 40% ratio
+  - NEVER backfill beyond this limit
+  - Accept smaller total if source pool is heavily skewed (e.g., 90% code → only return 40% code in output)
+- **Impact:** Strict 40% code cap enforcement, even with 90% code input pool
+
+### 13. Quality-Aware Smart Stopping (Fixed Logic Error)
+- **Problem:** Stagnation threshold 5% too lenient (flagged 4%/iter improvement as stagnant)
+- **Fix:** `graph/builder.py` - after_critic line 96-103
+  - Lowered coverage stagnation threshold from <5% to <2%
+  - Example: 60% → 64% → 68% (+4%/iter) is good progress, should NOT stop
+  - Only triggers on TRUE stagnation (<2% change over 3 iterations)
+- **Impact:** Prevents premature stopping while quality is improving
+
+### 14. Aligned Coverage Thresholds (Fixed Logic Error)
+- **Problem:** Threshold inconsistency created 60-65% dead zone
+- **Fix:** `domain/coverage.py` line 528 (aligned from 60% to 65%)
+  - `builder.py`: >= 75% for early stop (excellent quality)
+  - `memo_quality.py` + `coverage.py`: < 65% for retrieval issue (poor coverage)
+  - **Clear Ranges:**
+    - >= 75%: Excellent, early stop OK
+    - 65-74%: Normal operation, continue improving
+    - < 65%: Retrieval issue, don't regenerate memo
+- **Impact:** No dead zones; consistent decision logic across all modules
 
 ---
 
 ## 🎯 Quality Breakthrough (2026 Q3)
 
-Hệ thống đã được nâng cấp với **7 cải tiến chất lượng** để ngăn hallucination và cải thiện độ tin cậy:
+Hệ thống đã được nâng cấp với **7 cải tiến chất lượng ban đầu** để ngăn hallucination:
 
 ### 1. Per-Dimension Retrieval
 - **Trước:** Global `hybrid_retrieve(query, pool, k=20)` cho tất cả dimensions
@@ -26,7 +91,7 @@ Hệ thống đã được nâng cấp với **7 cải tiến chất lượng** 
 - **Impact:** Memo phân loại đúng `[X specialist]` vs `[X peer]`
 
 ### 3. Overclaim Detection & Softening
-- **File:** `domain/overclaim.py` (new)
+- **File:** `domain/overclaim.py`
 - **Logic:** Post-process memo để softens absolute terms:
   - "completely eliminat(e|es|ed|ing)" → "largely reduces"
   - "never fail(s|ed)?" → "rarely fails"
@@ -44,7 +109,7 @@ Hệ thống đã được nâng cấp với **7 cải tiến chất lượng** 
 - **Result:** Confidence scores reflect actual uncertainty
 
 ### 5. Citation Relevance Checking
-- **File:** `domain/citation_relevance.py` (new)
+- **File:** `domain/citation_relevance.py`
 - **Check:** Verifies cited papers are actually about AI/ML claims
 - **Filters:** Rejects papers from irrelevant domains (biology, medicine, etc.)
 - **Example:** No citing neural regeneration papers for AI model claims
@@ -57,6 +122,7 @@ Hệ thống đã được nâng cấp với **7 cải tiến chất lượng** 
   - Call S2 only if OpenAlex returns <5 results
   - S2 rate limiting: 2s intervals, 3s/6s retry backoff, 120s cooldown
   - API key support: `S2_API_KEY` from environment
+  - **NEW:** Domain balancing with 40% code cap
 - **Fallback:** Continue with OpenAlex-only if S2 fails
 - **Debug logging:** `openalex_query`, `openalex_filtering`, `openalex_arxiv_paper`
 
@@ -85,7 +151,7 @@ Hệ thống đã được nâng cấp với **7 cải tiến chất lượng** 
 
 User hỏi một quyết định LLM-systems. Hệ thống trả memo có claim, quote, contradiction — hoặc nói out of scope. Folklore bị chặn, không được khuyến nghị.
 
-### Tám nguyên tắc trong code (Updated)
+### Mười nguyên tắc trong code (Updated 2026-09-07)
 
 | Nguyên tắc | Hiện ra ở đâu | Vì sao |
 | --- | --- | --- |
@@ -97,6 +163,8 @@ User hỏi một quyết định LLM-systems. Hệ thống trả memo có claim,
 | Falsifiable | `data/eval/golden_set.json` + `eval/runner.py` + `eval/graph_routing.py` | Routing, graph gates, folklore — không cần live LLM |
 | **Quality-first with regeneration** | `memo_gate.py` + `report.py` quality loops | Memo có thể rewrite nếu fail quality checks |
 | **Independent grounding audit** | `eval/trust_bench_e2e.py` | LLM judge riêng verify citations sau publish |
+| **Domain-balanced retrieval** | `scholar.py` + `search.py` `_balanced_evidence_pool` | Cap code papers at 40%, prevent GitHub skew |
+| **Writer instruction rigor** | `deep_write.py` writer_system + writer_prompt | Explicit anti-compositing, per-dimension enforcement, conceptual accuracy |
 
 ### Coverage gate (HITL / memo)
 
@@ -104,13 +172,12 @@ User hỏi một quyết định LLM-systems. Hệ thống trả memo có claim,
 
 | `gate_reason` | Ý nghĩa |
 | --- | --- |
-| `sufficient` | Must-answer đủ |
+| `sufficient` | Must-answer đủ (>= 65%) |
 | `insufficient_coverage` | Còn gap — có thể loop planner |
 | `insufficient_budget` | Còn gap nhưng hết iteration/calls — **cảnh báo tại HITL/memo_gate** |
 | `contradicted` | Còn tension chưa giải quyết |
 
 `report.metrics.synthesis_status=terminal_fallback` khi `insufficient_budget`. Chạy eval: `python -m app.eval.runner`, `python -m app.eval.race_bench`.
-
 
 ### Depth policy (luôn deep)
 
@@ -143,26 +210,26 @@ Quick/standard vẫn còn trong `retrieval_limits.py` cho test/eval, nhưng **pr
 | Noun | Ý nghĩa |
 | --- | --- |
 | **Plan** | `query_type`, `agents_to_run`, `sub_queries`. Planner viết; search/scholar đọc sub_queries. |
-| **Evidence** | url, snippet, tier, credibility, optional `full_text`. Gộp ở collector; rank ở retrieve; enrich bổ sung full text. |
-| **Report** | claims + citations + `body_markdown`. `verify_claims` + `fact_lite` + `report_integrity` trước khi lưu knowledge. |
+| **Evidence** | url, snippet, tier, credibility, optional `full_text`. Gộp ở collector; rank ở retrieve; enrich bổ sung full text. **Domain-classified** (code/theory/benchmark/docs). |
+| **Report** | claims + citations + `body_markdown`. `verify_claims` + `fact_lite` + `report_integrity` trước khi lưu knowledge. **Writer-validated** for compositing, dimension coverage, conceptual accuracy. |
 
 ---
 
-## Pipeline (một lần chạy) - Updated with Quality Loops
+## Pipeline (một lần chạy) - Updated 2026-09-07
 
 ```
 START
   → briefing
   → planner
   → plan_gate          (HITL: duyệt plan trước khi search)
-  → search ∥ scholar ∥ docs
+  → search ∥ scholar ∥ docs (+ domain balancing: 40% code cap)
   → collector
   → enrich
   → retrieve (per-dimension, k=3-5 mỗi slot)
   → extract (+ dimension refinement nếu có papers)
-  → critic
+  → critic (+ smart stopping với 2% threshold)
   → hitl               (approve / revise → planner)
-  → report (+ quality checks)
+  → report (+ writer-level quality checks: anti-compositing, per-dimension, conceptual accuracy)
     ├─→ integrity gap → planner (integrity re-loop)
     └─→ quality issues → _regenerate_for_quality (max 2 lần)
   → memo_gate          (duyệt memo; revise → critic)
@@ -171,42 +238,66 @@ START
 END
 ```
 
-| Node | File | Việc | Rẽ | New/Updated |
+| Node | File | Việc | Rẽ | Updated |
 | --- | --- | --- | --- | --- |
 | briefing | `graph/nodes/briefing.py` | ResearchBrief (goal, must_answer, depth=deep) | out_of_scope / cancel → report | |
 | planner | `graph/nodes/planner.py` | Classify, budget pools, knowledge reuse, falsification sub-queries | cached → report; else plan_gate | |
 | plan_gate | `graph/nodes/plan_gate.py` | Interrupt: user chỉnh plan / scholar textarea | cancel → report; ok → fan-out | |
-| search | `graph/nodes/search.py` | Tavily / DDG; rank `retrieval_rank_score` | join collector | |
-| scholar | `graph/nodes/scholar.py` | **OpenAlex primary + S2 augment**; ưu tiên snippet có benchmark số; rate limiting | join collector | ✅ Updated |
+| search | `graph/nodes/search.py` | Tavily / DDG; rank `retrieval_rank_score`; **domain balancing 40% code cap** | join collector | ✅ 09-07 |
+| scholar | `graph/nodes/scholar.py` | **OpenAlex primary + S2 augment**; ưu tiên snippet có benchmark số; rate limiting; **domain balancing 40% code cap** | join collector | ✅ 09-07 |
 | docs | `graph/nodes/docs.py` | Corpus nội bộ + Qdrant | join collector | |
 | collector | `graph/nodes/collector.py` | Gộp evidence; charge **retrieval** pool; **per-dimension retrieval k=3-5** | → enrich | ✅ Updated |
 | enrich | `graph/nodes/enrich.py` | Full-page fetch; charge **enrich** pool; slot-aware gap URLs | → retrieve | |
 | retrieve | `collector.retrieve_node` | **Per-dimension** hybrid rank + Qdrant | → extract | ✅ Updated |
 | extract | `graph/nodes/extract.py` | Quote + claim seed; **dimension refinement** với paper concepts; micro-extract nếu còn retrieval budget | → critic | ✅ Updated |
-| critic | `graph/nodes/critic.py` | Coverage + contradiction + followup; **confidence penalties** | sufficient / hết budget → hitl; else → planner | ✅ Updated |
+| critic | `graph/nodes/critic.py` | Coverage + contradiction + followup; **confidence penalties**; **smart stopping 2% threshold** | sufficient / hết budget → hitl; else → planner | ✅ 09-07 |
 | hitl | `graph/nodes/hitl.py` | `interrupt(approve_report)` | revise → planner; approve → report | |
-| report | `graph/nodes/report.py` | LLM memo (race/deep write) hoặc `compose` fallback; **quality checks & regeneration**; **overclaim softening** | integrity gap → planner; quality fail → regenerate; else memo_gate | ✅ Updated |
+| report | `graph/nodes/report.py` | LLM memo (race/deep write) với **writer-level quality controls**; **overclaim softening** | integrity gap → planner; quality fail → regenerate; else memo_gate | ✅ 09-07 |
 | memo_gate | `graph/nodes/memo_gate.py` | Interrupt duyệt memo cuối; **quality validation** | quality fail → report; revise → critic; approve → publish | ✅ Updated |
 
 **Adaptive skip:** `after_plan_gate` luôn fan-out `search`, `scholar`, `docs` khi có agent trong plan. Node không nằm trong `agents_to_run` return ngay — không gọi tool.
 
 **Integrity re-loop:** `report` có thể set `status=integrity_research` → `after_report` quay lại `planner` (thêm retrieval theo `report_integrity`).
 
+**Smart stopping:** `after_critic` kiểm tra:
+1. **Early stop** nếu must_pct >= 75% AND depth_score >= 80% (excellent quality)
+2. **Stagnation stop** nếu sources, coverage (<2%), score (<3) stagnant qua 3 iterations
+
 Topology chỉ nằm `graph/builder.py`. Node không gọi nhau.
 
 ---
 
-## Report writer stack
+## Report writer stack (Updated 2026-09-07)
 
 | Layer | File | Việc |
 | --- | --- | --- |
 | Notes | `report/deep_write.py` | `format_research_notes`, `method_notes_for_writer`, compress |
+| **Writer Instructions** | `deep_write.py` `writer_system()` + `writer_prompt()` | **STRICT anti-compositing**, **per-dimension enforcement**, **conceptual accuracy checks**, **worked example source verification** |
 | Generation | `report/race_write.py` | Section-wise deep (phase 1 Analysis → phase 2 back matter), expansion, rewrite |
 | Fallback | `report/compose.py` | Deterministic memo khi LLM off / fail |
 | Post-process | `report/memo_structure.py` | Dedupe Contradictions, merge Metric gaps → Uncertainties, gộp Source quality cites `[1, 6, 8, 9 peer]`, lọc row định tính trong Quantitative table |
 | Polish | `race_write.polish_citations` | `merge_inline_citations`, strip `---`, bỏ Visual summary appendix |
 
 Deep memo target ~5500 words (`word_target("deep")`). Không còn bắt buộc code/mermaid appendix.
+
+### Writer Instruction Architecture (NEW 2026-09-07)
+
+`deep_write.py` định nghĩa hai hàm chính:
+
+#### `writer_system()` - Fundamental Rules
+- Anti-compositing logic: "Do NOT composite unless ONE source evaluated complete system"
+- Conceptual accuracy: "Verify mechanism descriptions against source quotes [n]"
+- Worked example source check: "ALL workflow steps from SAME source [n]"
+- Attribution: "Based on [n]'s synthesis" not "Our synthesis"
+- Quantitative table rules: ONLY outcome metrics (%, ms, FLOP), NOT setup params
+- No universal numeric laws without [n] + domain + re-benchmark warning
+
+#### `writer_prompt()` - Structural Enforcement
+- **Per-dimension subsection**: "EACH comparison dimension gets separate ###"
+- **Anti-redundancy**: Say each fact ONCE, cross-reference elsewhere
+- **Worked example**: Must be from ONE source OR clearly marked `> **Composite**`
+- **Comparison rule**: One column per subject, never repeat passages
+- **Section order**: At a glance → Executive → Key findings → Detailed analysis → Quantitative → Worked example → Comparison → Contradictions → Decision rule → Uncertainties → Limitations → Source quality → References
 
 ### Retrieval ranking (ưu tiên số đo)
 
@@ -216,6 +307,32 @@ Deep memo target ~5500 words (`word_target("deep")`). Không còn bắt buộc c
 - `retrieval_rank_score(ev)` = `authority_score` + `numeric_evidence_score`.
 
 Dùng trong `search._rank_and_filter`, `scholar` sort sau dedupe, `enrich._prioritize_enrich_urls`.
+
+### Quantitative Findings Extraction Pipeline (Documented 2026-09-07)
+
+`domain/adversarial.py::extract_quantitative_rows()` - **Conservative by design**:
+
+1. **Regex capture** (QUANT_RE): %, ms, FLOP, tok/s, × speedup
+2. **Setup parameter filter** (`_is_setup_parameter`):
+   - DROPS: N studies, N runs, token counts (config metadata)
+   - KEEPS: Numbers with outcome units (%, ms, throughput)
+3. **Semantic gate** (`_has_valid_metric_and_condition`):
+   - **REQUIRES BOTH**:
+     - Metric/unit name (accuracy, latency, FLOP)
+     - Experimental condition (dataset, benchmark, baseline)
+   - DROPS: Bare "16%" without benchmark context
+   - DROPS: "In experiments, X = 50ms" (generic condition)
+4. **Final condition check**: Drop if condition still "condition not stated in excerpt"
+5. **Results section preference**: Hunt for Results/Findings/Evaluation sections (line 79-91)
+
+**Why sparse tables are CORRECT**:
+- Many sources lack formal Results sections (GitHub READMEs, blogs, docs)
+- Qualitative descriptions ("significantly faster") have no numbers
+- Unconditioned numbers ("25% improvement" without benchmark) filtered correctly
+- Conservative extraction prevents table pollution with setup parameters
+- User previously complained about "filler rows" and "not reported" scaffolding
+
+**Recommendation**: Do NOT relax extraction. Current conservatism is correct. Upstream improvements (domain balancing, enhanced followups, per-dimension enforcement) will improve evidence quality → more quantitative data extracted naturally.
 
 ---
 
@@ -230,28 +347,49 @@ Phụ thuộc một chiều: node được gọi domain. Domain không được 
 | Luật | `domain/` | nodes, eval, report | FastAPI, LangGraph interrupt |
 | Adapter | `llm/`, `tools/`, `retrieval/`, `persistence/` | nodes + runtime | Quyết định out_of_scope |
 
-### `domain/` — file chính (Updated)
+### `domain/` — file chính (Updated 2026-09-07)
 
-| File | Luật |
-| --- | --- |
-| `schema.py` | Plan, Budget (split pools), Claim, Report, ResearchBrief; **SourceTier classification** |
-| `research_depth.py` | Force deep + `configure_budget_pools` |
-| `retrieval_limits.py` | Caps search/scholar/enrich/planner |
-| `routing_policy.py` | Phân loại query, `heuristic_plan`, out_of_scope |
-| `research_intent.py` | goal, `authority_score`, topic leakage |
-| `adversarial.py` | Hypotheses, falsification queries, **quantitative extract with semantic gates**, source quality bands |
-| `knowledge.py` | Lookup / save memo đã nghiên cứu |
-| `coverage.py` | must_answer slots, `critic_should_pass`, **confidence penalties for gaps** |
-| `grounding.py` | FORBIDDEN folklore + `verify_claims` |
-| `report_integrity.py` | Contradiction quant vs decision rule; integrity re-loop |
-| `gap_enrich.py` | Slot-targeted full-text fetch (enrich pool) |
-| `citations.py` | Ledger, quote-in-source |
-| `credibility.py` | Host → tier → score |
-| **`overclaim.py`** | **NEW: Detects & softens absolute language** |
-| **`citation_relevance.py`** | **NEW: Validates paper relevance to AI/ML claims** |
-| **`paper_concepts.py`** | **NEW: Extracts methods, findings, limitations from papers** |
-| **`memo_quality.py`** | **NEW: Quality checks (saturation, stacking, leaks)** |
-| **`decompose.py`** | Enhanced: `synthesize_dimensions_from_evidence` for refinement |
+| File | Luật | Updated |
+| --- | --- | --- |
+| `schema.py` | Plan, Budget (split pools), Claim, Report, ResearchBrief; **SourceTier classification** | |
+| `research_depth.py` | Force deep + `configure_budget_pools` | |
+| `retrieval_limits.py` | Caps search/scholar/enrich/planner | |
+| `routing_policy.py` | Phân loại query, `heuristic_plan`, out_of_scope | |
+| `research_intent.py` | goal, `authority_score`, topic leakage | |
+| `adversarial.py` | Hypotheses, falsification queries, **quantitative extract with semantic gates**, source quality bands | ✅ Documented |
+| `knowledge.py` | Lookup / save memo đã nghiên cứu | |
+| `coverage.py` | must_answer slots, `critic_should_pass`, **confidence penalties**, **65% threshold alignment** | ✅ 09-07 |
+| `grounding.py` | FORBIDDEN folklore + `verify_claims` | |
+| `report_integrity.py` | Contradiction quant vs decision rule; integrity re-loop | |
+| `gap_enrich.py` | Slot-targeted full-text fetch (enrich pool) | |
+| `citations.py` | Ledger, quote-in-source | |
+| `credibility.py` | Host → tier → score | |
+| `overclaim.py` | Detects & softens absolute language | |
+| `citation_relevance.py` | Validates paper relevance to AI/ML claims | |
+| `paper_concepts.py` | Extracts methods, findings, limitations from papers | |
+| `memo_quality.py` | Quality checks (saturation, stacking, leaks); **65% retrieval issue threshold** | ✅ 09-07 |
+| `decompose.py` | Enhanced: `synthesize_dimensions_from_evidence` for refinement | |
+
+### `graph/nodes/` — key nodes (Updated 2026-09-07)
+
+| File | Logic | Updated |
+| --- | --- | --- |
+| `scholar.py` | OpenAlex + S2 augment; **domain balancing with 40% code cap**; rate limiting | ✅ 09-07 |
+| `search.py` | Tavily/DDG; **domain balancing with 40% code cap** | ✅ 09-07 |
+| `collector.py` | Evidence pooling; per-dimension retrieval | |
+| `critic.py` | Coverage gate; quality tracking for smart stopping | ✅ 09-07 |
+| `report.py` | LLM memo generation; quality regeneration; overclaim softening | ✅ 09-07 |
+| `memo_gate.py` | Final quality validation before publish | |
+| `builder.py` | Graph topology; **smart stopping logic with 2% threshold** | ✅ 09-07 |
+
+### `report/` — writer stack (Updated 2026-09-07)
+
+| File | Purpose | Updated |
+| --- | --- | --- |
+| `deep_write.py` | **Writer instructions: anti-compositing, per-dimension, conceptual accuracy, source verification** | ✅ 09-07 |
+| `race_write.py` | Section-wise generation, expansion, rewrite | |
+| `compose.py` | Deterministic fallback memo | |
+| `memo_structure.py` | Post-processing: dedupe, merge, sanitize | |
 
 `eval/runner.py` import thẳng domain, không import `builder.py`.
 
@@ -275,12 +413,12 @@ Nest  apps/api/src/research/agent-execution.client.ts
 | `main.py` | `runtime.stream_execution` | request đã parse Pydantic |
 | `runtime.py` | `graph/builder.py` compile | checkpointer Postgres; `new_budget()` → deep pools |
 | `planner_node` | `knowledge`, `routing_policy`, `falsification_queries` | `reuse_mode` + `agents_to_run` |
-| search / scholar / docs | `tools/` + `retrieval/` | list evidence |
+| search / scholar / docs | `tools/` + `retrieval/` + **domain balancing** | list evidence (40% code cap) |
 | collector → retrieve | `retrieval/hybrid.py`, `store.py` | ranked retrieved |
 | extract | `domain/citations` | quotes / claim seeds |
-| `critic_node` | `domain/coverage` + llm | `CriticVerdict` + followups |
+| `critic_node` | `domain/coverage` + llm + **smart stopping** | `CriticVerdict` + followups |
 | `hitl` / `plan_gate` / `memo_gate` | LangGraph `interrupt` | payload ra Nest/UI, đợi resume |
-| `report_node` | `race_write`, `deep_write`, `compose`, `knowledge.save` | Report + metrics |
+| `report_node` | `race_write`, `deep_write` (+ **writer-level checks**), `compose`, `knowledge.save` | Report + metrics |
 | `runtime._snapshot_dict` | NDJSON frame | AgentSnapshot về API |
 
 **State là bus.** Mọi node nhận `ResearchState`, trả dict patch. Rẽ nhánh chỉ nằm `builder.py`. Đổi topology: sửa builder, không sửa `search.py`.
@@ -305,7 +443,7 @@ Chỉ đổi `.env` → `docker compose up -d` (restart, không build).
 
 ---
 
-## Đánh giá & Trust Mechanisms
+## Đánh giá & Trust Mechanisms (Updated 2026-09-07)
 
 ### Tier-A: Deterministic Gates (Runtime)
 - **File:** `eval/trust_bench.py`
@@ -330,49 +468,99 @@ Chỉ đổi `.env` → `docker compose up -d` (restart, không build).
   - Flagged claims with reasons
   - Historical trend tracking
 
+### Tier-C: Writer-Level Quality Controls (NEW 2026-09-07)
+- **File:** `report/deep_write.py`
+- **Checks:**
+  - **Anti-compositing**: Forbid multi-source workflows unless single-source evaluation
+  - **Per-dimension enforcement**: Each comparison dimension must have dedicated subsection
+  - **Conceptual accuracy**: Verify mechanism descriptions against source quotes
+  - **Source consistency**: Worked example steps from same source [n]
+- **When:** During LLM memo generation (writer instructions)
+- **Action:** Instruct writer to avoid compositing, enforce structure, verify accuracy
+
 ### Quality Metrics
-- **Source Diversity:** Track unique domains per dimension
+- **Source Diversity:** Track unique domains per dimension; **40% code cap**
 - **Citation Density:** Claims per 1000 words
-- **Confidence Score:** Calibrated with gap penalties
+- **Confidence Score:** Calibrated with gap penalties (floor 55, excellent >= 75)
 - **Hallucination Rate:** From independent audit
 - **Regeneration Count:** Times memo had to be rewritten
+- **Stagnation Iterations:** Iterations with <2% improvement before early stop
 
 ---
 
-## File nguồn chính (Updated 2026-09-06)
+## File nguồn chính (Updated 2026-09-07)
 
 ### Core Pipeline
-- `apps/agent/app/graph/builder.py`
+- `apps/agent/app/graph/builder.py` ⭐ (smart stopping 2% threshold)
 - `apps/agent/app/graph/state.py`
-- `apps/agent/app/graph/nodes/`
+- `apps/agent/app/graph/nodes/scholar.py` ⭐ (domain balancing)
+- `apps/agent/app/graph/nodes/search.py` ⭐ (domain balancing)
 - `apps/agent/app/runtime.py`
 - `apps/agent/app/main.py`
 
 ### Research Logic
 - `apps/agent/app/domain/research_depth.py`
 - `apps/agent/app/domain/retrieval_limits.py`
-- `apps/agent/app/domain/coverage.py` (+ confidence penalties)
-- `apps/agent/app/domain/adversarial.py` (+ semantic gates)
+- `apps/agent/app/domain/coverage.py` ⭐ (65% threshold alignment)
+- `apps/agent/app/domain/adversarial.py` (quantitative extraction documented)
 
-### Quality Assurance (NEW)
-- `apps/agent/app/domain/overclaim.py` ⭐
-- `apps/agent/app/domain/citation_relevance.py` ⭐
-- `apps/agent/app/domain/paper_concepts.py` ⭐
-- `apps/agent/app/domain/memo_quality.py` ⭐
+### Quality Assurance
+- `apps/agent/app/domain/overclaim.py`
+- `apps/agent/app/domain/citation_relevance.py`
+- `apps/agent/app/domain/paper_concepts.py`
+- `apps/agent/app/domain/memo_quality.py` ⭐ (65% retrieval threshold)
 
-### Report Generation
+### Report Generation (Writer-Level Controls)
 - `apps/agent/app/report/race_write.py`
-- `apps/agent/app/report/deep_write.py`
-- `apps/agent/app/report/compose.py` (+ overclaim softening)
+- `apps/agent/app/report/deep_write.py` ⭐⭐ (writer instructions: anti-compositing, per-dimension, conceptual accuracy, source verification)
+- `apps/agent/app/report/compose.py` (overclaim softening)
 - `apps/agent/app/report/memo_structure.py`
 
 ### Evaluation & Trust
 - `apps/agent/app/eval/runner.py`
 - `apps/agent/app/eval/trust_bench.py`
-- `apps/agent/app/eval/trust_bench_e2e.py` ⭐
-- `apps/agent/tests/test_trust_bench_e2e.py` ⭐
+- `apps/agent/app/eval/trust_bench_e2e.py`
+- `apps/agent/tests/test_trust_bench_e2e.py`
 
 ### Contracts
 - `packages/contracts/src/index.ts` (`AgentSnapshotSchema`)
 
-⭐ = New files added in 2026 Q3 quality upgrade
+### Documentation (NEW)
+- `COMPLETE_FIX_SUMMARY.md` - Comprehensive fix summary with before/after
+- `QUANTITATIVE_FINDINGS_ANALYSIS.md` - Why extraction is conservative by design
+- `docs/agent-research-system.md` - This file (architecture overview)
+
+⭐ = Updated 2026-09-07 (writer-level quality improvements + logic error fixes)
+⭐⭐ = Major architectural update with writer instruction rigor
+
+---
+
+## Appendix: Key Thresholds & Constants (2026-09-07)
+
+### Coverage & Quality Thresholds
+- **Excellent quality (early stop)**: must_pct >= 75% AND depth_score >= 80%
+- **Retrieval issue boundary**: must_pct < 65% (aligned across coverage.py + memo_quality.py)
+- **Stagnation detection**: <2% coverage change AND <3 score change over 3 iterations
+- **Domain balance**: Max 40% code papers in retrieval results
+
+### Budget Pools (Deep Mode)
+- **Retrieval calls**: 28 (search, scholar, docs)
+- **Enrich calls**: 24 (full-page fetch)
+- **Total tool calls**: 52
+- **Reserve for critic loop**: 10 retrieval calls
+- **Max iterations**: 6 (but smart stopping may exit earlier)
+
+### Quality Regeneration
+- **Max regenerations**: 2 per memo
+- **Stagnation check**: Prevent infinite quality loops
+
+### Writer Generation Targets
+- **Deep memo length**: ~5500 words
+- **Subsection depth**: 250-450 words per dimension
+- **Quantitative table**: ONLY outcome metrics (%, ms, FLOP), NOT setup params
+
+---
+
+**Changelog:**
+- 2026-09-07: Writer-level quality improvements (W1-W5), logic error fixes (domain balance, stagnation, thresholds), quantitative extraction documentation
+- 2026-09-06: Q3 quality breakthrough (7 improvements: per-dimension retrieval, tier classification, overclaim, confidence penalties, citation relevance, scholar improvements, quality regeneration, trust bench e2e)

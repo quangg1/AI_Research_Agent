@@ -130,7 +130,10 @@ def _blob(ev: dict) -> str:
 
 
 def _anchors(query: str) -> list[str]:
-    return distinctive_terms(user_goal(query), limit=10)
+    """Distinctive terms for anchor scoring, using goal_with_named_subjects
+    to recover entities from Constraints/Must cover lines."""
+    from app.domain.textutil import goal_with_named_subjects
+    return distinctive_terms(goal_with_named_subjects(query), limit=10)
 
 
 def _anchor_hits(blob: str, anchors: list[str]) -> int:

@@ -514,22 +514,10 @@ def subquestions_for(query: str, remaining_calls: int = 8) -> list[SubQuery]:
     # found zero named entities even though they survived verbatim one line
     # down, e.g. "Constraints: ...Must cover representative frameworks:
     # OpenAI Agents, Anthropic Claude-based agents, LangGraph, AutoGen, and
-    # CrewAI." Pull the "Constraints:"/"Must cover:" lines' own content back
-    # in (stripped of their "Label:" prefix, in that priority order, ahead
-    # of `goal`) so entity detection sees where the brief actually records
-    # named comparison subjects. The other metadata labels (Sector,
-    # Geography, Horizon, Decision) are always generic category text, not
-    # named products — mixing them in just let words like "Comparative" or
-    # benchmark names crowd out the real subjects before the [:8] slice below.
-    lines_by_label: dict[str, list[str]] = {}
-    for ln in (ln.strip() for ln in (query or "").splitlines()):
-        m = GOAL_META_RE.match(ln)
-        if m:
-            lines_by_label.setdefault(m.group(1).lower(), []).append(GOAL_META_RE.sub("", ln, count=1).strip())
-    meta_content = " ".join(
-        content for label in ("constraints", "must cover") for content in lines_by_label.get(label, [])
-    )
-    named = entity_candidates(f"{meta_content} {goal}".strip(), limit=16)[:8]
+    # CrewAI." Use goal_with_named_subjects to recover these entities.
+    from app.domain.textutil import goal_with_named_subjects
+    
+    named = entity_candidates(goal_with_named_subjects(query), limit=16)[:8]
     for name in named:
         out.append(
             SubQuery(

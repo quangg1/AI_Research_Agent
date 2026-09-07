@@ -116,8 +116,13 @@ def is_comparison_query(query: str) -> bool:
 
 
 def named_systems(query: str) -> list[str]:
-    """Specific named subjects in the question, detected without any domain list."""
-    return entity_candidates(user_goal(query), limit=8)
+    """Specific named subjects in the question, detected without any domain list.
+    
+    Uses goal_with_named_subjects to recover entities from Constraints/Must cover
+    that briefing paraphrasing may have removed from the goal line.
+    """
+    from app.domain.textutil import goal_with_named_subjects
+    return entity_candidates(goal_with_named_subjects(query), limit=8)
 
 
 def host_of(url: str) -> str:

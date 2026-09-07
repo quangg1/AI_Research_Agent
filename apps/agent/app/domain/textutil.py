@@ -77,6 +77,40 @@ def user_goal(query: str) -> str:
     return " ".join(goal_lines).strip() or lines[0]
 
 
+def goal_with_named_subjects(query: str) -> str:
+    """user_goal + Constraints:/Must cover: content where named entities survive.
+    
+    After briefing paraphrases the goal line, named entities (framework names,
+    product names) often disappear from that line but survive in the
+    Constraints: or Must cover: metadata lines. This function recovers them
+    for entity detection, anchor scoring, and comparison table building.
+    
+    Fixes: Entity blindness where pipeline couldn't see frameworks explicitly
+    listed in the original query.
+    """
+    goal = user_goal(query)
+    
+    # Extract Constraints and Must cover lines where named subjects survive
+    lines_by_label: dict[str, list[str]] = {}
+    for ln in (ln.strip() for ln in (query or "").splitlines()):
+        m = GOAL_META_RE.match(ln)
+        if m:
+            label = m.group(1).lower()
+            content = GOAL_META_RE.sub("", ln, count=1).strip()
+            lines_by_label.setdefault(label, []).append(content)
+    
+    # Only pull from Constraints and Must cover (not Sector, Geography, etc.)
+    meta_content = " ".join(
+        content 
+        for label in ("constraints", "must cover") 
+        for content in lines_by_label.get(label, [])
+    )
+    
+    # Combine goal + metadata content
+    combined = f"{meta_content} {goal}".strip()
+    return combined if combined else goal
+
+
 def tokens(text: str) -> list[str]:
     return [m.group(0) for m in WORD_RE.finditer(text or "")]
 

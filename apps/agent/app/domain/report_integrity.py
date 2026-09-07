@@ -150,6 +150,32 @@ def enforce_report_integrity(
         if worked and _worked_example_mostly_ungrounded(worked, citations=citations or [], evidence=evidence):
             body = _insert_illustrative_prefix(body, "Worked example")
             flags.append("worked_example_ungrounded")
+    
+    # NEW: Label composite worked examples instead of triggering regeneration
+    # Check if Worked example cites multiple sources without "Composite" label
+    worked = _section(body, "Worked example")
+    if worked:
+        cite_nums = set()
+        for m in CITE_RE.finditer(worked):
+            parts = m.group(1).split(",")
+            for p in parts:
+                digits = re.search(r"\d+", p.strip())
+                if digits:
+                    cite_nums.add(int(digits.group(0)))
+        
+        if len(cite_nums) >= 2 and "composite" not in worked.lower():
+            # Add composite label instead of regenerating
+            composite_prefix = (
+                "> **Composite** — steps drawn from multiple separate systems "
+                "that were not evaluated together.\n\n"
+            )
+            body = _insert_prefix_to_section(body, "Worked example", composite_prefix)
+            flags.append("worked_example_composite_labeled")
+    
+    # NEW: Drop empty sections (< 3 lines, no citations)
+    body = _drop_empty_sections(body)
+    if _drop_empty_sections(body) != body:
+        flags.append("empty_sections_dropped")
 
     # Independent of quant_absent: _sanitize_decision_rule_numbers only drops
     # numbers with NO citation, trusting any [n] as proof — but a cited
@@ -734,6 +760,59 @@ def _dedupe_limitations(items: list[str]) -> list[str]:
         seen.add(key)
         out.append(item.strip())
     return out[:20]
+
+
+def _insert_prefix_to_section(body: str, section_name: str, prefix: str) -> str:
+    """Insert a prefix (like Composite label) at the start of a section's content."""
+    pattern = re.compile(rf"(##\s+{re.escape(section_name)}\s*\n)", re.I)
+    match = pattern.search(body)
+    if not match:
+        return body
+    
+    insert_pos = match.end()
+    return body[:insert_pos] + prefix + body[insert_pos:]
+
+
+def _drop_empty_sections(body: str) -> str:
+    """Drop sections with < 3 content lines and no citations.
+    
+    Prevents publishing headings like '## Worked example' with only intro text
+    but no actual content, which happens when regeneration loops strip content
+    to pass checks.
+    """
+    sections = re.split(r"(^##\s+.+$)", body, flags=re.M)
+    out_parts: list[str] = []
+    
+    i = 0
+    while i < len(sections):
+        part = sections[i]
+        
+        # If this is a section header
+        if re.match(r"^##\s+", part):
+            # Look at the next part (section content)
+            if i + 1 < len(sections):
+                content = sections[i + 1]
+                
+                # Count non-empty lines
+                content_lines = [ln for ln in content.splitlines() if ln.strip()]
+                has_citations = CITE_RE.search(content)
+                
+                # Drop if too short and no citations
+                if len(content_lines) < 3 and not has_citations:
+                    i += 2  # Skip both header and content
+                    continue
+            
+            # Keep this section
+            out_parts.append(part)
+            if i + 1 < len(sections):
+                out_parts.append(sections[i + 1])
+            i += 2
+        else:
+            # Non-header part (like intro before first ##)
+            out_parts.append(part)
+            i += 1
+    
+    return "".join(out_parts)
 
 
 def audit_body_numbers(

@@ -200,6 +200,8 @@ def check_memo_quality(body_markdown: str, *, evidence: list[dict] | None = None
         )
     
     # Check 5: Composite worked example without label
+    # NOTE: Don't trigger regeneration - will be labeled deterministically
+    # in enforce_report_integrity to avoid regeneration loop
     composite_count, composite_examples = _detect_composite_worked_example(body_markdown)
     if composite_count > 0:
         issues.append(
@@ -213,7 +215,7 @@ def check_memo_quality(body_markdown: str, *, evidence: list[dict] | None = None
         or saturation_count >= 2
         or filler_count >= 1
         or placeholder_count > 0
-        or composite_count > 0
+        # composite_count removed - handled by labeling instead
     )
     
     return {

@@ -36,6 +36,7 @@ def audit_memo_integrity(
     text: str,
     *,
     citations: list[dict] | None = None,
+    evidence: list[dict] | None = None,
     executive_summary: str = "",
     at_a_glance: str = "",
 ) -> list[str]:
@@ -96,6 +97,11 @@ def audit_memo_integrity(
     tone = _tone_mismatch(blob)
     if tone:
         notes.append(tone)
+    
+    # NEW: Verify all numbers in body, not just Quantitative table
+    # Catches misattributions in prose, Comparison, Worked example
+    body_number_issues = audit_body_numbers(blob, citations=citations, evidence=evidence)
+    notes.extend(body_number_issues)
 
     return notes
 
@@ -674,3 +680,76 @@ def _dedupe_limitations(items: list[str]) -> list[str]:
         seen.add(key)
         out.append(item.strip())
     return out[:20]
+
+
+def audit_body_numbers(
+    body: str,
+    *,
+    citations: list[dict] | None = None,
+    evidence: list[dict] | None = None,
+) -> list[str]:
+    """Verify every number + citation pair in memo body, not just Quantitative table.
+    
+    Catches misattributions like '16ms [7 specialist]' where [7] doesn't mention 16ms.
+    Runs on ALL sections (prose, Comparison table, Worked example) to close the gap
+    where audit_quantitative_table silently no-ops when section uses bullet format.
+    
+    Returns list of issues (empty if all numbers are grounded).
+    """
+    from app.domain.quantitative_verify import _row_numbers, number_in_source
+    
+    issues: list[str] = []
+    citations = citations or []
+    evidence = evidence or []
+    
+    # Build citation → evidence blob lookup
+    by_n: dict[int, str] = {}
+    for cit in citations:
+        n = cit.get("n")
+        url = cit.get("url", "")
+        if not n:
+            continue
+        # Find evidence blob for this citation
+        for ev in evidence:
+            if ev.get("url") == url:
+                blob = f"{ev.get('title', '')} {ev.get('snippet', '')} {ev.get('quote', '')} {ev.get('text', '')}"
+                by_n[n] = blob
+                break
+    
+    # Extract citation numbers from text like [7 specialist] → [7]
+    def _cite_nums(text: str) -> list[int]:
+        nums: list[int] = []
+        for m in CITE_RE.finditer(text):
+            parts = m.group(1).split(",")
+            for p in parts:
+                digits = re.search(r"\d+", p.strip())
+                if digits:
+                    nums.append(int(digits.group(0)))
+        return nums
+    
+    # Scan every line with both numbers and citations
+    for line in (body or "").splitlines():
+        if not line.strip() or "[" not in line:
+            continue
+        
+        numbers = _row_numbers(line)
+        cite_ns = _cite_nums(line)
+        
+        if not numbers or not cite_ns:
+            continue
+        
+        # For each number in this line, check if ANY cited source contains it
+        for num in numbers:
+            found_in_any = False
+            for n in cite_ns:
+                blob = by_n.get(n, "")
+                if blob and number_in_source(num, blob):
+                    found_in_any = True
+                    break
+            
+            if not found_in_any and cite_ns:
+                # Number present, citations present, but number not in any cited source
+                cite_str = ", ".join(f"[{n}]" for n in cite_ns[:3])
+                issues.append(f"{num} cited to {cite_str} but not found in those sources")
+    
+    return issues

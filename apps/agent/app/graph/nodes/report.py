@@ -22,6 +22,7 @@ from app.report.compose import (
     memo_is_user_clean,
 )
 from app.domain.adversarial import method_notes_for_writer
+from app.report.adaptive_depth import calculate_adaptive_target, format_writer_guidance
 from app.report.deep_write import (
     claims_prompt,
     compress_max_tokens,
@@ -426,7 +427,22 @@ def _llm_report(
     )
 
     depth = (state.get("brief") or {}).get("depth") or "standard"
-    min_words = word_target(depth)
+    
+    # Calculate adaptive word target based on actual evidence
+    coverage = critic.get("coverage") or {}
+    adaptive_target = calculate_adaptive_target(dossier, coverage)
+    min_words = adaptive_target["total_words"]
+    adaptive_guidance = format_writer_guidance(adaptive_target)
+    
+    # Log adaptive depth for transparency
+    event("adaptive_depth_calculated", {
+        "target_words": min_words,
+        "coverage_tier": adaptive_target["coverage_tier"],
+        "evidence_count": adaptive_target["evidence_count"],
+        "dimension_count": adaptive_target["dimension_count"],
+        "rationale": adaptive_target["rationale"]
+    })
+    
     dossier = filter_dossier_for_writer(
         prioritize_dossier_for_writer(dossier),
         depth=depth,
@@ -469,6 +485,7 @@ def _llm_report(
         prior_note=prior_note,
         dimension_list=dimension_list,
         method_block=method_block,
+        adaptive_guidance=adaptive_guidance,
     )
     from app.report.race_write import (
         criteria_block,
@@ -816,7 +833,20 @@ def _regenerate_for_quality(state: ResearchState) -> dict:
     # Generate new report with quality feedback
     dossier = build_evidence_dossier(state.get("query") or "", retrieved, critic.get("coverage") or {})
     depth = (state.get("brief") or {}).get("depth") or "standard"
-    min_words = word_target(depth)
+    
+    # Calculate adaptive word target based on actual evidence
+    coverage = critic.get("coverage") or {}
+    adaptive_target = calculate_adaptive_target(dossier, coverage)
+    min_words = adaptive_target["total_words"]
+    adaptive_guidance = format_writer_guidance(adaptive_target)
+    
+    event("adaptive_depth_calculated_regen", {
+        "target_words": min_words,
+        "coverage_tier": adaptive_target["coverage_tier"],
+        "evidence_count": adaptive_target["evidence_count"],
+        "dimension_count": adaptive_target["dimension_count"],
+        "rationale": adaptive_target["rationale"]
+    })
     
     dossier = filter_dossier_for_writer(
         prioritize_dossier_for_writer(dossier),
@@ -857,6 +887,7 @@ def _regenerate_for_quality(state: ResearchState) -> dict:
         prior_note="",
         dimension_list=dimension_list,
         method_block=method_block,
+        adaptive_guidance=adaptive_guidance,
     ) + quality_note
     
     from app.report.race_write import (

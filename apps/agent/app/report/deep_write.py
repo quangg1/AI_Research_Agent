@@ -277,6 +277,7 @@ def writer_prompt(
     prior_note: str,
     dimension_list: str,
     method_block: str = "",
+    adaptive_guidance: str | None = None,
 ) -> str:
     depth = str((brief or {}).get("depth") or "standard")
     limit = notes_max_chars(depth)
@@ -304,7 +305,7 @@ def writer_prompt(
         f"Research findings (cleaned notes — ground-truth excerpts):\n{notes[:limit]}\n\n"
         f"Citation ledger (ONLY these [n] are legal):\n{ledger}\n\n"
         "Write a reader-facing deep-research memo that ANSWERS the question.\n"
-        f"Target length: at least {min_words} words of substantive prose. "
+        f"{adaptive_guidance or f'Target length: at least {min_words} words of substantive prose.'}\n"
         "Concise ≠ short: avoid repeating the same thesis, but DO use the full budget to surface "
         "every distinct fact, metric, and named study from the notes.\n"
         "Anti-redundancy (critical):\n"

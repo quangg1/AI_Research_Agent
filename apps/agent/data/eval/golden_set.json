@@ -1,0 +1,282 @@
+{
+  "version": "1.0",
+  "description": "Regression test suite for Kiln agent quality. Run before each PR merge to catch regressions in structure, coverage, and hallucination rate.",
+  "test_cases": [
+    {
+      "id": "comparison_multi_dimension_rag",
+      "category": "comparison",
+      "query": "How can retrieval-augmented generation (RAG) systems reduce hallucinations in large language models when answering domain-specific questions, and how do different retrieval strategies, embedding models, reranking methods, and context-window configurations affect factual accuracy, retrieval quality, latency, and overall system performance?",
+      "rationale": "Multi-dimension comparison question. Tests per-dimension subsection enforcement, domain balancing (should not be 80% GitHub), adaptive depth, and quantitative extraction.",
+      "expected_structure": {
+        "required_sections": [
+          "Executive summary",
+          "Key findings",
+          "Detailed analysis",
+          "Worked example",
+          "Contradictions & debates",
+          "Decision rule",
+          "Uncertainties & gaps",
+          "Source quality",
+          "References"
+        ],
+        "required_subsections_in_detailed_analysis": [
+          "retrieval strategies",
+          "embedding models",
+          "reranking methods",
+          "context-window configurations"
+        ],
+        "min_subsections_detailed_analysis": 4,
+        "max_composite_without_label": 0,
+        "quantitative_findings_optional": true
+      },
+      "expected_quality": {
+        "min_coverage_pct": 65,
+        "max_code_ratio": 0.45,
+        "max_hallucination_rate": 0.20,
+        "min_unique_sources": 6,
+        "max_citation_stacking_per_1000_words": 3
+      }
+    },
+    {
+      "id": "implementation_specific_agentic_loop",
+      "category": "implementation",
+      "query": "How does the agentic loop in DeepSeek-R1 differ from single-pass models like GPT-4, and what specific mechanisms enable multi-turn reasoning vs. reflection?",
+      "rationale": "Implementation question focused on specific systems. Tests worked example source consistency (should NOT composite DeepSeek + GPT-4 workflows), conceptual accuracy (reflection ≠ truncation), and primary source requirement.",
+      "expected_structure": {
+        "required_sections": [
+          "Executive summary",
+          "Key findings",
+          "Detailed analysis",
+          "Worked example",
+          "Decision rule",
+          "Source quality",
+          "References"
+        ],
+        "required_subsections_in_detailed_analysis": [
+          "agentic loop mechanisms",
+          "multi-turn reasoning",
+          "reflection mechanisms",
+          "comparison with single-pass"
+        ],
+        "min_subsections_detailed_analysis": 3,
+        "max_composite_without_label": 0,
+        "worked_example_must_be_single_source": true
+      },
+      "expected_quality": {
+        "min_coverage_pct": 60,
+        "max_code_ratio": 0.50,
+        "max_hallucination_rate": 0.15,
+        "min_primary_sources": 2,
+        "requires_specialist_research": true
+      }
+    },
+    {
+      "id": "theory_scaling_laws",
+      "category": "theory",
+      "query": "What are the empirical scaling laws for LLM training compute vs. model performance, and how do different architectural choices (dense vs. MoE, shallow vs. deep) affect these relationships?",
+      "rationale": "Theory question with quantitative requirements. Tests quantitative extraction (should have numbers with benchmarks), domain balancing (should prefer arXiv over GitHub), and conceptual accuracy.",
+      "expected_structure": {
+        "required_sections": [
+          "Executive summary",
+          "Key findings",
+          "Detailed analysis",
+          "Quantitative findings",
+          "Decision rule",
+          "Uncertainties & gaps",
+          "Source quality",
+          "References"
+        ],
+        "required_subsections_in_detailed_analysis": [
+          "scaling laws",
+          "compute-performance relationships",
+          "architectural choices"
+        ],
+        "min_subsections_detailed_analysis": 3,
+        "quantitative_findings_required": true,
+        "min_quantitative_rows": 3
+      },
+      "expected_quality": {
+        "min_coverage_pct": 65,
+        "max_code_ratio": 0.30,
+        "max_hallucination_rate": 0.10,
+        "min_unique_sources": 5,
+        "requires_specialist_research": true,
+        "min_peer_reviewed_sources": 3
+      }
+    },
+    {
+      "id": "out_of_scope_medical",
+      "category": "out_of_scope",
+      "query": "What are the best treatments for stage 4 lung cancer, and how do immunotherapy and chemotherapy compare in terms of survival rates?",
+      "rationale": "Medical question outside AI/ML domain. Tests routing_policy out-of-scope detection. Should NOT produce a full research memo.",
+      "expected_routing": {
+        "should_be_out_of_scope": true,
+        "expected_status": "out_of_scope",
+        "max_iterations": 1
+      }
+    },
+    {
+      "id": "sparse_evidence_model_collapse",
+      "category": "sparse_evidence",
+      "query": "How does recursive model distillation lead to model collapse in synthetic data training, and what are the mathematical conditions for collapse vs. stability?",
+      "rationale": "Specific technical question that may have limited evidence. Tests graceful degradation (should NOT pad to 5500 words if evidence is thin), adaptive depth, and honest gap reporting.",
+      "expected_structure": {
+        "required_sections": [
+          "Executive summary",
+          "Key findings",
+          "Detailed analysis",
+          "Uncertainties & gaps",
+          "Limitations",
+          "Source quality",
+          "References"
+        ],
+        "min_subsections_detailed_analysis": 2,
+        "quantitative_findings_optional": true,
+        "must_admit_gaps": true
+      },
+      "expected_quality": {
+        "min_coverage_pct": 50,
+        "max_code_ratio": 0.40,
+        "max_hallucination_rate": 0.15,
+        "min_unique_sources": 4,
+        "adaptive_depth_expected": true,
+        "expected_word_count_range": [1500, 3500]
+      }
+    },
+    {
+      "id": "benchmark_mmlu_vs_gpqa",
+      "category": "benchmark",
+      "query": "How do MMLU and GPQA differ as evaluation benchmarks for LLMs, and which one better predicts real-world reasoning capability?",
+      "rationale": "Benchmark comparison question. Tests comparison table structure, quantitative extraction (benchmark scores), and citation relevance (should cite benchmark papers, not generic LLM papers).",
+      "expected_structure": {
+        "required_sections": [
+          "Executive summary",
+          "Key findings",
+          "Detailed analysis",
+          "Comparison",
+          "Quantitative findings",
+          "Decision rule",
+          "Source quality",
+          "References"
+        ],
+        "required_subsections_in_detailed_analysis": [
+          "MMLU characteristics",
+          "GPQA characteristics",
+          "real-world prediction"
+        ],
+        "min_subsections_detailed_analysis": 3,
+        "comparison_table_required": true,
+        "quantitative_findings_required": true,
+        "min_quantitative_rows": 2
+      },
+      "expected_quality": {
+        "min_coverage_pct": 65,
+        "max_code_ratio": 0.35,
+        "max_hallucination_rate": 0.12,
+        "min_unique_sources": 5,
+        "requires_specialist_research": true
+      }
+    },
+    {
+      "id": "implementation_light_agent_framework",
+      "category": "implementation",
+      "query": "What are the key differences between LangGraph, CrewAI, and AutoGPT as agent frameworks, and which one is better for production use cases requiring reliability and observability?",
+      "rationale": "Implementation comparison with multiple named systems. Tests anti-compositing (should NOT create unified workflow), per-dimension enforcement (each framework separate subsection), and domain balancing (expect GitHub repos but cap at 40%).",
+      "expected_structure": {
+        "required_sections": [
+          "Executive summary",
+          "Key findings",
+          "Detailed analysis",
+          "Comparison",
+          "Worked example",
+          "Decision rule",
+          "Source quality",
+          "References"
+        ],
+        "required_subsections_in_detailed_analysis": [
+          "LangGraph",
+          "CrewAI",
+          "AutoGPT",
+          "reliability",
+          "observability"
+        ],
+        "min_subsections_detailed_analysis": 4,
+        "comparison_table_required": true,
+        "max_composite_without_label": 0
+      },
+      "expected_quality": {
+        "min_coverage_pct": 60,
+        "max_code_ratio": 0.45,
+        "max_hallucination_rate": 0.18,
+        "min_unique_sources": 6,
+        "requires_implementation_evidence": true
+      }
+    },
+    {
+      "id": "edge_case_single_word_query",
+      "category": "edge_case",
+      "query": "RAG",
+      "rationale": "Single-word query. Tests briefing interpretation, query expansion, and whether system asks for clarification or attempts research.",
+      "expected_routing": {
+        "should_handle_gracefully": true,
+        "may_request_clarification": true,
+        "if_researches_min_coverage": 50
+      }
+    },
+    {
+      "id": "folklore_detection_always_better",
+      "category": "folklore",
+      "query": "Why are larger language models always better than smaller ones for every task?",
+      "rationale": "Folklore claim embedded in question. Tests grounding.py FORBIDDEN folklore detection and whether memo challenges the premise.",
+      "expected_structure": {
+        "required_sections": [
+          "Executive summary",
+          "Key findings",
+          "Detailed analysis",
+          "Contradictions & debates",
+          "Decision rule",
+          "Source quality",
+          "References"
+        ],
+        "must_challenge_premise": true,
+        "must_cite_counter_evidence": true
+      },
+      "expected_quality": {
+        "min_coverage_pct": 60,
+        "max_hallucination_rate": 0.15,
+        "must_not_recommend_folklore": true
+      }
+    },
+    {
+      "id": "fast_iteration_test",
+      "category": "fast",
+      "query": "What is chain-of-thought prompting?",
+      "rationale": "Simple definitional question. Tests smart stopping (should stop at iteration 2-3, not 6), efficient budget use, and concise synthesis.",
+      "expected_structure": {
+        "required_sections": [
+          "Executive summary",
+          "Key findings",
+          "Detailed analysis",
+          "Source quality",
+          "References"
+        ],
+        "min_subsections_detailed_analysis": 2,
+        "quantitative_findings_optional": true
+      },
+      "expected_quality": {
+        "min_coverage_pct": 70,
+        "max_iterations": 3,
+        "max_tool_calls": 30,
+        "expected_word_count_range": [1200, 2500]
+      }
+    }
+  ],
+  "baseline_metrics": {
+    "note": "These are initial baselines. Will be updated as we collect regression data.",
+    "average_coverage_pct": 65,
+    "average_hallucination_rate": 0.15,
+    "average_code_ratio": 0.38,
+    "average_iterations": 4.2,
+    "average_tool_calls": 42
+  }
+}

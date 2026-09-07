@@ -1,0 +1,58 @@
+name: Regression Tests
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'apps/agent/**'
+      - 'apps/agent/data/eval/**'
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'apps/agent/**'
+
+jobs:
+  regression-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 2  # Need history for baseline comparison
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          cd apps/agent
+          pip install -r requirements.txt
+      
+      - name: Run full regression suite
+        run: |
+          cd apps/agent
+          python -m app.eval.regression_check --all
+      
+      - name: Upload regression report
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: regression-report
+          path: apps/agent/data/eval/regression_report.json
+          retention-days: 30
+      
+      - name: Comment on PR (if regression)
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '❌ **Regression tests FAILED**\n\nPlease review the regression report in the workflow artifacts and fix the issues before merging.'
+            })

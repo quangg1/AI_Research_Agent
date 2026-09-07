@@ -10,6 +10,9 @@ from app.domain.research_intent import user_goal
 from app.domain.schema import AgentName, SubQuery
 from app.graph.serde import dump
 
+# Sections where citation lists should remain intact (not be stripped/decluttered)
+PROTECTED_SECTIONS = ("Source quality", "References")
+
 UNRESOLVED_CITE_RE = re.compile(r"\[\?\]")
 _CITE_ONE = r"\d+(?:\s+[A-Za-z]+)?"
 CITE_RE = re.compile(rf"\[({_CITE_ONE}(?:\s*,\s*{_CITE_ONE})*)\]")
@@ -503,6 +506,9 @@ def _strip_ungrounded_entity_citations(
     papers that never mention any of the three (grepped the raw evidence
     text directly). Strip a citation that doesn't hold up for the entity
     the line is actually about, rather than let a false source stand.
+    
+    Skips PROTECTED_SECTIONS (Source quality, References) where citation
+    lists should remain intact to prevent ****** in reference entries.
     """
     if not (body or "").strip() or not citations:
         return body or "", 0
@@ -524,30 +530,52 @@ def _strip_ungrounded_entity_citations(
         url = (cite.get("url") or "").strip().rstrip("/").lower()
         ev = by_url.get(url) or {}
         return _evidence_blob(ev) or _evidence_blob(cite)
-
+    
+    # Split body at ## section headers to identify protected sections
+    sections = re.split(r"(^##\s+.+$)", body, flags=re.M)
     stripped = 0
-    out_lines: list[str] = []
-    for line in (body or "").splitlines():
-        mentioned = [pat for pat in entity_res if pat.search(line)]
-        if not mentioned or not CITE_RE.search(line):
-            out_lines.append(line)
+    out_parts: list[str] = []
+    
+    in_protected = False
+    for part in sections:
+        # Check if this is a section header
+        if re.match(r"^##\s+", part):
+            # Check if it's a protected section
+            section_name = re.sub(r"^##\s+", "", part).strip()
+            in_protected = any(protected in section_name for protected in PROTECTED_SECTIONS)
+            out_parts.append(part)
             continue
+        
+        # If in protected section, skip processing
+        if in_protected:
+            out_parts.append(part)
+            continue
+        
+        # Process non-protected section
+        out_lines: list[str] = []
+        for line in part.splitlines():
+            mentioned = [pat for pat in entity_res if pat.search(line)]
+            if not mentioned or not CITE_RE.search(line):
+                out_lines.append(line)
+                continue
 
-        def _repl(match: re.Match) -> str:
-            nonlocal stripped
-            cite_ns = []
-            for piece in match.group(1).split(","):
-                digits = re.match(r"\s*(\d+)", piece)
-                if digits:
-                    cite_ns.append(int(digits.group(1)))
-            blobs = [b for n in cite_ns if (b := _blob_for(n)).strip()]
-            if not blobs or any(pat.search(b) for pat in mentioned for b in blobs):
-                return match.group(0)
-            stripped += 1
-            return ""
+            def _repl(match: re.Match) -> str:
+                nonlocal stripped
+                cite_ns = []
+                for piece in match.group(1).split(","):
+                    digits = re.match(r"\s*(\d+)", piece)
+                    if digits:
+                        cite_ns.append(int(digits.group(1)))
+                blobs = [b for n in cite_ns if (b := _blob_for(n)).strip()]
+                if not blobs or any(pat.search(b) for pat in mentioned for b in blobs):
+                    return match.group(0)
+                stripped += 1
+                return ""
 
-        out_lines.append(CITE_RE.sub(_repl, line).rstrip())
-    return "\n".join(out_lines), stripped
+            out_lines.append(CITE_RE.sub(_repl, line).rstrip())
+        out_parts.append("\n".join(out_lines))
+    
+    return "".join(out_parts), stripped
 
 
 def _sanitize_decision_rule_numbers(rule: str, *, quant_absent: bool) -> str:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from langgraph.types import interrupt
 
 from app.domain.knowledge import depth_of, mark_reused, save_answer
+from app.domain.structure_validation import validate_memo_structure
 from app.graph.serde import dump, pythonize
 from app.graph.state import ResearchState
 from app.observability.logging import event
@@ -41,6 +42,31 @@ def memo_gate_node(state: ResearchState) -> dict:
     
     # NEW: Pass coverage to detect retrieval vs generation issues
     quality_check = check_memo_quality(body_markdown, evidence=evidence, coverage=coverage)
+    
+    # NEW (P3): Tier-C structural validation (programmatic checks for prompt-only rules)
+    # Extract dimension names from dossier for per-dimension check
+    dossier = state.get("critic", {}).get("coverage", {}).get("dossier") or []
+    required_dimensions = [d.get("label") for d in dossier if d.get("label")] if dossier else None
+    
+    structure_validation = validate_memo_structure(
+        body_markdown,
+        required_dimensions=required_dimensions,
+        citation_stacking_threshold=3.0
+    )
+    
+    # Integrate structural errors into quality_check issues
+    if not structure_validation["overall_pass"]:
+        quality_check["issues"].extend(structure_validation["errors"])
+        quality_check["should_regenerate"] = True
+        event("memo_gate_structure_violations", 
+              error_count=structure_validation["error_count"],
+              errors=structure_validation["errors"])
+    
+    # Log structural warnings (don't block, but track)
+    if structure_validation["warning_count"] > 0:
+        event("memo_gate_structure_warnings",
+              warning_count=structure_validation["warning_count"],
+              warnings=structure_validation["warnings"])
 
     # Track regeneration attempts to prevent infinite loops
     quality_regen_count = int(state.get("quality_regeneration_count") or 0)

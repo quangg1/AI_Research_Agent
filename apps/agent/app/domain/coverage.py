@@ -299,7 +299,14 @@ def score_must_answer(query: str, evidence: list[dict], slots: list[dict] | None
         if evidence_type_of(e, query) in {"primary_paper", "official_repo", "official_docs"}
         and not e.get("off_topic")
     )
-    hosts = {host_of(e.get("url") or "") for e in tagged if e.get("url")}
+    # Calculate work diversity (distinct canonical works, not just hosts)
+    work_ids = [work_identity(e.get("url", ""), e.get("title", "")) for e in tagged if e.get("url")]
+    unique_works = len(set(work_ids))
+    # Also track work concentration for monoculture detection
+    from collections import Counter
+    work_counter = Counter(work_ids) if work_ids else Counter()
+    top_work_share = max(work_counter.values()) / max(1, len(work_ids)) if work_ids else 0.0
+    
     quality = _research_quality(
         slots=slots,
         covered=covered,
@@ -312,7 +319,8 @@ def score_must_answer(query: str, evidence: list[dict], slots: list[dict] | None
         official_impls=len(official_impls),
         primary_n=primary_n,
         unique_n=len(tagged),
-        unique_hosts=len({h for h in hosts if h}),
+        unique_works=unique_works,
+        top_work_share=top_work_share,
         critical_gaps=critical_gaps,
         query=query,
         evidence=usable,
@@ -365,7 +373,8 @@ def _research_quality(
     official_impls: int,
     primary_n: int,
     unique_n: int,
-    unique_hosts: int,
+    unique_works: int,
+    top_work_share: float,
     critical_gaps: list,
     query: str = "",
     evidence: list[dict] | None = None,
@@ -375,7 +384,9 @@ def _research_quality(
     crit_pct = int(round(100 * crit_effective / max(1, crit_total)))
     primary_pct = int(round(100 * min(1.0, primary_n / max(3, total // 2))))
     cross_pct = int(round(100 * min(1.0, covered / 4)))
-    diversity_pct = int(round(100 * min(1.0, unique_hosts / 4)))
+    # Changed from unique_hosts to unique_works (canonical work identities)
+    # This prevents 8 arXiv papers (1 host) from scoring as diverse
+    diversity_pct = int(round(100 * min(1.0, unique_works / 4)))
 
     # Does this question actually need a numbers table? Skip the penalty for
     # architecture/why-questions where a thin Quantitative findings section
@@ -444,6 +455,12 @@ def _research_quality(
     # Apply penalties (but don't drop below existing caps)
     if gaps_penalty > 0:
         overall = max(overall - gaps_penalty, 55)  # Never drop below shallow threshold
+    
+    # Work-concentration cap: one work dominating citations is a monoculture
+    # Example: 8 papers, 6 from arxiv:2512.17419 → top_work_share = 0.75
+    # Cap prevents SWE-Bench monoculture from scoring as diverse/confident
+    if top_work_share > 0.35:
+        overall = min(overall, 70)
 
     label = "deep" if overall >= 85 and not critical_gaps else "standard" if overall >= 55 else "shallow"
     if critical_gaps:

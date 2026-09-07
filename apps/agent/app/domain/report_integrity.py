@@ -177,10 +177,36 @@ def enforce_report_integrity(
                 "Some named framework/product descriptions could not be verified against "
                 "retrieved sources and their citations were removed."
             )
+    
+    # NEW: Check citation relevance - prevent off-topic papers from being cited
+    # (e.g. biology/neuroscience papers for AI/ML claims)
+    if evidence is not None:
+        from app.domain.citation_relevance import check_citation_relevance
+        
+        for ev in evidence:
+            # Check if this evidence is off-topic for the query domain
+            is_relevant, issues = check_citation_relevance(ev, query or "", strict=True)
+            if not is_relevant and issues:
+                # Find citations using this evidence
+                ev_url = (ev.get("url") or "").strip().rstrip("/").lower()
+                for cit in (citations or []):
+                    cit_url = (cit.get("url") or "").strip().rstrip("/").lower()
+                    if cit_url == ev_url:
+                        n = cit.get("n")
+                        if n:
+                            # Strip this citation from body
+                            cite_pattern = re.compile(rf"\[{n}(?:\s+[A-Za-z]+)?\]")
+                            body = cite_pattern.sub("", body)
+                            flags.append(f"off_topic_citation_stripped_{n}")
+                            limitations.append(
+                                f"Source [{n}] removed: {issues[0] if issues else 'off-topic for query domain'}"
+                            )
+                        break
 
     audit_notes = audit_memo_integrity(
         body,
         citations=citations,
+        evidence=evidence,
         executive_summary=executive_summary,
         at_a_glance=at_a_glance,
     )

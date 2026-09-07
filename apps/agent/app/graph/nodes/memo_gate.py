@@ -26,6 +26,11 @@ def memo_gate_node(state: ResearchState) -> dict:
     # Check memo quality for automatic regeneration triggers
     body_markdown = report.get("body_markdown") or ""
     evidence = state.get("retrieved") or state.get("evidence") or []
+    
+    # NEW: Get coverage for production-aware quality check (retrieval vs generation issues)
+    critic = state.get("critic") or {}
+    coverage = critic.get("coverage") or {}
+    
     # Citation stacking / source saturation are pure marker-placement issues —
     # fix them deterministically (free, always succeeds) before deciding
     # whether the expensive LLM regenerate path is even still needed.
@@ -33,7 +38,9 @@ def memo_gate_node(state: ResearchState) -> dict:
     if declutter_n:
         report = {**report, "body_markdown": body_markdown}
         event("memo_gate_citations_decluttered", markers_changed=declutter_n)
-    quality_check = check_memo_quality(body_markdown, evidence=evidence)
+    
+    # NEW: Pass coverage to detect retrieval vs generation issues
+    quality_check = check_memo_quality(body_markdown, evidence=evidence, coverage=coverage)
 
     # Track regeneration attempts to prevent infinite loops
     quality_regen_count = int(state.get("quality_regeneration_count") or 0)
@@ -69,7 +76,7 @@ def memo_gate_node(state: ResearchState) -> dict:
 
     report = _prefer_prior_if_better(state, report)
     if report.get("metrics", {}).get("augment_kept_prior"):
-        quality_check = check_memo_quality(report.get("body_markdown") or "", evidence=evidence)
+        quality_check = check_memo_quality(report.get("body_markdown") or "", evidence=evidence, coverage=coverage)
 
     payload = pythonize(
         {
@@ -150,6 +157,10 @@ def memo_gate_node_auto(state: ResearchState) -> dict:
     report = state.get("report") or {}
     body_markdown = report.get("body_markdown") or ""
     evidence = state.get("retrieved") or state.get("evidence") or []
+    
+    # NEW: Get coverage for production-aware quality check
+    critic = state.get("critic") or {}
+    coverage = critic.get("coverage") or {}
 
     # Same free, deterministic pre-pass as the HITL path.
     if body_markdown:
@@ -158,9 +169,9 @@ def memo_gate_node_auto(state: ResearchState) -> dict:
             report = {**report, "body_markdown": body_markdown}
             event("memo_gate_citations_decluttered", markers_changed=declutter_n)
 
-    # Run same quality check as HITL path
+    # Run same quality check as HITL path (with coverage for retrieval awareness)
     if body_markdown:
-        quality_check = check_memo_quality(body_markdown, evidence=evidence)
+        quality_check = check_memo_quality(body_markdown, evidence=evidence, coverage=coverage)
         
         # If quality issues detected, trigger rewrite from notes (not new search)
         quality_regen_count_auto = int(state.get("quality_regeneration_count") or 0)

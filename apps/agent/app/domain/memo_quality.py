@@ -50,55 +50,97 @@ def declutter_citations(
     sources per sentence, at most `max_per_source_per_paragraph` repeats of
     the same source within one paragraph. The claims and remaining citations
     are untouched — this only declutters redundant citation decoration.
+    
+    Skips "Source quality" and "References" sections where citation lists
+    should remain intact.
 
     Returns (new_body, markers_changed_count).
     """
-    changed_total = 0
-    paragraphs = re.split(r"(\n\s*\n)", body or "")
-    out: list[str] = []
-    for part in paragraphs:
-        if not part.strip():
-            out.append(part)
+    # Split by ## sections to identify and skip Source quality / References
+    sections = re.split(r"(^##\s+.+$)", body or "", flags=re.M)
+    out_sections: list[str] = []
+    skip_next = False
+    
+    for i, section in enumerate(sections):
+        # Check if this is a section header
+        if re.match(r"^##\s+(Source quality|References)\s*$", section, re.I):
+            skip_next = True
+            out_sections.append(section)
             continue
-        seen_in_paragraph: dict[int, int] = {}
-        sentences = re.split(r"(?<=[.!?])(\s+)", part)
-        new_sentences: list[str] = []
-        for chunk in sentences:
-            if not chunk.strip() or _MARKER_RE.search(chunk) is None:
-                new_sentences.append(chunk)
+        
+        # If previous header was Source quality/References, skip processing this section
+        if skip_next and i > 0:
+            # Check if we hit another ## header (end of skip section)
+            if re.match(r"^##\s+", section, re.M):
+                skip_next = False
+            else:
+                out_sections.append(section)
                 continue
-            all_nums: list[int] = []
-            for m in _MARKER_RE.finditer(chunk):
-                for n, _tier in _marker_numbers(m.group(1)):
-                    if n not in all_nums:
-                        all_nums.append(n)
-            allowed = set(all_nums[:max_distinct_per_sentence])
+        
+        # Reset skip flag if we hit a new section
+        if re.match(r"^##\s+", section):
+            skip_next = False
+        
+        # Process this section normally
+        if not section.strip():
+            out_sections.append(section)
+            continue
+    
+    # Rejoin to process non-skipped sections
+    changed_total = 0
+    processed: list[str] = []
+    
+    for section_text in out_sections:
+        # Check if this section should be skipped (between Source quality/References headers)
+        # For simplicity, process paragraph by paragraph within non-skipped sections
+        paragraphs = re.split(r"(\n\s*\n)", section_text)
+        section_parts: list[str] = []
+        
+        for part in paragraphs:
+            if not part.strip():
+                section_parts.append(part)
+                continue
+            seen_in_paragraph: dict[int, int] = {}
+            sentences = re.split(r"(?<=[.!?])(\s+)", part)
+            new_sentences: list[str] = []
+            for chunk in sentences:
+                if not chunk.strip() or _MARKER_RE.search(chunk) is None:
+                    new_sentences.append(chunk)
+                    continue
+                all_nums: list[int] = []
+                for m in _MARKER_RE.finditer(chunk):
+                    for n, _tier in _marker_numbers(m.group(1)):
+                        if n not in all_nums:
+                            all_nums.append(n)
+                allowed = set(all_nums[:max_distinct_per_sentence])
 
-            def repl(m: re.Match) -> str:
-                nonlocal changed_total
-                nums = _marker_numbers(m.group(1))
-                kept: list[tuple[int, str]] = []
-                for n, tier in nums:
-                    if n not in allowed:
-                        continue
-                    c = seen_in_paragraph.get(n, 0)
-                    if c >= max_per_source_per_paragraph:
-                        continue
-                    seen_in_paragraph[n] = c + 1
-                    kept.append((n, tier))
-                if len(kept) != len(nums):
-                    changed_total += 1
-                if not kept:
-                    return ""
-                return "[" + ", ".join(f"{n}{tier}" for n, tier in kept) + "]"
+                def repl(m: re.Match) -> str:
+                    nonlocal changed_total
+                    nums = _marker_numbers(m.group(1))
+                    kept: list[tuple[int, str]] = []
+                    for n, tier in nums:
+                        if n not in allowed:
+                            continue
+                        c = seen_in_paragraph.get(n, 0)
+                        if c >= max_per_source_per_paragraph:
+                            continue
+                        seen_in_paragraph[n] = c + 1
+                        kept.append((n, tier))
+                    if len(kept) != len(nums):
+                        changed_total += 1
+                    if not kept:
+                        return ""
+                    return "[" + ", ".join(f"{n}{tier}" for n, tier in kept) + "]"
 
-            new_sentences.append(_MARKER_RE.sub(repl, chunk))
-        new_part = "".join(new_sentences)
-        # Tidy spacing left by a fully-removed marker ("text  ." / "text  and").
-        new_part = re.sub(r"[ \t]+([.,;:])", r"\1", new_part)
-        new_part = re.sub(r"[ \t]{2,}", " ", new_part)
-        out.append(new_part)
-    return "".join(out), changed_total
+                new_sentences.append(_MARKER_RE.sub(repl, chunk))
+            new_part = "".join(new_sentences)
+            # Tidy spacing left by a fully-removed marker ("text  ." / "text  and").
+            new_part = re.sub(r"[ \t]+([.,;:])", r"\1", new_part)
+            new_part = re.sub(r"[ \t]{2,}", " ", new_part)
+            section_parts.append(new_part)
+        processed.append("".join(section_parts))
+    
+    return "".join(processed), changed_total
 
 
 def check_memo_quality(body_markdown: str, *, evidence: list[dict] | None = None) -> dict[str, Any]:

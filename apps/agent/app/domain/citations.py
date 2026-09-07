@@ -234,10 +234,12 @@ def format_reference_list(citations: list) -> str:
         n = c.get("n")
         title = (c.get("title") or c.get("url") or "source").strip()
         url = (c.get("url") or "").strip()
+        # Use bullet list with explicit [n] to prevent markdown auto-renumbering
+        # which causes reference numbers to jump when some citations are unused
         if url and is_citable_url(url):
-            lines.append(f"{n}. [{title}]({url}) — `{url}`")
+            lines.append(f"- **[{n}]** [{title}]({url}) — `{url}`")
         else:
-            lines.append(f"{n}. {title}")
+            lines.append(f"- **[{n}]** {title}")
     return "\n".join(lines)
 
 

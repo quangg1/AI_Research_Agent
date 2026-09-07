@@ -56,26 +56,67 @@ def after_critic(state: ResearchState, hitl_target: str = "hitl") -> str:
     if status == "sufficient":
         return hitl_target
     
-    # Stagnation detection: stop if no new sources in last 2 iterations
+    # Quality-aware early stopping for production efficiency
     if followups and budget.remaining_iterations > 0:
-        current_sources = (critic.get("coverage") or {}).get("unique_sources") or 0
+        coverage = critic.get("coverage") or {}
+        depth_score = (critic.get("depth_score") or {}).get("score") or 0
+        must_pct = (critic.get("depth_score") or {}).get("must_answer", {}).get("pct") or 0
+        current_sources = coverage.get("unique_sources") or 0
         iteration = budget.iterations
         
-        # Track unique_sources history across iterations
-        source_history = state.get("_source_history") or []
-        source_history.append({"iteration": iteration, "unique_sources": current_sources})
+        # Track quality history for smart stopping
+        quality_history = state.get("_quality_history") or []
+        quality_history.append({
+            "iteration": iteration,
+            "unique_sources": current_sources,
+            "must_pct": must_pct,
+            "depth_score": depth_score,
+        })
         
-        # Check for stagnation: if last 2 iterations had same source count, stop
-        if len(source_history) >= 3:  # Need at least 3 points to detect stagnation
-            recent = source_history[-3:]
-            if recent[0]["unique_sources"] == recent[1]["unique_sources"] == recent[2]["unique_sources"]:
+        # EARLY STOP 1: Quality already excellent (save budget)
+        if must_pct >= 75 and depth_score >= 80:
+            from app.observability.logging import event
+            event(
+                "critic_early_stop_quality_sufficient",
+                iteration=iteration,
+                must_pct=must_pct,
+                depth_score=depth_score,
+                message="Quality already excellent - stopping to save budget"
+            )
+            return hitl_target
+        
+        # EARLY STOP 2: No improvement in last 2 iterations (stagnation)
+        if len(quality_history) >= 3:
+            recent = quality_history[-3:]
+            
+            # Check if sources, coverage, AND score are stagnant
+            sources_stagnant = (
+                recent[0]["unique_sources"] == recent[1]["unique_sources"] == recent[2]["unique_sources"]
+            )
+            coverage_stagnant = (
+                abs(recent[2]["must_pct"] - recent[1]["must_pct"]) < 5
+                and abs(recent[1]["must_pct"] - recent[0]["must_pct"]) < 5
+            )
+            score_stagnant = (
+                abs(recent[2]["depth_score"] - recent[1]["depth_score"]) < 3
+                and abs(recent[1]["depth_score"] - recent[0]["depth_score"]) < 3
+            )
+            
+            if sources_stagnant and coverage_stagnant and score_stagnant:
                 from app.observability.logging import event
-                event("critic_stagnation_detected", 
-                      unique_sources=current_sources, 
-                      stagnant_iterations=3,
-                      remaining_gaps=len((critic.get("coverage") or {}).get("critical_gaps") or []))
-                return hitl_target  # Stop early - no new sources being found
+                event(
+                    "critic_stagnation_detected",
+                    iteration=iteration,
+                    unique_sources=current_sources,
+                    must_pct=must_pct,
+                    depth_score=depth_score,
+                    stagnant_iterations=3,
+                    remaining_gaps=len(coverage.get("critical_gaps") or []),
+                    message="No quality improvement in 3 iterations - stopping to save budget"
+                )
+                return hitl_target
         
+        # Continue iterating if still improving or not yet stagnant
         return "planner"
     
     return hitl_target

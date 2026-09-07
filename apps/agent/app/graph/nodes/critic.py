@@ -117,11 +117,13 @@ def critic_node(state: ResearchState) -> dict:
 
     claims = state.get("claims") or claims_from_must_answer(coverage, retrieved)
     
-    # Track source history for stagnation detection
-    source_history = list(state.get("_source_history") or [])
-    source_history.append({
+    # Track quality history for smart stopping
+    quality_history = list(state.get("_quality_history") or [])
+    quality_history.append({
         "iteration": budget.iterations,
         "unique_sources": coverage.get("unique_sources") or 0,
+        "must_pct": (coverage.get("depth_score") or {}).get("must_answer", {}).get("pct") or 0,
+        "depth_score": (coverage.get("depth_score") or {}).get("score") or 0,
     })
 
     event(
@@ -142,7 +144,7 @@ def critic_node(state: ResearchState) -> dict:
         "brief": {**brief, "must_answer": coverage.get("slots") or slots},
         "budget": dump(budget),
         "llm_mode": llm.mode,
-        "_source_history": source_history,
+        "_quality_history": quality_history,
         "traces": [
             {
                 "node": "critic",

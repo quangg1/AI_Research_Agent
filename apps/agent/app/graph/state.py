@@ -101,7 +101,7 @@ class ResearchState(TypedDict, total=False):
     gap_micro_retries: int
     quality_regeneration_count: int
     quality_gate_issues: list[str]
-    _source_history: list[dict]
+    _quality_history: list[dict]
 
 
 def budget_from(state: ResearchState) -> Budget:

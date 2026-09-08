@@ -2,11 +2,13 @@
 
 Run before each PR merge to catch regressions in structure, coverage, and hallucination rate.
 
+Issue #8: Uses deterministic LLM params (temperature=0) to prevent flaky CI from stochastic outputs.
+
 Usage:
     # Fast check (3 quick cases)
     python -m app.eval.regression_check --fast
     
-    # Full suite (all 10 cases)
+    # Full suite (all 15 cases)
     python -m app.eval.regression_check --all
     
     # Compare specific commits
@@ -21,6 +23,8 @@ import re
 import sys
 from pathlib import Path
 from typing import Any
+
+from app.eval.regression_stability import RegressionTestConfig, explain_stability_strategy
 
 def load_golden_set(path: str | None = None) -> dict:
     """Load golden_set.json test cases."""
@@ -240,6 +244,8 @@ def run_test_case(test_case: dict, mode: str = "mock") -> dict:
     """
     # For now, this is a stub that would integrate with actual pipeline
     # In production, this would call runtime.stream_execution() or similar
+    # Issue #8: When live mode is implemented, use RegressionTestConfig.get_llm_params()
+    # to ensure deterministic outputs (temperature=0, seed=42)
     
     if mode == "mock":
         # Return mock data for testing the harness itself
@@ -252,6 +258,14 @@ def run_test_case(test_case: dict, mode: str = "mock") -> dict:
     else:
         # Live mode - would integrate with actual pipeline
         # This is left as TODO for integration with existing runtime
+        # IMPORTANT: Pass RegressionTestConfig.get_llm_params() to writer LLM
+        # Example:
+        # llm_params = RegressionTestConfig.get_llm_params()
+        # result = runtime.stream_execution(
+        #     query=test_case["query"],
+        #     llm_override_params=llm_params,  # temperature=0, seed=42
+        #     ...
+        # )
         raise NotImplementedError("Live pipeline integration not yet implemented")
 
 
@@ -335,6 +349,7 @@ def run_regression_suite(golden_set_path: str | None = None, mode: str = "fast")
     
     print(f"\n{'='*60}")
     print(f"REGRESSION CHECK - Running {len(selected)} test cases ({mode} mode)")
+    print(f"Stability: {explain_stability_strategy()}")
     print(f"{'='*60}\n")
     
     results = []

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.domain.adversarial import numeric_evidence_score
 from app.domain.citations import arxiv_html_url, is_citable_url
+from app.domain.content_sanitization import sanitize_evidence_item
 from app.domain.research_depth import effective_depth
 from app.domain.gap_enrich import coverage_slots_from_state, urls_for_gap_slots
 from app.domain.retrieval_limits import ENRICH_FETCH_CAP
@@ -65,11 +66,26 @@ def enrich_node(state: ResearchState) -> dict:
             fetched += 1
             if not row:
                 continue
+            
+            # Basic HTML sanitization (existing)
             if row.get("full_text"):
                 row["full_text"] = sanitize_fetched_content(str(row["full_text"]))
             if row.get("snippet"):
                 row["snippet"] = sanitize_fetched_content(str(row["snippet"]))[:1600]
-            extra.append(row)
+            
+            # Issue #10 fix: Prompt injection defense
+            # Sanitize content to remove/neutralize injection attempts before passing to writer
+            sanitized_row, detections = sanitize_evidence_item(row, aggressive=False)
+            
+            if detections:
+                # Log but don't block - we've neutralized the content
+                event("prompt_injection_detected_enrich", {
+                    "url": row.get("url", "unknown"),
+                    "detection_count": len(detections),
+                    "detection_types": list(set(d['type'] for d in detections))
+                })
+            
+            extra.append(sanitized_row)
         span["fetched"] = fetched
         span["n"] = len(extra)
         span["external_calls"] = fetched

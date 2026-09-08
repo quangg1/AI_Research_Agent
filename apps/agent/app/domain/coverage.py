@@ -4,7 +4,7 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
-from app.config.thresholds import CoverageThresholds
+from app.conf.thresholds import CoverageThresholds
 from app.domain.decompose import derive_slots, rewrite_gap_query
 from app.domain.research_intent import (
     PRIMARY_CODE_HOSTS,

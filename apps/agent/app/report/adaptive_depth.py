@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.config.thresholds import (
+from app.conf.thresholds import (
     AdaptiveDepthMultipliers,
     CoverageThresholds,
     QualityThresholds,

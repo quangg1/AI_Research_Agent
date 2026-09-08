@@ -17,6 +17,21 @@ cd /workspace
 pip install -r apps/agent/requirements.txt
 ```
 
+### Bước 1.5: QUAN TRỌNG - Chạy từ đúng directory
+```bash
+# PHẢI cd vào apps/agent TRƯỚC KHI chạy regression test
+cd /workspace/apps/agent
+
+# Verify bạn đang ở đúng chỗ
+pwd
+# Output phải là: /workspace/apps/agent (hoặc D:\AI_Research_Agent\apps\agent trên Windows)
+
+# Test Python có thấy app module không
+python -c "import app; print('✓ Module app found')"
+# Nếu OK → Sẵn sàng chạy test
+# Nếu lỗi ModuleNotFoundError → Bạn đang ở sai directory
+```
+
 ### Bước 2: Cấu hình .env
 Đảm bảo các API keys cần thiết đã được cấu hình trong `.env`:
 ```bash
@@ -174,12 +189,34 @@ Run regression tests
 ## 5️⃣ Troubleshooting
 
 ### ❌ Test fails: "ModuleNotFoundError: No module named 'app'"
+**Nguyên nhân:** Đang chạy từ sai directory
+
 **Fix:**
 ```bash
-# Run from correct directory
-cd /workspace/apps/agent
-export PYTHONPATH=/workspace/apps/agent:$PYTHONPATH
-python -m app.eval.regression_check
+# Phải cd vào apps/agent TRƯỚC
+cd D:\AI_Research_Agent\apps\agent  # Windows
+# hoặc
+cd /workspace/apps/agent  # Linux/Mac
+
+# Verify
+python -c "import app; print('OK')"
+
+# Rồi mới chạy test
+python -m app.eval.regression_check --fast --mock
+```
+
+**Alternative (nếu muốn chạy từ workspace root):**
+```bash
+cd D:\AI_Research_Agent  # hoặc /workspace
+
+# Set PYTHONPATH
+# Windows PowerShell:
+$env:PYTHONPATH = "D:\AI_Research_Agent\apps\agent"
+# Linux/Mac:
+export PYTHONPATH=/workspace/apps/agent
+
+# Rồi chạy
+python -m app.eval.regression_check --fast --mock
 ```
 
 ### ❌ Test fails: "Database connection error"

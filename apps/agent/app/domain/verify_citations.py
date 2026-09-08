@@ -15,7 +15,7 @@ from app.domain.adversarial import (
 )
 from app.domain.citations import host_of, quote_in_source
 from app.domain.locator import locate_quote
-from app.domain.metric_grounding import assess_causal_delta, assess_scope_overgeneralization
+from app.domain.metric_grounding import assess_causal_delta, assess_claim_span_grounding, assess_scope_overgeneralization
 from app.domain.schema import Claim
 from app.observability.logging import event
 
@@ -114,6 +114,11 @@ def verify_against_sources(
         kind = normalize_kind(data.get("kind") or "", has_quote=bool(data.get("quote")))
         causal = assess_causal_delta(data.get("text") or "", text)
         scope = assess_scope_overgeneralization(data.get("text") or "", text)
+        span_gate = assess_claim_span_grounding(
+            data.get("text") or "",
+            text,
+            quote=str(data.get("quote") or ""),
+        )
         provenance = data.get("provenance") or infer_provenance(data.get("text") or "", text)
         if not url:
             status, note = "source_missing", "Claim has no source URL."
@@ -123,6 +128,8 @@ def verify_against_sources(
             status, note = str(causal["status"]), str(causal.get("note") or "Causal comparison not supported by source.")
         elif scope and scope.get("status") == "scope_bleed":
             status, note = "wrong_causal", str(scope.get("note") or "Scope overgeneralization.")
+        elif span_gate and span_gate.get("status") == "ungrounded":
+            status, note = "unsupported", str(span_gate.get("note") or "Numeric claim lacks a grounded 1-2 sentence source span.")
         elif kind in {"inferred", "speculative", "recommendation"} and not locator.found:
             status, note = "inferred", "Marked as inference; not treated as a paper finding."
         elif not locator.found:
@@ -133,6 +140,8 @@ def verify_against_sources(
             status, note = "verified", "Quote (or high-overlap span) found in the source."
             if causal and causal.get("status") == "ok":
                 note = "Quote found; causal delta has supporting comparison cues in source windows."
+            elif span_gate and span_gate.get("status") == "ok":
+                note = "Quote/numbers grounded in a 1-2 sentence source span."
 
         patch = {
             "kind": kind,

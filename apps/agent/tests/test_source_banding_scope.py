@@ -110,3 +110,78 @@ def test_verify_uses_evidence_text_field():
     status = out["claims"][0]["verification_status"]
     assert status != "source_missing", out["claims"][0]
     assert out["claims"][0]["quality_band"] in {"C", "D"}
+
+
+def test_hard_claim_span_gate_rejects_stitched_numbers():
+    from app.domain.metric_grounding import assess_claim_span_grounding
+
+    claim = (
+        "Accuracy increased from an unadapted baseline of 82.7% to 96.5% after LoRA adaptation."
+    )
+    # Numbers live in distant sentences with condition language, not a before/after story.
+    source = (
+        "Under the small-sample evaluation condition the fine-tuned model reached 82.7% accuracy. "
+        "Later sections discuss training cost. "
+        "Separately, the single-dataset condition scored 96.5% accuracy for the same fine-tuned checkpoint. "
+        "Cross-condition transfer was 91.2%."
+    )
+    out = assess_claim_span_grounding(claim, source)
+    assert out is not None
+    assert out["status"] == "ungrounded"
+
+
+def test_hard_claim_span_gate_rejects_mechanism_elaboration():
+    from app.domain.metric_grounding import assess_claim_span_grounding
+
+    claim = (
+        "LoRA-PAR reached 95.2% retention by dynamically allocating low-rank adapters "
+        "based on layer-wise gradient sensitivity."
+    )
+    source = (
+        "Our method retained 95.2% of full fine-tuning performance while updating 0.52% of parameters. "
+        "Task routing followed a System 1 / System 2 partition with importance scoring."
+    )
+    out = assess_claim_span_grounding(claim, source)
+    assert out is not None
+    assert out["status"] == "ungrounded"
+    assert "gradient" in (out.get("note") or "").lower() or "mechanism" in (out.get("note") or "").lower()
+
+
+def test_hard_claim_span_gate_accepts_aligned_span():
+    from app.domain.metric_grounding import assess_claim_span_grounding
+
+    claim = "QLoRA fine-tuning used 0.52% trainable parameters while retaining 95.2% accuracy."
+    source = (
+        "In our domain-adaptation study, QLoRA fine-tuning used 0.52% trainable parameters "
+        "while retaining 95.2% accuracy relative to full fine-tuning."
+    )
+    out = assess_claim_span_grounding(claim, source)
+    assert out is not None
+    assert out["status"] == "ok"
+
+
+def test_verify_marks_ungrounded_numeric_claim_unsupported():
+    from app.domain.verify_citations import verify_against_sources
+    from app.domain.schema import Claim
+
+    claim = Claim(
+        id="c1",
+        text=(
+            "LoRA-PAR reached 95.2% retention by dynamically allocating adapters "
+            "based on layer-wise gradient sensitivity."
+        ),
+        quote="95.2%",
+        url="https://example.org/paper",
+        tier="peer_reviewed",
+    )
+    evidence = [{
+        "url": "https://example.org/paper",
+        "title": "LoRA-PAR",
+        "tier": "peer_reviewed",
+        "text": (
+            "Our method retained 95.2% of full fine-tuning performance while updating 0.52% of parameters. "
+            "Task routing followed System 1 / System 2 importance scoring."
+        ),
+    }]
+    out = verify_against_sources([claim], evidence, refetch=False)
+    assert out["claims"][0]["verification_status"] == "unsupported"

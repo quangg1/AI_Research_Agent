@@ -219,3 +219,173 @@ def audit_memo_scope_bleed(memo: str) -> list[str]:
             "do not present HAR/CPU block MB as a universal QLoRA LLM fact."
         ]
     return []
+
+
+# --- Hard claim ↔ span grounding (Claude gate) ---------------------------------
+# Every load-bearing numeric claim must map to 1-2 contiguous source sentences
+# that actually contain those numbers. Extra mechanism/causal wording that is
+# absent from that span is treated as ungrounded elaboration.
+
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[\.\!\?])\s+|\n+")
+STOPWORDS = {
+    "a", "an", "the", "and", "or", "but", "if", "then", "than", "that", "this",
+    "these", "those", "to", "of", "in", "on", "for", "with", "from", "by", "as",
+    "at", "is", "are", "was", "were", "be", "been", "being", "it", "its", "into",
+    "after", "before", "over", "under", "between", "within", "via", "using",
+    "used", "use", "we", "our", "their", "they", "his", "her", "not", "no",
+    "vs", "versus", "per", "such", "may", "can", "could", "would", "should",
+    "also", "more", "most", "less", "very", "highly", "based", "when", "while",
+    "during", "about", "across", "through", "only", "both", "each", "all",
+}
+
+MECHANISM_PHRASE_RE = re.compile(
+    r"\b("
+    r"gradient\s+sensitivity|layer[- ]wise|dynamically\s+allocat\w*|"
+    r"unadapted\s+baseline|baseline\s+of|before[- ]after|"
+    r"system\s+1|system\s+2|importance\s+scor\w*|multi[- ]model\s+role[- ]play\w*"
+    r")\b",
+    re.I,
+)
+
+NUMBER_TOKEN_RE = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+|\d+")
+
+
+def split_sentences(text: str) -> list[str]:
+    parts = [p.strip() for p in SENTENCE_SPLIT_RE.split(text or "") if p and p.strip()]
+    return parts or ([text.strip()] if (text or "").strip() else [])
+
+
+def load_bearing_numeric_tokens(text: str) -> list[str]:
+    """Distinct numeric tokens that are likely claim-bearing (skip tiny ints / years)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for match in NUMBER_TOKEN_RE.finditer(text or ""):
+        raw = match.group(0)
+        norm = raw.replace(",", "")
+        if norm.isdigit():
+            n = int(norm)
+            if n < 10 or 1900 <= n <= 2035:
+                continue
+        if norm in seen:
+            continue
+        seen.add(norm)
+        out.append(norm)
+    return out
+
+
+def _content_tokens(text: str) -> set[str]:
+    toks = re.findall(r"[A-Za-z][A-Za-z0-9\-]{2,}", (text or "").lower())
+    return {t for t in toks if t not in STOPWORDS}
+
+
+def _find_span_window(sentences: list[str], numbers: list[str]) -> tuple[str, int, int] | None:
+    """Return (span_text, start_idx, end_idx_inclusive) covering all numbers in ≤2 sentences."""
+    if not sentences or not numbers:
+        return None
+    lowered = [s.lower() for s in sentences]
+    # Prefer single sentence containing all numbers.
+    for i, s in enumerate(lowered):
+        if all(n.lower() in s or n in s for n in numbers):
+            return sentences[i], i, i
+    # Then two adjacent sentences.
+    for i in range(len(lowered) - 1):
+        joined = lowered[i] + " " + lowered[i + 1]
+        if all(n.lower() in joined or n in joined for n in numbers):
+            return sentences[i] + " " + sentences[i + 1], i, i + 1
+    return None
+
+
+def assess_claim_span_grounding(
+    claim_text: str,
+    source_text: str,
+    *,
+    quote: str = "",
+) -> dict[str, Any] | None:
+    """Hard gate for numeric claims: require a 1-2 sentence supporting span.
+
+    Returns None when the claim has no load-bearing numbers (gate N/A).
+    """
+    claim = (claim_text or "").strip()
+    source = (source_text or "").strip()
+    numbers = load_bearing_numeric_tokens(claim)
+    if not numbers:
+        return None
+    if len(source) < 40:
+        return {
+            "status": "ungrounded",
+            "note": "Numeric claim lacks a retrieved source span long enough to ground the figures.",
+            "numbers": numbers,
+            "span": "",
+        }
+
+    sentences = split_sentences(source)
+    window = _find_span_window(sentences, numbers)
+    if window is None:
+        # Numbers may still appear somewhere, just not co-located in 1-2 sentences.
+        present = [n for n in numbers if n in source.replace(",", "")]
+        missing = [n for n in numbers if n not in source.replace(",", "")]
+        if missing:
+            return {
+                "status": "ungrounded",
+                "note": (
+                    "Load-bearing number(s) "
+                    + ", ".join(missing[:4])
+                    + " are absent from the cited source span."
+                ),
+                "numbers": numbers,
+                "span": "",
+            }
+        return {
+            "status": "ungrounded",
+            "note": (
+                "Numbers "
+                + ", ".join(numbers[:4])
+                + " appear in the source but not together in any 1-2 contiguous sentences. "
+                "Do not stitch distant figures into one claim."
+            ),
+            "numbers": numbers,
+            "span": "",
+        }
+
+    span, _i, _j = window
+    claim_toks = _content_tokens(claim)
+    span_toks = _content_tokens(span)
+    overlap = claim_toks & span_toks
+    quote_ok = bool(quote) and quote.strip().lower() in span.lower()
+
+    # Mechanism / causal elaboration must appear in the supporting span (check first).
+    mechs = [m.group(0) for m in MECHANISM_PHRASE_RE.finditer(claim)]
+    bad = [m for m in mechs if m.lower() not in span.lower()]
+    if bad:
+        return {
+            "status": "ungrounded",
+            "note": (
+                "Claim adds mechanism/causal wording ("
+                + ", ".join(bad[:3])
+                + ") that is not present in the 1-2 sentence source span that holds the numbers."
+            ),
+            "numbers": numbers,
+            "span": span[:400],
+        }
+
+    # Need some lexical support beyond bare numbers, unless a verified quote sits in the span.
+    min_overlap = 2 if len(claim_toks) >= 4 else 1
+    if not quote_ok and len(overlap) < min_overlap:
+        return {
+            "status": "ungrounded",
+            "note": (
+                "A 1-2 sentence source window contains the numbers, but the claim's wording "
+                "does not align with that span (possible stitched/over-interpreted finding)."
+            ),
+            "numbers": numbers,
+            "span": span[:400],
+        }
+
+    return {
+        "status": "ok",
+        "note": "Numeric claim grounded in a 1-2 sentence source span.",
+        "numbers": numbers,
+        "span": span[:400],
+        "overlap_terms": sorted(overlap)[:12],
+    }
+

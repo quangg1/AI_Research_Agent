@@ -50,7 +50,7 @@ def _evidence_for_claim(claim: dict, evidence: list[dict], citations: list[dict]
 
 
 def _source_blob(ev: dict) -> str:
-    return (ev.get("full_text") or ev.get("quote") or ev.get("snippet") or ev.get("title") or "")
+    return (ev.get("full_text") or ev.get("text") or ev.get("content") or ev.get("quote") or ev.get("snippet") or ev.get("title") or "")
 
 
 def _quote_prompt(batch: list[dict]) -> str:

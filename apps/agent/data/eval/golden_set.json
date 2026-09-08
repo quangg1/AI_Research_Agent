@@ -269,10 +269,160 @@
         "max_tool_calls": 30,
         "expected_word_count_range": [1200, 2500]
       }
+    },
+    {
+      "id": "logic_fix_1_code_skew_90pct",
+      "category": "logic_regression",
+      "query": "What are the best practices for implementing GraphQL resolvers in Node.js TypeScript applications?",
+      "rationale": "REGRESSION TEST for Logic Fix #12 (Domain-balance backfill). Implementation query heavily skewed to code sources (expect 90%+ code in retrieval). Tests that final evidence pool is capped at 40% code despite heavy input skew. CRITICAL: Verifies backfill logic does NOT re-introduce code papers beyond 40% limit.",
+      "expected_structure": {
+        "required_sections": [
+          "Executive summary",
+          "Key findings",
+          "Detailed analysis",
+          "Worked example",
+          "Source quality",
+          "References"
+        ],
+        "min_subsections_detailed_analysis": 3
+      },
+      "expected_quality": {
+        "min_coverage_pct": 60,
+        "max_code_ratio": 0.42,
+        "strict_code_ratio_enforcement": true,
+        "min_unique_sources": 5,
+        "test_retrieval_balance": true,
+        "expected_input_code_ratio": 0.85,
+        "expected_output_code_ratio_max": 0.42
+      }
+    },
+    {
+      "id": "logic_fix_2_stagnation_threshold",
+      "category": "logic_regression",
+      "query": "How do different prompt engineering techniques (few-shot, chain-of-thought, tree-of-thought) compare in improving LLM reasoning on mathematical problems?",
+      "rationale": "REGRESSION TEST for Logic Fix #13 (Stagnation threshold 5%→2%). Question designed to produce steady +3-4% coverage improvement per iteration (e.g., 58%→62%→66%→70%). Tests that system does NOT prematurely stop when seeing consistent 4%/iter progress. CRITICAL: Verifies stagnation threshold is <2%, not <5%.",
+      "expected_structure": {
+        "required_sections": [
+          "Executive summary",
+          "Key findings",
+          "Detailed analysis",
+          "Comparison",
+          "Quantitative findings",
+          "Source quality",
+          "References"
+        ],
+        "required_subsections_in_detailed_analysis": [
+          "few-shot",
+          "chain-of-thought",
+          "tree-of-thought"
+        ],
+        "min_subsections_detailed_analysis": 3
+      },
+      "expected_quality": {
+        "min_coverage_pct": 68,
+        "min_iterations": 4,
+        "test_stagnation_logic": true,
+        "expected_coverage_progression": [58, 62, 66, 70],
+        "should_not_stop_on_4pct_improvement": true
+      }
+    },
+    {
+      "id": "logic_fix_3_coverage_dead_zone",
+      "category": "logic_regression",
+      "query": "What are the trade-offs between synchronous and asynchronous Python web frameworks (FastAPI vs Flask vs Django) for building REST APIs?",
+      "rationale": "REGRESSION TEST for Logic Fix #14 (Coverage threshold alignment 60→65). Question calibrated to produce coverage in 60-67% range (the former 'dead zone'). Tests that: (1) coverage.py flags <65% as insufficient, (2) memo_quality.py also uses 65% threshold, (3) NO dead zone where critic passes but quality gate refuses regeneration. CRITICAL: Verifies all modules use 65% consistently.",
+      "expected_structure": {
+        "required_sections": [
+          "Executive summary",
+          "Key findings",
+          "Detailed analysis",
+          "Comparison",
+          "Decision rule",
+          "Source quality",
+          "References"
+        ],
+        "required_subsections_in_detailed_analysis": [
+          "FastAPI",
+          "Flask",
+          "Django",
+          "performance",
+          "development experience"
+        ],
+        "min_subsections_detailed_analysis": 4
+      },
+      "expected_quality": {
+        "test_coverage_threshold_consistency": true,
+        "expected_coverage_range": [60, 67],
+        "verify_no_dead_zone": true,
+        "coverage_below_65_should_be_retrieval_issue": true,
+        "coverage_above_65_should_allow_regeneration": true
+      }
+    },
+    {
+      "id": "logic_fix_4_anti_compositing",
+      "category": "logic_regression",
+      "query": "How does the LangChain agent executor implement tool calling and memory management in production deployments?",
+      "rationale": "REGRESSION TEST for Logic Fix #8 (Anti-compositing). Implementation question likely to retrieve multiple GitHub repos. Tests that Worked example section: (1) cites ONLY ONE repo [n] for end-to-end workflow, OR (2) explicitly marks > **Composite** if combining sources. CRITICAL: Verifies writer does NOT silently composite [5 repo] + [6 repo] into unified workflow.",
+      "expected_structure": {
+        "required_sections": [
+          "Executive summary",
+          "Key findings",
+          "Detailed analysis",
+          "Worked example",
+          "Source quality",
+          "References"
+        ],
+        "min_subsections_detailed_analysis": 3,
+        "worked_example_must_be_single_source_OR_labeled_composite": true,
+        "max_composite_without_label": 0
+      },
+      "expected_quality": {
+        "min_coverage_pct": 60,
+        "max_code_ratio": 0.50,
+        "test_anti_compositing_enforcement": true,
+        "worked_example_single_source_required": true,
+        "if_multi_source_must_have_composite_label": true
+      }
+    },
+    {
+      "id": "logic_fix_5_per_dimension_subsections",
+      "category": "logic_regression",
+      "query": "How do different LLM evaluation metrics (perplexity, BLEU, ROUGE, BERTScore, human eval) compare in measuring generation quality, and what are the trade-offs between automatic vs. human evaluation?",
+      "rationale": "REGRESSION TEST for Logic Fix #9 (Per-dimension subsections). Comparison question with 5 explicit dimensions (perplexity, BLEU, ROUGE, BERTScore, human eval). Tests that Detailed analysis has: (1) separate ### subsection for EACH metric, (2) NO generic '### Overview' or '### Metrics' subsections, (3) each subsection contains actual comparison of ≥2 approaches. CRITICAL: Verifies writer creates per-dimension subsections, not merged generic ones.",
+      "expected_structure": {
+        "required_sections": [
+          "Executive summary",
+          "Key findings",
+          "Detailed analysis",
+          "Comparison",
+          "Decision rule",
+          "Source quality",
+          "References"
+        ],
+        "required_subsections_in_detailed_analysis": [
+          "perplexity",
+          "BLEU",
+          "ROUGE",
+          "BERTScore",
+          "human evaluation"
+        ],
+        "min_subsections_detailed_analysis": 5,
+        "forbidden_generic_subsections": ["overview", "metrics", "approaches", "comparison"],
+        "each_subsection_must_compare_approaches": true
+      },
+      "expected_quality": {
+        "min_coverage_pct": 65,
+        "max_code_ratio": 0.35,
+        "test_per_dimension_enforcement": true,
+        "verify_no_generic_subsections": true,
+        "verify_separate_subsection_per_dimension": true
+      }
     }
   ],
   "baseline_metrics": {
-    "note": "These are initial baselines. Will be updated as we collect regression data.",
+    "note": "These are initial baselines. Will be updated as we collect regression data. Updated 2026-09-07 with 5 logic-fix regression tests.",
+    "total_test_cases": 15,
+    "logic_regression_tests": 5,
     "average_coverage_pct": 65,
     "average_hallucination_rate": 0.15,
     "average_code_ratio": 0.38,

@@ -808,6 +808,17 @@ def _regenerate_for_quality(state: ResearchState) -> dict:
     """
     Quality-triggered regeneration: rewrite the memo from existing dimension-filtered notes
     with quality issues as additional instructions. Does NOT trigger new search.
+    
+    IMPORTANT: This function does NOT increment quality_regeneration_count.
+    The counter is incremented by memo_gate BEFORE triggering this regeneration.
+    This ensures a single shared counter across all regeneration paths (max 2 total).
+    
+    Flow:
+    1. memo_gate detects quality issue
+    2. memo_gate increments quality_regeneration_count
+    3. memo_gate sets status = "revising_quality"
+    4. report_node sees status → calls this function
+    5. This function generates new report using existing evidence + quality feedback
     """
     from app.observability.logging import event
     

@@ -1,10 +1,42 @@
 #!/usr/bin/env bash
-# Idempotent repository bootstrap for the Kiln dev environment.
-# Runs after checkout. Refreshes Python + Node dependencies and ensures a dev .env.
+# Idempotent bootstrap for the Kiln dev environment.
+# Runs after checkout. Installs system services (Postgres, Redis, Qdrant),
+# refreshes Python + Node dependencies, and ensures a dev .env.
+# Self-contained so it reproduces on the default base image without a snapshot.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
+
+QDRANT_VERSION="v1.13.2"
+
+# --- System packages (Postgres + Redis) ---
+if ! command -v pg_ctlcluster >/dev/null 2>&1 || ! command -v redis-server >/dev/null 2>&1; then
+  echo "install: installing system packages (postgres, redis)"
+  export DEBIAN_FRONTEND=noninteractive
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq postgresql postgresql-client redis-server
+else
+  echo "install: system packages already present"
+fi
+
+# --- Qdrant binary ---
+if ! command -v qdrant >/dev/null 2>&1; then
+  echo "install: downloading qdrant ${QDRANT_VERSION}"
+  tmp="$(mktemp -d)"
+  for asset in qdrant-x86_64-unknown-linux-musl.tar.gz qdrant-x86_64-unknown-linux-gnu.tar.gz; do
+    if curl -fsSL -o "$tmp/qdrant.tar.gz" \
+        "https://github.com/qdrant/qdrant/releases/download/${QDRANT_VERSION}/${asset}"; then
+      break
+    fi
+  done
+  tar xzf "$tmp/qdrant.tar.gz" -C "$tmp"
+  sudo mv "$tmp/qdrant" /usr/local/bin/qdrant
+  sudo chmod +x /usr/local/bin/qdrant
+  rm -rf "$tmp"
+else
+  echo "install: qdrant already present"
+fi
 
 # --- Dev .env (never overwrite an existing one) ---
 if [ ! -f .env ]; then

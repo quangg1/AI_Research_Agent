@@ -8,7 +8,7 @@ from app.domain.structure_validation import validate_memo_structure
 from app.graph.serde import dump, pythonize
 from app.graph.state import ResearchState
 from app.observability.logging import event
-from app.maintenance.hitl_timeout import add_interrupt_metadata
+# TEMPORARILY DISABLED: from app.maintenance.hitl_timeout import add_interrupt_metadata
 
 
 def memo_gate_node(state: ResearchState) -> dict:
@@ -139,8 +139,8 @@ def memo_gate_node(state: ResearchState) -> dict:
     if report.get("metrics", {}).get("augment_kept_prior"):
         quality_check = check_memo_quality(report.get("body_markdown") or "", evidence=evidence, coverage=coverage)
 
-    # NEW: Add timeout metadata for HITL tracking
-    payload_with_timeout = add_interrupt_metadata(pythonize(
+    # TEMPORARILY DISABLED HITL timeout tracking (causing runtime error)
+    payload = pythonize(
         {
             "type": "memo_draft",
             "title": "Memo draft",
@@ -162,9 +162,9 @@ def memo_gate_node(state: ResearchState) -> dict:
             "synthesis_status": (report.get("metrics") or {}).get("synthesis_status"),
             "quality_check": quality_check,
         }
-    ))
+    )
     event("memo_gate_interrupt")
-    decision = interrupt(payload_with_timeout)
+    decision = interrupt(payload)
     if isinstance(decision, str):
         decision = {"action": decision}
     

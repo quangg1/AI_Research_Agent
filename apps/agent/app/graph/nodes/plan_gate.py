@@ -6,7 +6,7 @@ from app.domain.schema import AgentName, SubQuery
 from app.graph.serde import dump, pythonize
 from app.graph.state import ResearchState, budget_from
 from app.observability.logging import event
-from app.maintenance.hitl_timeout import add_interrupt_metadata
+# TEMPORARILY DISABLED: from app.maintenance.hitl_timeout import add_interrupt_metadata
 
 
 def plan_gate_node(state: ResearchState) -> dict:
@@ -25,8 +25,8 @@ def plan_gate_node(state: ResearchState) -> dict:
 
     plan = state.get("plan") or {}
     
-    # NEW: Add timeout metadata for HITL tracking
-    payload_with_timeout = add_interrupt_metadata(pythonize(
+    # TEMPORARILY DISABLED HITL timeout tracking (causing runtime error)
+    payload = pythonize(
         {
             "type": "plan_review",
             "title": "Agent plan",
@@ -36,9 +36,9 @@ def plan_gate_node(state: ResearchState) -> dict:
             "agents_to_run": state.get("agents_to_run") or [],
             "sub_queries": plan.get("sub_queries") or [],
         }
-    ))
+    )
     event("plan_gate_interrupt", agents=state.get("agents_to_run"))
-    decision = interrupt(payload_with_timeout)
+    decision = interrupt(payload)
     if isinstance(decision, str):
         decision = {"action": decision}
 

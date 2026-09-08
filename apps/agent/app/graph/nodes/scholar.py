@@ -178,11 +178,11 @@ def scholar_node(state: ResearchState) -> dict:
     
     # Log adaptive ratio decision
     from app.observability.logging import event
-    event("scholar_adaptive_code_ratio", {
-        "query_type": query_type,
-        "ratio": max_code_ratio,
-        "explanation": explain_code_ratio(max_code_ratio, query_type)
-    })
+    event("scholar_adaptive_code_ratio",
+        query_type=query_type,
+        ratio=max_code_ratio,
+        explanation=explain_code_ratio(max_code_ratio, query_type)
+    )
 
     questions = _questions(state, AgentName.SCHOLAR)
     parallel = fanout_parallelism(state, ceiling=FANOUT_CEILING)

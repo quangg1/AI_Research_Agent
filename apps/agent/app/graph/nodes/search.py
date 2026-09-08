@@ -43,11 +43,11 @@ def search_node(state: ResearchState) -> dict:
     max_code_ratio = adaptive_code_ratio(query_type, query_text)
     
     # Log adaptive ratio decision
-    event("search_adaptive_code_ratio", {
-        "query_type": query_type,
-        "ratio": max_code_ratio,
-        "explanation": explain_code_ratio(max_code_ratio, query_type)
-    })
+    event("search_adaptive_code_ratio",
+        query_type=query_type,
+        ratio=max_code_ratio,
+        explanation=explain_code_ratio(max_code_ratio, query_type)
+    )
 
     questions = _questions(state, AgentName.SEARCH)
     parallel = fanout_parallelism(state, ceiling=FANOUT_CEILING)

@@ -28,7 +28,7 @@ def test_deep_first_pass_reserves_budget_for_critic_loop():
 
 
 def test_planner_iter1_uses_slot_aligned_followups(monkeypatch):
-    monkeypatch.setattr("app.graph.nodes.planner.corpus_available", lambda: False)
+    monkeypatch.setattr("app.graph.nodes.planner.corpus_available", lambda *_: False)
     state = {
         "query": Q,
         "brief": {"depth": "deep"},

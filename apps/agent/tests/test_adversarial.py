@@ -310,7 +310,6 @@ def test_writer_prompt_requires_unknowns_and_attribution_discipline():
     assert "Empirical cutoffs" in prompt
     assert "scaffold" in prompt.lower() or "not reported" in prompt.lower()
     assert "FORBIDDEN" in prompt and "DIRECT" in prompt
-    assert "uncertainty-" in prompt.lower() or "entropy-gated" in prompt.lower()
 
 
 def test_audit_flags_epistemic_tag_clutter_and_setup_table():

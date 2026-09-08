@@ -141,7 +141,9 @@ def test_pdf_extraction_has_page_and_character_limits(monkeypatch):
 
     monkeypatch.setattr(fetch, "PdfReader", Reader)
     text = fetch.extract_content(b"%PDF-fake", "application/pdf")
-    assert text.startswith("evidence")
+    # Each page is prefixed with a [[page N]] locator marker for citation spans.
+    assert text.startswith("[[page 1]]")
+    assert "evidence" in text
     assert len(text) <= fetch.MAX_EXTRACTED_CHARS
 
 

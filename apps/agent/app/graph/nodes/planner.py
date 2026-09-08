@@ -105,9 +105,11 @@ def _planner_sync(state: ResearchState) -> dict:
     has_corpus = corpus_available(org_id)
     learning = is_learning_query(query)
     mechanism = is_mechanism_query(query)
-    store_docs = get_store_documents(org_id)
+    # Only fetch corpus docs when the org actually has a corpus — otherwise the
+    # result is discarded by the short-circuit below (and the DB round-trip is
+    # redundant with corpus_available's own query).
     corpus_relevant = bool(has_corpus) and corpus_is_relevant(
-        user_goal(query), store_docs or load_corpus()
+        user_goal(query), get_store_documents(org_id) or load_corpus()
     )
     live_first = learning or mechanism or not corpus_relevant
     

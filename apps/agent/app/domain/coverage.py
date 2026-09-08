@@ -12,6 +12,7 @@ from app.domain.research_intent import (
     contradiction_signals,
     host_of,
     is_secondary_host,
+    named_systems,
     user_goal,
 )
 from app.domain.schema import AgentName, SubQuery

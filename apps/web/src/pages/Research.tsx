@@ -60,6 +60,7 @@ type Run = {
   error?: string | null;
   interrupt_payload?: any;
   evidence_graph?: any;
+  research_trace?: { active_agent?: string; active_sub_query?: string; [key: string]: any };
   agent?: {
     status?: string;
     interrupt?: any;
@@ -72,6 +73,7 @@ type Run = {
     eta_s?: number;
     started_at?: number;
     next?: string[];
+    research_trace?: { active_agent?: string; active_sub_query?: string; [key: string]: any };
   };
   thread?: {
     parent?: { id: string; query: string; status: string } | null;

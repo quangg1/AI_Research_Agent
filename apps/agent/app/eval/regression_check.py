@@ -249,8 +249,52 @@ def run_test_case(test_case: dict, mode: str = "mock") -> dict:
     
     if mode == "mock":
         # Return mock data for testing the harness itself
+        # Full structure to pass structural validation
+        mock_memo = """# Mock Memo Title
+
+## Executive summary
+This is a mock executive summary for testing purposes.
+
+## Key findings
+1. Mock finding one [1]
+2. Mock finding two [2]
+3. Mock finding three [3]
+
+## Detailed analysis
+
+### Mock dimension 1
+Analysis of mock dimension 1 [1].
+
+### Mock dimension 2
+Analysis of mock dimension 2 [2].
+
+## Worked example
+Mock worked example from single source [1].
+
+## Quantitative findings
+| Metric | Value | Source |
+|--------|-------|--------|
+| Mock metric | 95% | [1] |
+
+## Decision rule
+Use approach A when condition X. Use approach B when condition Y [3].
+
+## Contradictions & debates
+Some papers claim X [1], while others claim Y [2].
+
+## Uncertainties & gaps
+Further research needed on Z.
+
+## Source quality
+Primary sources: [1], [2]. Secondary sources: [3].
+
+## References
+[1] Mock Source 1 (Primary)
+[2] Mock Source 2 (Primary)
+[3] Mock Source 3 (Secondary)
+"""
         return {
-            "memo_markdown": "# Mock Memo\n\n## Executive summary\n\nMock content.\n\n## References\n\n[1] Mock source",
+            "memo_markdown": mock_memo,
             "report": {"metrics": {"iterations": 3, "tool_calls": 25, "must_answer_fraction": 0.70}},
             "status": "completed",
             "error": None

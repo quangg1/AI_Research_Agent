@@ -406,7 +406,7 @@ def replace_planner_llm_with_template():
         is_complete, reason = validate_plan_completeness(plan)
         
         if not is_complete:
-            event("plan_incomplete", {"reason": reason})
+            event("plan_incomplete", reason=reason)
             # Could fallback to LLM here, or fail fast
         
         return {

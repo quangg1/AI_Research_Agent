@@ -279,10 +279,10 @@ def integrate_with_memo_gate():
         )
         
         if should_trigger_regeneration(semantic_result):
-            event("semantic_validation_failed", {
-                "critical_issues": semantic_result["critical_issues"],
-                "hallucination_rate": semantic_result["hallucination_rate_estimate"]
-            })
+            event("semantic_validation_failed",
+                critical_issues=semantic_result["critical_issues"],
+                hallucination_rate=semantic_result["hallucination_rate_estimate"]
+            )
             
             return {
                 "memo_gate_approved": False,

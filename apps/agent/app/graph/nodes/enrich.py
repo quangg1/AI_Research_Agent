@@ -79,11 +79,11 @@ def enrich_node(state: ResearchState) -> dict:
             
             if detections:
                 # Log but don't block - we've neutralized the content
-                event("prompt_injection_detected_enrich", {
-                    "url": row.get("url", "unknown"),
-                    "detection_count": len(detections),
-                    "detection_types": list(set(d['type'] for d in detections))
-                })
+                event("prompt_injection_detected_enrich",
+                    url=row.get("url", "unknown"),
+                    detection_count=len(detections),
+                    detection_types=list(set(d['type'] for d in detections))
+                )
             
             extra.append(sanitized_row)
         span["fetched"] = fetched

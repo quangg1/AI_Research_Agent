@@ -430,8 +430,19 @@ def _research_quality(
         overall = min(overall, 80)
     if any(s.get("status") == "open" for s in slots if s.get("critical")):
         overall = min(overall, 65)
+    
+    # Issue #6 fix: Adjust floor based on evidence quantity
+    # Old: Always capped at 55 when primary_n == 0
+    # New: Lower floor when evidence is also extremely sparse
+    total_evidence = len(evidence or [])
     if primary_n == 0:
-        overall = min(overall, 55)
+        if total_evidence < 3:
+            overall = min(overall, 35)  # Extremely sparse + no primary = very low confidence
+        elif total_evidence < 5:
+            overall = min(overall, 45)  # Very sparse + no primary = low confidence
+        else:
+            overall = min(overall, 55)  # Original floor
+    
     # A numeric-heavy question with a near-empty measured table should not
     # read as fully confident even when coverage/primary-source checks pass.
     if wants_numbers and quant_rows < 2:
@@ -453,14 +464,31 @@ def _research_quality(
     if primary_n > 0 and primary_n < 3:
         gaps_penalty += 5  # Sparse primary sources = likely measurement gaps
     
+    # Issue #6 fix: Penalty for very sparse total evidence
+    # When evidence is extremely thin, confidence should clearly reflect this
+    total_evidence = len(evidence or [])
+    if total_evidence > 0:
+        if total_evidence < 3:
+            # Extremely sparse: < 3 items total
+            gaps_penalty += 25  # Major penalty - confidence should be very low
+        elif total_evidence < 5:
+            # Very sparse: 3-4 items
+            gaps_penalty += 15  # Significant penalty
+        elif total_evidence < 8:
+            # Sparse: 5-7 items
+            gaps_penalty += 8  # Moderate penalty
+    
     # Apply penalties (no floor - allow score to drop to shallow if warranted)
     if gaps_penalty > 0:
         overall = max(overall - gaps_penalty, 0)
     
     # Coverage cap: must-answer < 50% should never read as "standard"
     # Prevents 33% coverage from showing 62/100 · standard
+    # Issue #6 enhancement: More aggressive cap for very low coverage
     if must_pct < 50:
         overall = min(overall, 45)  # Force into "shallow" band
+    elif must_pct < 60:
+        overall = min(overall, 52)  # Still shallow, but closer to threshold
     
     # Work-concentration cap: one work dominating citations is a monoculture
     # Example: 8 papers, 6 from arxiv:2512.17419 → top_work_share = 0.75

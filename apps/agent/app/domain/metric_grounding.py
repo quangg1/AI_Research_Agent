@@ -221,10 +221,10 @@ def audit_memo_scope_bleed(memo: str) -> list[str]:
     return []
 
 
-# --- Hard claim ↔ span grounding (Claude gate) ---------------------------------
-# Every load-bearing numeric claim must map to 1-2 contiguous source sentences
-# that actually contain those numbers. Extra mechanism/causal wording that is
-# absent from that span is treated as ungrounded elaboration.
+# --- Hard claim <-> span grounding (Claude gate) ------------------------------
+# Factual claims (numeric OR prose) must map to 1-2 contiguous source sentences.
+# Extra mechanism/causal wording absent from that span is ungrounded elaboration.
+# Inferred / speculative / recommendation claims are exempt (marked separately).
 
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[\.\!\?])\s+|\n+")
 STOPWORDS = {
@@ -236,18 +236,21 @@ STOPWORDS = {
     "vs", "versus", "per", "such", "may", "can", "could", "would", "should",
     "also", "more", "most", "less", "very", "highly", "based", "when", "while",
     "during", "about", "across", "through", "only", "both", "each", "all",
+    "has", "have", "had", "does", "did", "do", "will", "shall", "must",
 }
 
 MECHANISM_PHRASE_RE = re.compile(
     r"\b("
     r"gradient\s+sensitivity|layer[- ]wise|dynamically\s+allocat\w*|"
     r"unadapted\s+baseline|baseline\s+of|before[- ]after|"
-    r"system\s+1|system\s+2|importance\s+scor\w*|multi[- ]model\s+role[- ]play\w*"
+    r"system\s+1|system\s+2|importance\s+scor\w*|multi[- ]model\s+role[- ]play\w*|"
+    r"attention\s+routing|token[- ]level\s+gating|neural\s+architecture\s+search"
     r")\b",
     re.I,
 )
 
 NUMBER_TOKEN_RE = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+|\d+")
+SKIP_KINDS = {"inferred", "speculative", "recommendation", "inference"}
 
 
 def split_sentences(text: str) -> list[str]:
@@ -279,15 +282,13 @@ def _content_tokens(text: str) -> set[str]:
 
 
 def _find_span_window(sentences: list[str], numbers: list[str]) -> tuple[str, int, int] | None:
-    """Return (span_text, start_idx, end_idx_inclusive) covering all numbers in ≤2 sentences."""
+    """Return (span_text, start_idx, end_idx_inclusive) covering all numbers in <=2 sentences."""
     if not sentences or not numbers:
         return None
     lowered = [s.lower() for s in sentences]
-    # Prefer single sentence containing all numbers.
     for i, s in enumerate(lowered):
         if all(n.lower() in s or n in s for n in numbers):
             return sentences[i], i, i
-    # Then two adjacent sentences.
     for i in range(len(lowered) - 1):
         joined = lowered[i] + " " + lowered[i + 1]
         if all(n.lower() in joined or n in joined for n in numbers):
@@ -295,97 +296,212 @@ def _find_span_window(sentences: list[str], numbers: list[str]) -> tuple[str, in
     return None
 
 
-def assess_claim_span_grounding(
-    claim_text: str,
-    source_text: str,
-    *,
-    quote: str = "",
-) -> dict[str, Any] | None:
-    """Hard gate for numeric claims: require a 1-2 sentence supporting span.
-
-    Returns None when the claim has no load-bearing numbers (gate N/A).
-    """
-    claim = (claim_text or "").strip()
-    source = (source_text or "").strip()
-    numbers = load_bearing_numeric_tokens(claim)
-    if not numbers:
+def _best_semantic_window(sentences: list[str], claim_toks: set[str]) -> tuple[str, set[str], float] | None:
+    """Pick the 1-2 sentence window with strongest content-token overlap."""
+    if not sentences or not claim_toks:
         return None
-    if len(source) < 40:
-        return {
-            "status": "ungrounded",
-            "note": "Numeric claim lacks a retrieved source span long enough to ground the figures.",
-            "numbers": numbers,
-            "span": "",
-        }
+    best: tuple[str, set[str], float] | None = None
+    candidates: list[str] = list(sentences)
+    for i in range(len(sentences) - 1):
+        candidates.append(sentences[i] + " " + sentences[i + 1])
+    for span in candidates:
+        span_toks = _content_tokens(span)
+        overlap = claim_toks & span_toks
+        score = len(overlap) / max(1, len(claim_toks))
+        if best is None or score > best[2] or (score == best[2] and len(overlap) > len(best[1])):
+            best = (span, overlap, score)
+    return best
 
-    sentences = split_sentences(source)
-    window = _find_span_window(sentences, numbers)
-    if window is None:
-        # Numbers may still appear somewhere, just not co-located in 1-2 sentences.
-        present = [n for n in numbers if n in source.replace(",", "")]
-        missing = [n for n in numbers if n not in source.replace(",", "")]
-        if missing:
-            return {
-                "status": "ungrounded",
-                "note": (
-                    "Load-bearing number(s) "
-                    + ", ".join(missing[:4])
-                    + " are absent from the cited source span."
-                ),
-                "numbers": numbers,
-                "span": "",
-            }
-        return {
-            "status": "ungrounded",
-            "note": (
-                "Numbers "
-                + ", ".join(numbers[:4])
-                + " appear in the source but not together in any 1-2 contiguous sentences. "
-                "Do not stitch distant figures into one claim."
-            ),
-            "numbers": numbers,
-            "span": "",
-        }
 
-    span, _i, _j = window
-    claim_toks = _content_tokens(claim)
-    span_toks = _content_tokens(span)
-    overlap = claim_toks & span_toks
+def _mechanism_failures(claim: str, span: str) -> list[str]:
+    return [m.group(0) for m in MECHANISM_PHRASE_RE.finditer(claim) if m.group(0).lower() not in span.lower()]
+
+
+def _finalize_span(
+    *,
+    claim: str,
+    span: str,
+    numbers: list[str],
+    claim_toks: set[str],
+    overlap: set[str],
+    quote: str,
+    numeric: bool,
+    min_overlap: int,
+    min_ratio: float,
+) -> dict[str, Any]:
     quote_ok = bool(quote) and quote.strip().lower() in span.lower()
-
-    # Mechanism / causal elaboration must appear in the supporting span (check first).
-    mechs = [m.group(0) for m in MECHANISM_PHRASE_RE.finditer(claim)]
-    bad = [m for m in mechs if m.lower() not in span.lower()]
+    bad = _mechanism_failures(claim, span)
     if bad:
         return {
             "status": "ungrounded",
             "note": (
                 "Claim adds mechanism/causal wording ("
                 + ", ".join(bad[:3])
-                + ") that is not present in the 1-2 sentence source span that holds the numbers."
+                + ") that is not present in the 1-2 sentence supporting source span."
             ),
             "numbers": numbers,
             "span": span[:400],
+            "mode": "numeric" if numeric else "semantic",
         }
-
-    # Need some lexical support beyond bare numbers, unless a verified quote sits in the span.
-    min_overlap = 2 if len(claim_toks) >= 4 else 1
-    if not quote_ok and len(overlap) < min_overlap:
+    ratio = len(overlap) / max(1, len(claim_toks))
+    if not quote_ok and (len(overlap) < min_overlap or ratio < min_ratio):
         return {
             "status": "ungrounded",
             "note": (
-                "A 1-2 sentence source window contains the numbers, but the claim's wording "
-                "does not align with that span (possible stitched/over-interpreted finding)."
+                "Claim wording is not supported by any 1-2 contiguous source sentences "
+                "(insufficient lexical alignment with the cited span)."
             ),
             "numbers": numbers,
             "span": span[:400],
+            "mode": "numeric" if numeric else "semantic",
         }
-
     return {
         "status": "ok",
-        "note": "Numeric claim grounded in a 1-2 sentence source span.",
+        "note": (
+            "Numeric claim grounded in a 1-2 sentence source span."
+            if numeric
+            else "Prose claim grounded in a 1-2 sentence source span."
+        ),
         "numbers": numbers,
         "span": span[:400],
         "overlap_terms": sorted(overlap)[:12],
+        "mode": "numeric" if numeric else "semantic",
     }
+
+
+def assess_claim_span_grounding(
+    claim_text: str,
+    source_text: str,
+    *,
+    quote: str = "",
+    kind: str = "",
+) -> dict[str, Any] | None:
+    """Hard gate: factual claims must ground in a 1-2 sentence source span.
+
+    Covers numeric and non-numeric prose. Returns None when the gate is N/A
+    (empty claim, or explicitly inferred/speculative/recommendation).
+    """
+    claim = (claim_text or "").strip()
+    source = (source_text or "").strip()
+    if not claim:
+        return None
+    kind_l = (kind or "").strip().lower()
+    if kind_l in SKIP_KINDS:
+        return None
+
+    numbers = load_bearing_numeric_tokens(claim)
+    claim_toks = _content_tokens(claim)
+    if len(source) < 40:
+        return {
+            "status": "ungrounded",
+            "note": "Claim lacks a retrieved source span long enough to ground it.",
+            "numbers": numbers,
+            "span": "",
+            "mode": "numeric" if numbers else "semantic",
+        }
+
+    sentences = split_sentences(source)
+
+    # --- Numeric path ---------------------------------------------------------
+    if numbers:
+        window = _find_span_window(sentences, numbers)
+        if window is None:
+            missing = [n for n in numbers if n not in source.replace(",", "")]
+            if missing:
+                return {
+                    "status": "ungrounded",
+                    "note": (
+                        "Load-bearing number(s) "
+                        + ", ".join(missing[:4])
+                        + " are absent from the cited source span."
+                    ),
+                    "numbers": numbers,
+                    "span": "",
+                    "mode": "numeric",
+                }
+            return {
+                "status": "ungrounded",
+                "note": (
+                    "Numbers "
+                    + ", ".join(numbers[:4])
+                    + " appear in the source but not together in any 1-2 contiguous sentences. "
+                    "Do not stitch distant figures into one claim."
+                ),
+                "numbers": numbers,
+                "span": "",
+                "mode": "numeric",
+            }
+        span, _i, _j = window
+        overlap = claim_toks & _content_tokens(span)
+        return _finalize_span(
+            claim=claim,
+            span=span,
+            numbers=numbers,
+            claim_toks=claim_toks,
+            overlap=overlap,
+            quote=quote,
+            numeric=True,
+            min_overlap=2 if len(claim_toks) >= 4 else 1,
+            min_ratio=0.2,
+        )
+
+    # --- Semantic prose path --------------------------------------------------
+    if len(claim_toks) < 2:
+        # Too thin to hard-gate (titles / fragments).
+        return None
+
+    # If a quote is provided and present, prefer the local 1-2 sentence neighborhood.
+    if quote and quote.strip().lower() in source.lower():
+        q = quote.strip()
+        idx = source.lower().find(q.lower())
+        # gather sentences overlapping the quote region
+        pos = 0
+        hit_idxs: list[int] = []
+        for i, sent in enumerate(sentences):
+            start = source.find(sent, pos)
+            if start < 0:
+                start = pos
+            end = start + len(sent)
+            pos = end
+            if start <= idx <= end or start <= idx + len(q) <= end or (idx <= start and end <= idx + len(q)):
+                hit_idxs.append(i)
+        if hit_idxs:
+            i0, i1 = hit_idxs[0], hit_idxs[-1]
+            if i1 - i0 > 1:
+                i1 = i0 + 1
+            span = " ".join(sentences[i0 : i1 + 1])
+            overlap = claim_toks & _content_tokens(span)
+            return _finalize_span(
+                claim=claim,
+                span=span,
+                numbers=[],
+                claim_toks=claim_toks,
+                overlap=overlap,
+                quote=quote,
+                numeric=False,
+                min_overlap=2 if len(claim_toks) >= 5 else 1,
+                min_ratio=0.25,
+            )
+
+    best = _best_semantic_window(sentences, claim_toks)
+    if best is None:
+        return {
+            "status": "ungrounded",
+            "note": "No source sentence window could be aligned to the claim.",
+            "numbers": [],
+            "span": "",
+            "mode": "semantic",
+        }
+    span, overlap, _score = best
+    return _finalize_span(
+        claim=claim,
+        span=span,
+        numbers=[],
+        claim_toks=claim_toks,
+        overlap=overlap,
+        quote=quote,
+        numeric=False,
+        min_overlap=max(2, min(4, len(claim_toks) // 3 or 2)),
+        min_ratio=0.34,
+    )
 

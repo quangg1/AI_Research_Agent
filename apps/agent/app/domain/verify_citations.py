@@ -118,6 +118,7 @@ def verify_against_sources(
             data.get("text") or "",
             text,
             quote=str(data.get("quote") or ""),
+            kind=str(kind or ""),
         )
         provenance = data.get("provenance") or infer_provenance(data.get("text") or "", text)
         if not url:
@@ -129,7 +130,7 @@ def verify_against_sources(
         elif scope and scope.get("status") == "scope_bleed":
             status, note = "wrong_causal", str(scope.get("note") or "Scope overgeneralization.")
         elif span_gate and span_gate.get("status") == "ungrounded":
-            status, note = "unsupported", str(span_gate.get("note") or "Numeric claim lacks a grounded 1-2 sentence source span.")
+            status, note = "unsupported", str(span_gate.get("note") or "Claim lacks a grounded 1-2 sentence source span.")
         elif kind in {"inferred", "speculative", "recommendation"} and not locator.found:
             status, note = "inferred", "Marked as inference; not treated as a paper finding."
         elif not locator.found:
@@ -141,7 +142,7 @@ def verify_against_sources(
             if causal and causal.get("status") == "ok":
                 note = "Quote found; causal delta has supporting comparison cues in source windows."
             elif span_gate and span_gate.get("status") == "ok":
-                note = "Quote/numbers grounded in a 1-2 sentence source span."
+                note = "Claim grounded in a 1-2 sentence source span."
 
         patch = {
             "kind": kind,

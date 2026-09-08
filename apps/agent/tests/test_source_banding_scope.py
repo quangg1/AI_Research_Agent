@@ -185,3 +185,89 @@ def test_verify_marks_ungrounded_numeric_claim_unsupported():
     }]
     out = verify_against_sources([claim], evidence, refetch=False)
     assert out["claims"][0]["verification_status"] == "unsupported"
+
+
+def test_semantic_span_rejects_fabricated_prose():
+    from app.domain.metric_grounding import assess_claim_span_grounding
+
+    claim = (
+        "LoRA-PAR dynamically allocates low-rank adapters based on layer-wise gradient sensitivity "
+        "to specialize each transformer block."
+    )
+    source = (
+        "LoRA-PAR partitions tasks using a System 1 / System 2 scheme with importance scoring "
+        "and multi-model role-playing to route examples. "
+        "Adapters remain static after assignment."
+    )
+    out = assess_claim_span_grounding(claim, source, kind="direct")
+    assert out is not None
+    assert out["status"] == "ungrounded"
+    assert out.get("mode") == "semantic"
+
+
+def test_semantic_span_accepts_aligned_prose():
+    from app.domain.metric_grounding import assess_claim_span_grounding
+
+    claim = (
+        "LoRA-PAR partitions tasks using a System 1 / System 2 scheme with importance scoring."
+    )
+    source = (
+        "We introduce LoRA-PAR, which partitions tasks using a System 1 / System 2 scheme "
+        "with importance scoring and multi-model role-playing."
+    )
+    out = assess_claim_span_grounding(claim, source, kind="direct")
+    assert out is not None
+    assert out["status"] == "ok"
+    assert out.get("mode") == "semantic"
+
+
+def test_semantic_span_skips_inferred_kind():
+    from app.domain.metric_grounding import assess_claim_span_grounding
+
+    claim = "Therefore teams should prefer LoRA for most production fine-tunes."
+    source = "LoRA reduces trainable parameters substantially compared with full fine-tuning."
+    assert assess_claim_span_grounding(claim, source, kind="recommendation") is None
+
+
+def test_verify_marks_ungrounded_prose_unsupported():
+    from app.domain.verify_citations import verify_against_sources
+    from app.domain.schema import Claim
+
+    claim = Claim(
+        id="c2",
+        text=(
+            "LoRA-PAR dynamically allocates adapters based on layer-wise gradient sensitivity "
+            "across every transformer block."
+        ),
+        quote="",
+        url="https://example.org/lora-par",
+        tier="peer_reviewed",
+        kind="direct",
+    )
+    evidence = [{
+        "url": "https://example.org/lora-par",
+        "title": "LoRA-PAR",
+        "tier": "peer_reviewed",
+        "text": (
+            "LoRA-PAR partitions tasks using a System 1 / System 2 scheme with importance scoring. "
+            "No gradient-based allocation is used."
+        ),
+    }]
+    out = verify_against_sources([claim], evidence, refetch=False)
+    assert out["claims"][0]["verification_status"] == "unsupported"
+
+
+def test_primary_source_audit_lora():
+    from app.domain.report_audit import audit_memo_primary_sources
+
+    notes = audit_memo_primary_sources(
+        "LoRA LoRA LoRA QLoRA QLoRA fine-tuning details without primary citations.",
+        query="lora vs qlora",
+    )
+    assert notes and "2106.09685" in notes[0]
+    ok = audit_memo_primary_sources(
+        "LoRA (Hu et al., https://arxiv.org/abs/2106.09685) and QLoRA "
+        "(Dettmers et al., https://arxiv.org/abs/2305.14314) LoRA QLoRA LoRA QLoRA.",
+        query="lora vs qlora",
+    )
+    assert ok == []

@@ -259,7 +259,7 @@ def writer_system() -> str:
         "Form claims bottom-up from extracted numbers first. "
         "'Verified' / quote-matched ≠ independently measured. "
         "Author estimates stay author_assumption, never High. "
-"Numeric claims hard-gate: every load-bearing figure must be supportable by 1-2 contiguous sentences in the cited source that contain those numbers; do not invent mechanisms or before/after stories absent from that span. "
+"Claim hard-gate: every factual claim (numeric or prose) must be supportable by 1-2 contiguous sentences in the cited source; do not invent mechanisms, before/after stories, or paraphrases absent from that span. "
         "GitHub Awesome-lists are Band C. arXiv preprints are NOT peer-reviewed (label preprint, Band B). Predatory venues (e.g. IJSR) are Band C / unreliable — never Band A. arXiv+OpenReview of the same paper = one work. Keep numeric scope: do not promote a small-model/HAR/CPU measurement into a universal 70B LLM fact. "
         "Write 42% → 62% as +20 percentage points (relative +47.6%), never '+20% boost'. "
         "Folklore ('bigger models always win', 'RAG always needs a vector DB', "

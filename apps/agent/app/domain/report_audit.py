@@ -164,6 +164,7 @@ def audit_memo(text: str, *, query: str = "") -> list[str]:
             )
     notes.extend(audit_memo_causal_deltas(blob))
     notes.extend(audit_memo_scope_bleed(blob))
+    notes.extend(audit_memo_primary_sources(blob, query=query))
     try:
         from app.domain.report_integrity import audit_memo_integrity
 
@@ -436,3 +437,33 @@ def append_research_critic(markdown: str, *, query: str = "") -> tuple[str, list
             notes,
         )
     return f"{markdown.rstrip()}\n\n## Limitations\n\n### Research critic\n\n{block}\n", notes
+
+
+def audit_memo_primary_sources(text: str, *, query: str = "") -> list[str]:
+    """Flag when a LoRA/QLoRA-heavy memo never cites the canonical primary papers."""
+    blob = f"{query or ''}\n{text or ''}".lower()
+    if "lora" not in blob and "qlora" not in blob:
+        return []
+    # Mention density: only nag when the memo is clearly about these methods.
+    hits = len(re.findall(r"\blora\b|\bqlora\b", blob))
+    if hits < 4:
+        return []
+    has_hu = bool(re.search(r"arxiv\.org/(?:abs|pdf)/2106\.09685|hu\s+et\s+al|lora:\s*low-rank", blob, re.I))
+    has_dettmers = bool(
+        re.search(r"arxiv\.org/(?:abs|pdf)/2305\.14314|dettmers\s+et\s+al|qlora:\s*efficient", blob, re.I)
+    )
+    missing = []
+    if "lora" in blob and not has_hu:
+        missing.append("LoRA (Hu et al., arXiv:2106.09685)")
+    if "qlora" in blob and not has_dettmers:
+        missing.append("QLoRA (Dettmers et al., arXiv:2305.14314)")
+    if not missing:
+        return []
+    return [
+        "Memo discusses "
+        + ("/".join(x for x in ("LoRA", "QLoRA") if x.lower() in blob))
+        + " heavily but does not cite primary source(s): "
+        + "; ".join(missing)
+        + ". Prefer grounding textbook claims in those papers instead of secondary/predatory venues."
+    ]
+

@@ -1,40 +1,18 @@
 {
   "version": 1,
-  "generatedAt": "2026-09-03T09:35:53.171Z",
-  "taskSummary": "Workspace-detected skills",
+  "generatedAt": "2026-09-08T06:35:48.352Z",
+  "taskSummary": "Task drift refresh (session_size)",
+  "promptExcerpt": "Workspace-detected skills. Long session (critical) — tighten skill set to task-relevant only. Long session (critical) — tighten skill set to task-relevant only. Long session (critical) — tighten skill set to task-relevant only. Long session",
   "proposals": [
     {
-      "name": "skill-usage-insights",
-      "reason": "Workspace files match **/.claude/skills/**",
-      "confidence": 60,
-      "installed": true,
-      "matchedGlobs": [
-        "**/.claude/skills/**"
-      ],
-      "confidenceBreakdown": {
-        "semanticMatch": 60,
-        "workspaceAffinity": 0,
-        "repositoryAffinity": 0,
-        "adoptionSuccess": 0,
-        "enrichment": 0,
-        "penalty": 0
-      },
-      "whyText": "detected: **/.claude/skills/**",
-      "estimatedMinutes": 5,
-      "acceptanceRate": -1,
-      "successRate": -1,
-      "successScore": 15,
-      "trend": "new"
-    },
-    {
-      "name": "extension-value-audit",
-      "reason": "Workspace files match **/.claude/learning/hook-health.jsonl, **/.claude/learning/task-skill-proposals.json",
+      "name": "cross-platform-scripting",
+      "reason": "Workspace files match **/*.ps1, **/*.sh",
       "confidence": 50,
       "installed": true,
       "matchedGlobs": [
-        "**/.claude/learning/hook-health.jsonl",
-        "**/.claude/learning/task-skill-proposals.json",
-        "**/.claude/learning/skill-adoption.jsonl"
+        "**/*.ps1",
+        "**/*.sh",
+        "**/*.bat"
       ],
       "confidenceBreakdown": {
         "semanticMatch": 50,
@@ -44,7 +22,7 @@
         "enrichment": 0,
         "penalty": 0
       },
-      "whyText": "detected: **/.claude/learning/hook-health.jsonl, **/.claude/learning/task-skill-proposals.json",
+      "whyText": "detected: **/*.ps1, **/*.sh",
       "estimatedMinutes": 8,
       "acceptanceRate": -1,
       "successRate": -1,

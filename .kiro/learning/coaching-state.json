@@ -1,17 +1,17 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-05T02:38:24.243Z",
+  "updatedAt": "2026-09-06T00:00:20.731Z",
   "metrics": {
     "promptClarity": {
       "metric": "promptClarity",
-      "showCount": 2,
-      "improvedCount": 1,
-      "ignoredCount": 2,
-      "cooldownUntil": null,
+      "showCount": 3,
+      "improvedCount": 17,
+      "ignoredCount": 9,
+      "cooldownUntil": "2026-09-09T00:00:20.730Z",
       "lastScore": 20,
-      "lastShownAt": "2026-09-05T01:50:14.822Z",
-      "lastEvaluatedAt": "2026-09-05T02:38:24.243Z",
-      "adaptedMultiplier": 1.2
+      "lastShownAt": "2026-09-05T06:22:14.950Z",
+      "lastEvaluatedAt": "2026-09-06T00:00:20.730Z",
+      "adaptedMultiplier": 0.25
     }
   }
 }

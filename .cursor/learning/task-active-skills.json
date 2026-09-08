@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "generatedAt": "2026-09-05T00:36:29.563Z",
-  "proposalsGeneratedAt": "2026-09-03T09:35:53.171Z",
-  "source": "session-apply",
+  "generatedAt": "2026-09-08T07:01:44.828Z",
+  "proposalsGeneratedAt": "2026-09-08T06:35:48.352Z",
+  "source": "task-skill-proposals",
   "activeSkills": [
     "self-learning",
     "file-style-conventions",
@@ -10,11 +10,12 @@
     "skill-usage-insights",
     "skill-feedback-adaptation",
     "skill-official-updater",
-    "extension-value-audit"
+    "cross-platform-scripting"
   ],
   "ignoredSkills": [
     "deployment-practical",
     "doc-coauthoring",
+    "extension-value-audit",
     "github-actions-ci",
     "vitest-extension-testing"
   ]

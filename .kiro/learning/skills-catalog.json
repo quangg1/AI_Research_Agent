@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-09-05T04:25:59.090Z",
+  "generatedAt": "2026-09-08T07:01:24.141Z",
   "workspacePath": "d:\\AI_Research_Agent",
   "branch": "cursor/fix-kiln-memo-quality-4dd5",
   "skills": [
@@ -239,7 +239,7 @@
         "**/*.sh",
         "**/*.bat"
       ],
-      "installedInWorkspace": false,
+      "installedInWorkspace": true,
       "availableInGlobal": false,
       "inLibrary": true,
       "requiredForProfileInit": false

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-05T00:35:03.633Z",
+  "updatedAt": "2026-09-05T04:26:09.224Z",
   "profileInit": "idle",
   "attribution": {
     "status": "broken",
@@ -10,7 +10,7 @@
   "hooks": {
     "installed": true,
     "allConfigured": true,
-    "lastSync": "2026-09-05T00:35:03.634Z"
+    "lastSync": "2026-09-05T04:26:09.224Z"
   },
   "capabilities": {
     "claude": {
@@ -43,20 +43,20 @@
     }
   },
   "lastCycle": {
-    "collectedAt": "2026-09-05T00:34:42.626Z",
-    "attributionMtime": 1788568482626.5293,
+    "collectedAt": "2026-09-05T04:25:53.973Z",
+    "attributionMtime": 1788582353972.9534,
     "circuitOpen": false,
     "runsLastMinute": 1,
-    "indexedAt": "2026-09-05T00:35:01.950Z",
+    "indexedAt": "2026-09-05T04:26:07.265Z",
     "runsFileMtime": 0,
     "runsFileSize": 0,
-    "analyzedAt": "2026-09-05T00:35:03.634Z",
+    "analyzedAt": "2026-09-05T04:26:09.225Z",
     "trace": {
       "errors": [],
-      "indexMs": 12,
-      "analyzeMs": 2059,
-      "totalMs": 2071,
-      "lastCompletedAt": "2026-09-04T05:46:19.263Z"
+      "indexMs": 26,
+      "analyzeMs": 1985,
+      "totalMs": 2011,
+      "lastCompletedAt": "2026-09-05T00:35:03.943Z"
     }
   },
   "systemMode": "safe"

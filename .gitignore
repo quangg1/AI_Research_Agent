@@ -26,6 +26,7 @@ apps/web/dist/
 data/memory/
 postgres_data/
 redis_data/
+.qdrant/
 *.sqlite
 .langgraph_checkpoint/
 

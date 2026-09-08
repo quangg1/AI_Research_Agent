@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.config.thresholds import CoverageThresholds, QualityThresholds
+from app.conf.thresholds import CoverageThresholds, QualityThresholds
 
 # Anchored to a real citation-marker shape ("2", "3 peer", "2, 5 peer") —
 # NOT "any bracketed text". A bare r"\[([^\]]+)\]" also matched markdown link

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from langgraph.types import interrupt
 
-from app.config.thresholds import QualityThresholds
+from app.conf.thresholds import QualityThresholds
 from app.domain.knowledge import depth_of, mark_reused, save_answer
 from app.domain.structure_validation import validate_memo_structure
 from app.graph.serde import dump, pythonize

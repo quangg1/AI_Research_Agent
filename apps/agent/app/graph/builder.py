@@ -3,7 +3,7 @@ from __future__ import annotations
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
-from app.config.thresholds import CoverageThresholds
+from app.conf.thresholds import CoverageThresholds
 from app.graph.nodes.briefing import briefing_node, briefing_node_auto
 from app.graph.nodes.collector import collector_node, retrieve_node
 from app.graph.nodes.critic import critic_node

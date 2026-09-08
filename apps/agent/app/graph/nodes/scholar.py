@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from app.config.thresholds import RetrievalThresholds
+from app.conf.thresholds import RetrievalThresholds
 from app.domain.adaptive_code_ratio import adaptive_code_ratio, explain_code_ratio
 from app.domain.adversarial import retrieval_rank_score
 from app.domain.citations import is_citable_url

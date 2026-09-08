@@ -5,7 +5,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-from app.config.thresholds import RetrievalThresholds
+from app.conf.thresholds import RetrievalThresholds
 from app.domain.adaptive_code_ratio import adaptive_code_ratio, explain_code_ratio
 from app.domain.research_depth import effective_depth
 from app.domain.retrieval_limits import (

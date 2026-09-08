@@ -82,3 +82,31 @@ def test_har_memory_figures_cannot_be_stated_as_70b_facts():
     result = assess_scope_overgeneralization(claim, source)
     assert result is not None
     assert result["status"] == "scope_bleed"
+
+
+def test_verify_uses_evidence_text_field():
+    from app.domain.verify_citations import verify_against_sources
+    from app.domain.schema import Claim
+
+    claim = Claim(
+        id="c1",
+        text="Accuracy rose from 82.7% to 96.5% after LoRA on motor fault.",
+        quote="82.7%",
+        url="https://www.ijsr.net/archive/v12/x.pdf",
+        tier="peer_reviewed",
+    )
+    evidence = [{
+        "url": "https://www.ijsr.net/archive/v12/x.pdf",
+        "title": "IJSR motor study",
+        "tier": "peer_reviewed",
+        "text": "On bearing fault diagnosis we observed 82.7% with the unadapted baseline and 96.5% after fine-tuning.",
+    }]
+    out = verify_against_sources(
+        [claim],
+        evidence,
+        citations=[{"n": 1, "url": evidence[0]["url"], "title": "IJSR"}],
+        refetch=False,
+    )
+    status = out["claims"][0]["verification_status"]
+    assert status != "source_missing", out["claims"][0]
+    assert out["claims"][0]["quality_band"] in {"C", "D"}

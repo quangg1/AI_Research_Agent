@@ -50,7 +50,15 @@ def _as_claim(claim: Claim | dict) -> dict:
 
 
 def _source_text(ev: dict) -> str:
-    return (ev.get("full_text") or ev.get("quote") or ev.get("snippet") or ev.get("title") or "")
+    return (
+        ev.get("full_text")
+        or ev.get("text")
+        or ev.get("content")
+        or ev.get("quote")
+        or ev.get("snippet")
+        or ev.get("title")
+        or ""
+    )
 
 
 def _apply(claim: Claim | dict, patch: dict) -> None:
@@ -133,7 +141,7 @@ def verify_against_sources(
             "verification_note": note,
             "provenance": provenance,
             "quality_band": data.get("quality_band")
-            or quality_band_for(url, str(data.get("tier") or ev.get("tier") or "")),
+            or quality_band_for(url, str(data.get("tier") or ev.get("tier") or ""), str(ev.get("title") or data.get("title") or "")),
             "url": url or data.get("url") or "",
         }
         if locator.found and not data.get("quote"):
@@ -157,7 +165,7 @@ def verify_against_sources(
                 "title": ev.get("title") or data.get("url") or url,
                 "host": host_of(url) or urlparse(url).hostname or "",
                 "tier": ev.get("tier") or data.get("tier") or "",
-                "quality_band": quality_band_for(url, str(ev.get("tier") or data.get("tier") or "")),
+                "quality_band": quality_band_for(url, str(ev.get("tier") or data.get("tier") or ""), str(ev.get("title") or "")),
                 "published": ev.get("published") or data.get("published") or "",
                 "content": text[:40_000],
             }

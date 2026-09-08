@@ -346,7 +346,7 @@ def score_must_answer(query: str, evidence: list[dict], slots: list[dict] | None
         "has_implementation": bool(official_impls),
         "official_impl_count": len(official_impls),
         "unique_sources": len(tagged),
-        "unique_hosts": len({h for h in hosts if h}),
+        "unique_works": unique_works,
         "primary_sources": primary_n,
         "depth_score": quality,
         "roles_present": sorted({e.get("source_role") for e in tagged if e.get("source_role")}),

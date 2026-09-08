@@ -44,10 +44,12 @@ else
 fi
 
 # --- Dev .env (never overwrite an existing one) ---
+# Note: AGENT_SHARED_KEY is intentionally left empty here. It is injected into
+# the running agent/api processes via the environment.json terminals instead, so
+# that the agent test suite (which reads this same .env) does not require the
+# X-Agent-Key header on its in-process TestClient calls.
 if [ ! -f .env ]; then
   cp .env.example .env
-  # Dev shared key so kiln-api can authenticate to kiln-agent (/ready turns green).
-  sed -i 's/^AGENT_SHARED_KEY=.*/AGENT_SHARED_KEY=kiln_dev_agent_key/' .env
   echo "install: created .env from .env.example (dev mode)"
 else
   echo "install: .env already present, leaving it untouched"

@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from app.config.thresholds import RetrievalThresholds
+from app.domain.adaptive_code_ratio import adaptive_code_ratio, explain_code_ratio
 from app.domain.research_depth import effective_depth
 from app.domain.retrieval_limits import (
     API_RESULTS_PER_QUERY,
@@ -35,6 +36,19 @@ def search_node(state: ResearchState) -> dict:
     if budget_from(state).remaining_retrieval_calls <= 0:
         return {"evidence": [], "traces": [{"node": "search", "skipped": "budget", "external_calls": 0}]}
 
+    # Issue #2 fix: Adaptive code ratio based on query intent
+    brief = state.get("brief") or {}
+    query_type = brief.get("query_type") or brief.get("category")
+    query_text = state.get("query") or ""
+    max_code_ratio = adaptive_code_ratio(query_type, query_text)
+    
+    # Log adaptive ratio decision
+    event("search_adaptive_code_ratio", {
+        "query_type": query_type,
+        "ratio": max_code_ratio,
+        "explanation": explain_code_ratio(max_code_ratio, query_type)
+    })
+
     questions = _questions(state, AgentName.SEARCH)
     parallel = fanout_parallelism(state, ceiling=FANOUT_CEILING)
     hits: list[dict] = []
@@ -43,7 +57,7 @@ def search_node(state: ResearchState) -> dict:
 
     with trace_span("search", active_agent="search", parallel=parallel) as span:
         def run_one(question: str) -> tuple[str, list[dict], int]:
-            rows, calls = _search(question)
+            rows, calls = _search(question, max_code_ratio=max_code_ratio)
             return question, rows[:API_RESULTS_PER_QUERY], calls
 
         with ThreadPoolExecutor(max_workers=parallel) as pool:
@@ -196,7 +210,7 @@ def _balanced_evidence_pool(papers: list[dict], max_code_ratio: float = Retrieva
     return balanced
 
 
-def _search(query: str) -> tuple[list[dict], int]:
+def _search(query: str, max_code_ratio: float = RetrievalThresholds.MAX_CODE_RATIO) -> tuple[list[dict], int]:
     key = cache.cache_key("search", query)
     hit = cache.get(key)
     if hit is not None:
@@ -210,8 +224,8 @@ def _search(query: str) -> tuple[list[dict], int]:
         external_calls += 1
         rows = retry_call(lambda: _ddg(query), attempts=2, default=[]) or []
     
-    # NEW: Apply domain balancing to prevent coding skew
-    balanced_rows = _balanced_evidence_pool(rows, max_code_ratio=0.40)
+    # NEW: Apply domain balancing to prevent coding skew (now adaptive based on query type)
+    balanced_rows = _balanced_evidence_pool(rows, max_code_ratio=max_code_ratio)
     
     return cache.put(key, balanced_rows), external_calls
 

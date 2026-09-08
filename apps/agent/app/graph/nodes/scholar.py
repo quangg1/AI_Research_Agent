@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 import httpx
 
 from app.config.thresholds import RetrievalThresholds
+from app.domain.adaptive_code_ratio import adaptive_code_ratio, explain_code_ratio
 from app.domain.adversarial import retrieval_rank_score
 from app.domain.citations import is_citable_url
 from app.domain.research_depth import effective_depth
@@ -169,6 +170,20 @@ def scholar_node(state: ResearchState) -> dict:
     if budget_from(state).remaining_retrieval_calls <= 0:
         return {"evidence": [], "traces": [{"node": "scholar", "skipped": "budget"}]}
 
+    # Issue #2 fix: Adaptive code ratio based on query intent
+    brief = state.get("brief") or {}
+    query_type = brief.get("query_type") or brief.get("category")
+    query_text = state.get("query") or ""
+    max_code_ratio = adaptive_code_ratio(query_type, query_text)
+    
+    # Log adaptive ratio decision
+    from app.observability.logging import event
+    event("scholar_adaptive_code_ratio", {
+        "query_type": query_type,
+        "ratio": max_code_ratio,
+        "explanation": explain_code_ratio(max_code_ratio, query_type)
+    })
+
     questions = _questions(state, AgentName.SCHOLAR)
     parallel = fanout_parallelism(state, ceiling=FANOUT_CEILING)
     hits: list[dict] = []
@@ -177,7 +192,7 @@ def scholar_node(state: ResearchState) -> dict:
 
     with trace_span("scholar", active_agent="scholar", parallel=parallel) as span:
         def run_one(question: str) -> tuple[str, list[dict], int]:
-            rows, calls = _scholar_search(question)
+            rows, calls = _scholar_search(question, max_code_ratio=max_code_ratio)
             return question, rows[:API_RESULTS_PER_QUERY], calls
 
         with ThreadPoolExecutor(max_workers=parallel) as pool:
@@ -212,7 +227,7 @@ def scholar_node(state: ResearchState) -> dict:
     }
 
 
-def _scholar_search(query: str) -> tuple[list[dict], int]:
+def _scholar_search(query: str, max_code_ratio: float = RetrievalThresholds.MAX_CODE_RATIO) -> tuple[list[dict], int]:
     global _s2_is_rate_limited, _s2_rate_limit_until
     
     q = compact_retrieval_query(query, agent="scholar")
@@ -224,7 +239,7 @@ def _scholar_search(query: str) -> tuple[list[dict], int]:
     if _s2_is_rate_limited and now < _s2_rate_limit_until:
         cooldown_remaining = int(_s2_rate_limit_until - now)
         logger.info(f"semantic_scholar_skipped: in rate-limit cooldown for {cooldown_remaining}s, using OpenAlex only")
-        balanced = _balanced_evidence_pool(openalex, max_code_ratio=0.40)
+        balanced = _balanced_evidence_pool(openalex, max_code_ratio=max_code_ratio)
         return balanced, calls
     
     # Augment thin OpenAlex result sets with Semantic Scholar
@@ -237,8 +252,8 @@ def _scholar_search(query: str) -> tuple[list[dict], int]:
     
     raw_results = _dedupe_papers(openalex + semantic)
     
-    # NEW: Apply domain balancing to prevent coding skew
-    balanced_results = _balanced_evidence_pool(raw_results, max_code_ratio=0.40)
+    # NEW: Apply domain balancing to prevent coding skew (now adaptive based on query type)
+    balanced_results = _balanced_evidence_pool(raw_results, max_code_ratio=max_code_ratio)
     
     return balanced_results, calls
 

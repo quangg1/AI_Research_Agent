@@ -21,6 +21,10 @@ from app.retrieval.chunk import load_corpus
 from app.retrieval.hybrid import corpus_is_relevant
 from app.retrieval.store import corpus_available, get_store_documents
 
+# NEW (Issue #5): Template-driven planning fallback
+# Set to True to use templates when LLM planning fails or for deterministic planning
+USE_TEMPLATE_FALLBACK = True
+
 
 async def planner_node(state: ResearchState) -> dict:
     return await asyncio.to_thread(_planner_sync, state)
@@ -106,13 +110,84 @@ def _planner_sync(state: ResearchState) -> dict:
         user_goal(query), store_docs or load_corpus()
     )
     live_first = learning or mechanism or not corpus_relevant
-    plan = _llm_plan(query, budget, followups, has_corpus, live_first, mechanism) or heuristic_plan(
-        query,
-        budget.remaining_calls,
-        followups,
-        has_corpus=has_corpus,
-        live_first=live_first,
-    )
+    
+    # Try LLM-based planning first
+    plan = _llm_plan(query, budget, followups, has_corpus, live_first, mechanism)
+    
+    # NEW (Issue #5): Template-based fallback when LLM fails or unavailable
+    if USE_TEMPLATE_FALLBACK and plan is None:
+        try:
+            from app.maintenance.planner_templates import generate_plan, validate_plan_completeness, plan_to_dimensions
+            
+            # Generate plan from template
+            template_plan_dict = generate_plan(query)
+            is_complete, validation_reason = validate_plan_completeness(template_plan_dict)
+            
+            if is_complete:
+                # Convert template plan to Plan schema
+                # Map template_type to QueryType
+                template_to_query_type = {
+                    "comparison": QueryType.COMPARISON,
+                    "implementation": QueryType.FACTUAL,
+                    "survey": QueryType.OPEN_RESEARCH,
+                    "theory": QueryType.FACTUAL,
+                    "benchmark": QueryType.COMPARISON,
+                    "default": QueryType.FACTUAL,
+                }
+                
+                # Build sub_queries from template
+                sub_queries = []
+                for i, question in enumerate(template_plan_dict["must_answer"], 1):
+                    sub_queries.append(SubQuery(
+                        agent=AgentName.SEARCH,
+                        question=question,
+                        rationale=f"Must-answer dimension {i} (template)"
+                    ))
+                
+                # Add should_answer questions
+                for i, question in enumerate(template_plan_dict["should_answer"], 1):
+                    if len(sub_queries) >= budget.remaining_calls:
+                        break
+                    sub_queries.append(SubQuery(
+                        agent=AgentName.SEARCH,
+                        question=question,
+                        rationale=f"Should-answer dimension {i} (template)"
+                    ))
+                
+                # Select agents based on query type
+                agents_to_run = [AgentName.SEARCH]
+                if budget.remaining_calls > 1 and not template_plan_dict.get("template_type") == "implementation":
+                    agents_to_run.append(AgentName.SCHOLAR)
+                
+                # Create Plan object
+                plan = Plan(
+                    query_type=template_to_query_type.get(template_plan_dict.get("template_type", "default"), QueryType.FACTUAL),
+                    goal=user_goal(query),
+                    agents_to_run=agents_to_run[:budget.remaining_calls],
+                    sub_queries=sub_queries[:budget.remaining_calls],
+                    assumptions=[],
+                    stop_conditions=[]
+                )
+                
+                event("planner_template_fallback", 
+                      template_type=template_plan_dict.get("template_type"),
+                      n_questions=len(sub_queries))
+            else:
+                event("planner_template_incomplete", reason=validation_reason)
+                plan = None
+        except Exception as exc:
+            event("planner_template_error", error=str(exc)[:200])
+            plan = None
+    
+    # Final fallback to heuristic plan if both LLM and template fail
+    if plan is None:
+        plan = heuristic_plan(
+            query,
+            budget.remaining_calls,
+            followups,
+            has_corpus=has_corpus,
+            live_first=live_first,
+        )
     if llm.last_tokens:
         budget.used_tokens += llm.last_tokens
     if live_first:

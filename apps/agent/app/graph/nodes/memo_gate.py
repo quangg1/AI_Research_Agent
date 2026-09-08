@@ -8,6 +8,7 @@ from app.domain.structure_validation import validate_memo_structure
 from app.graph.serde import dump, pythonize
 from app.graph.state import ResearchState
 from app.observability.logging import event
+from app.maintenance.hitl_timeout import add_interrupt_metadata
 
 
 def memo_gate_node(state: ResearchState) -> dict:
@@ -17,6 +18,9 @@ def memo_gate_node(state: ResearchState) -> dict:
     report = state.get("report") or {}
     has_draft = bool((report.get("body_markdown") or "").strip())
     status = str(state.get("status") or "")
+    
+    # Configuration: Enable semantic validation (high compute cost, OFF by default)
+    ENABLE_SEMANTIC_VALIDATION = False  # Set to True to enable embedding-based hallucination detection
 
     # HitL approve sets status=approved before report finishes; report then writes the memo.
     # Only skip when already published or there is nothing to review.
@@ -68,6 +72,36 @@ def memo_gate_node(state: ResearchState) -> dict:
         event("memo_gate_structure_warnings",
               warning_count=structure_validation["warning_count"],
               warnings=structure_validation["warnings"])
+    
+    # NEW (Issue #4): Optional semantic validation (embedding-based hallucination detection)
+    # HIGH COMPUTE COST - Only enable if needed for critical quality assurance
+    if ENABLE_SEMANTIC_VALIDATION and body_markdown and evidence:
+        try:
+            from app.maintenance.semantic_validation import validate_memo_semantics, should_trigger_regeneration
+            # NOTE: This requires embedding model to be available
+            # For now, we skip if not configured to avoid breaking existing flow
+            embedding_model = None  # TODO: Wire to actual embedding model from config
+            
+            if embedding_model:
+                semantic_result = validate_memo_semantics(
+                    memo_markdown=body_markdown,
+                    evidence_pool=evidence,
+                    embedding_model=embedding_model,
+                    threshold=0.70  # From semantic_validation.py
+                )
+                
+                if should_trigger_regeneration(semantic_result):
+                    quality_check["issues"].append(
+                        f"Semantic validation: {semantic_result['critical_issues']} claims "
+                        f"not supported by sources (hallucination rate: {semantic_result['hallucination_rate_estimate']:.0%})"
+                    )
+                    quality_check["should_regenerate"] = True
+                    event("memo_gate_semantic_violations",
+                          critical_issues=semantic_result["critical_issues"],
+                          hallucination_rate=semantic_result["hallucination_rate_estimate"])
+        except Exception as exc:
+            # Don't fail the gate if semantic validation fails
+            event("memo_gate_semantic_validation_error", error=str(exc)[:200])
 
     # Track regeneration attempts to prevent infinite loops
     quality_regen_count = int(state.get("quality_regeneration_count") or 0)
@@ -105,7 +139,8 @@ def memo_gate_node(state: ResearchState) -> dict:
     if report.get("metrics", {}).get("augment_kept_prior"):
         quality_check = check_memo_quality(report.get("body_markdown") or "", evidence=evidence, coverage=coverage)
 
-    payload = pythonize(
+    # NEW: Add timeout metadata for HITL tracking
+    payload_with_timeout = add_interrupt_metadata(pythonize(
         {
             "type": "memo_draft",
             "title": "Memo draft",
@@ -127,9 +162,9 @@ def memo_gate_node(state: ResearchState) -> dict:
             "synthesis_status": (report.get("metrics") or {}).get("synthesis_status"),
             "quality_check": quality_check,
         }
-    )
+    ))
     event("memo_gate_interrupt")
-    decision = interrupt(payload)
+    decision = interrupt(payload_with_timeout)
     if isinstance(decision, str):
         decision = {"action": decision}
     

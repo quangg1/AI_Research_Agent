@@ -5,6 +5,7 @@ from langgraph.types import interrupt
 from app.graph.serde import dump, pythonize
 from app.graph.state import ResearchState, budget_from
 from app.observability.logging import event
+from app.maintenance.hitl_timeout import add_interrupt_metadata
 
 # Human "Dig further" always gets one more research loop, even if the first
 # pass burned the original budget arriving at HITL.
@@ -17,7 +18,9 @@ REVISE_MAX_TOOL_CALLS_CAP = 40
 def hitl_node(state: ResearchState) -> dict:
     retrieved = state.get("retrieved") or state.get("evidence") or []
     critic = state.get("critic") or {}
-    payload = pythonize(
+    
+    # NEW: Add timeout metadata for HITL tracking
+    payload_with_timeout = add_interrupt_metadata(pythonize(
         {
             "type": "approve_report",
             "query": state.get("query"),
@@ -30,9 +33,9 @@ def hitl_node(state: ResearchState) -> dict:
             "gate_message": (critic.get("coverage_gate") or {}).get("message") or "",
             "llm_mode": state.get("llm_mode"),
         }
-    )
+    ))
     event("hitl_interrupt", n_evidence=len(retrieved))
-    decision = interrupt(payload)
+    decision = interrupt(payload_with_timeout)
     if isinstance(decision, str):
         decision = {"action": decision}
     action = (decision or {}).get("action", "approve")

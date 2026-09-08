@@ -197,7 +197,19 @@ def build_audit_packet(memo: dict, n_claims: int = 8) -> tuple[str, list[dict]]:
     return "".join(packet), claim_records
 
 
-def score_judge_response(claim_records: list[dict], judge_verdicts: list[dict], save_history: bool = True) -> dict:
+def score_judge_response(claim_records: list[dict], judge_verdicts: list[dict], save_history: bool = True, *, memo_id: str | None = None, trigger_feedback: bool = False) -> dict:
+    """Score judge's verdicts and optionally trigger Tier-B feedback loop.
+    
+    Args:
+        claim_records: Claim records from build_audit_packet
+        judge_verdicts: Verdicts from judge LLM
+        save_history: Save to history.jsonl
+        memo_id: Memo identifier for feedback (if trigger_feedback=True)
+        trigger_feedback: If True, call tier_b_feedback to flag memo if issues found
+    
+    Returns:
+        Audit summary dict
+    """
     by_id = {c["id"]: c for c in claim_records}
     verdict_by_id = {int(v["id"]): str(v.get("verdict", "")).upper() for v in judge_verdicts}
     reason_by_id = {int(v["id"]): v.get("reason", "") for v in judge_verdicts}
@@ -208,12 +220,20 @@ def score_judge_response(claim_records: list[dict], judge_verdicts: list[dict], 
     judged = supported + not_supported
     hallucination_rate = round(not_supported / judged, 3) if judged else None
 
+    # Build confidence breakdown for tier_b_feedback
+    confidence_breakdown = {
+        "HIGH": supported,
+        "NOT_SUPPORTED": not_supported,
+        "CANNOT_VERIFY": cannot_verify,
+    }
+
     summary = {
         "n_claims": len(claim_records),
         "supported": supported,
         "not_supported": not_supported,
         "cannot_verify": cannot_verify,
         "hallucination_rate": hallucination_rate,
+        "confidence_breakdown": confidence_breakdown,
         "flagged_claims": [
             {**by_id[cid], "reason": reason_by_id.get(cid, "")} for cid in by_id if verdict_by_id.get(cid) == "NOT_SUPPORTED"
         ],
@@ -230,6 +250,33 @@ def score_judge_response(claim_records: list[dict], judge_verdicts: list[dict], 
         }
         with history_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row) + "\n")
+
+    # NEW: Tier-B feedback integration
+    if trigger_feedback and memo_id:
+        try:
+            from app.maintenance.tier_b_feedback import process_audit_result
+            from app.observability.logging import event
+            
+            # Trigger feedback loop (flags memo if issues found)
+            action_summary = process_audit_result(
+                memo_id=memo_id,
+                audit_result=summary,
+                # NOTE: update_callback and notify_callback are optional
+                # They should be wired to actual DB update and notification functions
+                # For now, we log the action instead
+            )
+            
+            event("tier_b_feedback_triggered", 
+                  memo_id=memo_id, 
+                  action=action_summary.get("action"),
+                  severity=action_summary.get("severity"),
+                  hallucination_rate=hallucination_rate)
+            
+            summary["tier_b_feedback"] = action_summary
+        except Exception as exc:
+            # Don't fail the audit if feedback fails
+            from app.observability.logging import event
+            event("tier_b_feedback_error", memo_id=memo_id, error=str(exc)[:200])
 
     return summary
 

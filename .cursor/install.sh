@@ -10,12 +10,17 @@ cd "$REPO_ROOT"
 
 QDRANT_VERSION="v1.13.2"
 
-# --- System packages (Postgres + Redis) ---
-if ! command -v pg_ctlcluster >/dev/null 2>&1 || ! command -v redis-server >/dev/null 2>&1; then
-  echo "install: installing system packages (postgres, redis)"
+# --- System packages (Postgres + Redis + Python venv toolchain) ---
+# The default base image ships python3 without the venv module, so install it here.
+if ! command -v pg_ctlcluster >/dev/null 2>&1 \
+   || ! command -v redis-server >/dev/null 2>&1 \
+   || ! python3 -c 'import ensurepip' >/dev/null 2>&1; then
+  echo "install: installing system packages (postgres, redis, python venv)"
   export DEBIAN_FRONTEND=noninteractive
   sudo apt-get update -qq
-  sudo apt-get install -y -qq postgresql postgresql-client redis-server
+  sudo apt-get install -y -qq \
+    postgresql postgresql-client redis-server \
+    python3-venv python3-dev build-essential
 else
   echo "install: system packages already present"
 fi

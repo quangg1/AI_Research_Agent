@@ -39,5 +39,5 @@
   "detectedAt": "2026-09-03T08:37:44.078Z",
   "appliedAt": "2026-09-03T08:39:00.371Z",
   "userPlan": "accept-detected",
-  "rationale": "Git analysis: 562 tracked files, 3 branches (2 local, 3 remote), 116 commits (116 last 30d), 2 authors (30d), high activity, ~45 KB git objects. Remote git (https://github.com/quangg1/AI_Research_Agent.git): 3 remote branches, 2 remote authors (30d), via remote-tracking, ahead 9 / behind 1 vs upstream. Collaborative or multi-branch product — full sync and attribution."
+  "rationale": "Git analysis: 570 tracked files, 3 branches (2 local, 3 remote), 118 commits (118 last 30d), 2 authors (30d), high activity, ~45 KB git objects. Remote git (https://github.com/quangg1/AI_Research_Agent.git): 3 remote branches, 2 remote authors (30d), via cache, ahead 9 / behind 1 vs upstream. Collaborative or multi-branch product — full sync and attribution."
 }

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-08T06:35:48.897Z",
+  "updatedAt": "2026-09-08T07:12:39.523Z",
   "shouldInject": true,
   "triggers": [
     "session_size"

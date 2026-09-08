@@ -45,7 +45,7 @@ QUALITY_BAND = {
     "intergovernmental": "S",
     "standard_body": "S",
     "peer_reviewed": "A",  # arXiv and similar: research-grade, not automatically venue-accepted
-    "specialist_research": "A",
+    "specialist_research": "B",  # preprint / tech report â€” not venue peer-reviewed
     "industry_association": "B",
     "news_analysis": "C",
     "vendor_or_consultancy": "C",
@@ -53,10 +53,10 @@ QUALITY_BAND = {
 }
 
 BAND_LABEL = {
-    "S": "S — primary docs / official benchmark / accepted venue",
-    "A": "A — research paper or reference implementation",
-    "B": "B — survey, institution note",
-    "C": "C — blog, vendor, secondary commentary",
+    "S": "S â€” primary docs / official benchmark / accepted venue",
+    "A": "A â€” research paper or reference implementation",
+    "B": "B â€” survey, institution note",
+    "C": "C â€” blog, vendor, secondary commentary",
 }
 
 YEAR_RE = re.compile(r"\b(20[12]\d)\b")
@@ -66,10 +66,10 @@ QUANT_RE = re.compile(
     r"\b(\d{1,3}(?:,\d{3})+|\d{2,6})\s+(tasks?|files?|models?|agents?|steps?|runs?|papers?|"
     r"artifacts?|studies?|parameters?|tokens?|nodes?|gpus?|epochs?)\b|"
     r"\b(n)\s*=\s*(\d+)\b|"
-    r"\b(\d+(?:\.\d+)?)\s*(ms|µs|us|s|sec|seconds?|minutes?|min)\b|"
+    r"\b(\d+(?:\.\d+)?)\s*(ms|Âµs|us|s|sec|seconds?|minutes?|min)\b|"
     r"\b(\d+(?:\.\d+)?)\s*((?:G|T|P)?FLOP(?:s|/s)?|TFLOPS?|GFLOPS?)\b|"
     r"\b(\d+(?:\.\d+)?)\s*(tokens?(?:/(?:s|sec|second))?|req(?:uests)?/s|tok/s|GB/s|GiB|GB|TB)\b|"
-    r"\b(\d+(?:\.\d+)?)\s*(?:×|x)\s*(?:faster|speedup|improvement|throughput)?\b",
+    r"\b(\d+(?:\.\d+)?)\s*(?:Ã—|x)\s*(?:faster|speedup|improvement|throughput)?\b",
     re.I,
 )
 
@@ -216,16 +216,48 @@ def quality_band(tier: str) -> str:
     return QUALITY_BAND.get((tier or "").strip().lower(), "C")
 
 
-def quality_band_for(url: str = "", tier: str = "") -> str:
-    """URL-aware band: awesome-lists and aggregators are never Band A."""
+PREDATORY_HOST_MARKERS = (
+    "ijsr.net",
+    "ijsr.org",
+    "ijsra.net",
+    "ijert.org",
+    "ijser.org",
+    "iaras.org",
+    "omicsonline.org",
+    "scirp.org",
+)
+PREDATORY_TITLE_MARKERS = (
+    "international journal of science and research",
+    "international journal of scientific research",
+    "international journal of engineering research",
+)
+
+
+def is_predatory_venue(url: str = "", title: str = "") -> bool:
+    u = (url or "").lower()
+    title_l = (title or "").lower()
+    if any(m in u for m in PREDATORY_HOST_MARKERS):
+        return True
+    if "doi.org/10.21275" in u:
+        return True
+    return any(m in title_l for m in PREDATORY_TITLE_MARKERS)
+
+
+def quality_band_for(url: str = "", tier: str = "", title: str = "") -> str:
+    """URL-aware band: preprints and predatory venues are never Band A peer-reviewed."""
     u = (url or "").lower()
     path = u.split("github.com")[-1] if "github.com" in u else u
+    if is_predatory_venue(u, title):
+        return "C"
     if "awesome" in path or "/awesome-" in path or path.rstrip("/").endswith("-list"):
         return "C"
     if "github.com" in u or "gitlab.com" in u:
         return "B"
+    if "arxiv.org" in u or "export.arxiv.org" in u:
+        return "B"
+    if "openreview.net" in u and "/forum" in u:
+        return "B"
     return quality_band(tier)
-
 
 ASSUMPTION_RE = re.compile(
     r"\b("
@@ -243,7 +275,7 @@ SECONDHAND_RE = re.compile(r"\b(according to|cited (?:in|by)|as reported by|seco
 
 
 def infer_provenance(claim_text: str, source_text: str = "") -> str:
-    """measured | author_assumption | secondhand | unknown — orthogonal to quote-match verify."""
+    """measured | author_assumption | secondhand | unknown â€” orthogonal to quote-match verify."""
     claim = claim_text or ""
     source = source_text or ""
     blob = f"{claim} {source}"
@@ -265,10 +297,13 @@ def normalize_kind(kind: str, *, has_quote: bool = False) -> str:
 
 def publication_status(ev: dict | str) -> str:
     if isinstance(ev, str):
-        url, tier = ev.lower(), ""
+        url, tier, title = ev.lower(), "", ""
     else:
         url = str((ev or {}).get("url") or "").lower()
         tier = str((ev or {}).get("tier") or "").lower()
+        title = str((ev or {}).get("title") or "")
+    if is_predatory_venue(url, title):
+        return "predatory_or_unreliable"
     if "arxiv.org" in url:
         return "preprint"
     if "github.com" in url and "awesome" in url:
@@ -349,12 +384,12 @@ def competing_hypotheses(query: str) -> list[str]:
     goal = user_goal(query) or (query or "").strip()
     if ADVERSARIAL_RE.search(goal):
         return [
-            f"H1 — Orchestration: the pattern in “{goal[:140]}” is mostly engineered control, evaluation setup, or harness design around a probabilistic model.",
-            f"H2 — Capability: frontier models already contribute general planning/adaptation, and the harness mainly amplifies that capability.",
+            f"H1 â€” Orchestration: the pattern in â€œ{goal[:140]}â€ is mostly engineered control, evaluation setup, or harness design around a probabilistic model.",
+            f"H2 â€” Capability: frontier models already contribute general planning/adaptation, and the harness mainly amplifies that capability.",
         ]
     return [
-        f"H1 — The conservative reading of “{goal[:140]}” is explained by system design, measurement setup, or surrounding infrastructure.",
-        f"H2 — The same question is explained primarily by model capability, with infrastructure as a secondary amplifier.",
+        f"H1 â€” The conservative reading of â€œ{goal[:140]}â€ is explained by system design, measurement setup, or surrounding infrastructure.",
+        f"H2 â€” The same question is explained primarily by model capability, with infrastructure as a secondary amplifier.",
     ]
 
 
@@ -364,7 +399,7 @@ def research_subquestions(query: str, hypotheses: list[str] | None = None) -> li
     h1 = hyps[0] if hyps else "H1"
     h2 = hyps[1] if len(hyps) > 1 else "H2"
     return [
-        f"What operational definition would make “{goal[:120]}” testable?",
+        f"What operational definition would make â€œ{goal[:120]}â€ testable?",
         f"What primary-source evidence would support {h1[:160]}",
         f"What primary-source evidence would support {h2[:160]}",
         "What quantitative results exist (benchmark, N, success rate, delta, cost, steps)?",
@@ -438,7 +473,7 @@ def falsification_queries(query: str, brief: dict | None = None) -> list[SubQuer
 BENCHMARK_RE = re.compile(
     r"\b("
     r"SWE-bench(?:\s+Verified)?|HumanEval|MBPP|GAIA|WebArena|BrowserGym|"
-    r"AgentBench|ToolBench|API-Bank|BFCL|τ-bench|tau-bench|"
+    r"AgentBench|ToolBench|API-Bank|BFCL|Ï„-bench|tau-bench|"
     r"LiveCodeBench|BigCodeBench|SciCode|GPQA|MMLU(?:-Pro)?|"
     r"AIME|MATH(?:-500)?|GSM8K|HotpotQA|TriviaQA|"
     r"ORAgentBench|MemGym|PAST-Bench|RAMP|LiveClawBench"
@@ -554,7 +589,7 @@ def extract_quantitative_rows(evidence: list[dict], citations: list[dict] | None
                     "warning": "" if verified_bench else "Unverified Benchmark",
                     "title": (ev.get("title") or "")[:80],
                     "year": year_of(ev),
-                    "band": quality_band_for(str(ev.get("url") or ""), str(ev.get("tier") or "")),
+                    "band": quality_band_for(str(ev.get("url") or ""), str(ev.get("tier") or ""), str(ev.get("title") or "")),
                     "url": ev.get("url") or "",
                 }
             )
@@ -569,8 +604,8 @@ def _is_setup_parameter(token: str, window: str = "") -> bool:
     w = (window or "").lower()
     # Keep clear outcome units.
     if re.search(
-        r"%|\bms\b|µs|\bus\b|\btflop|\bgflop|\bflop|tok(?:ens)?/s|gb/s|gib|"
-        r"×|x\s*(?:faster|speedup|improvement)",
+        r"%|\bms\b|Âµs|\bus\b|\btflop|\bgflop|\bflop|tok(?:ens)?/s|gb/s|gib|"
+        r"Ã—|x\s*(?:faster|speedup|improvement)",
         t,
     ):
         return False
@@ -586,7 +621,7 @@ def _is_setup_parameter(token: str, window: str = "") -> bool:
             w,
         ):
             return True
-        # Bare token counts without latency/cost/throughput context → setup.
+        # Bare token counts without latency/cost/throughput context â†’ setup.
         if not re.search(
             r"\b(latency|ttft|throughput|cost|pre-?fill|decode|generated|error|accurac)\b",
             w,
@@ -711,7 +746,7 @@ def source_quality_rows(evidence: list[dict], citations: list[dict] | None = Non
                 "n": url_to_n.get(url, "?"),
                 "title": (ev.get("title") or url or "untitled")[:90],
                 "tier": ev.get("tier") or "unknown",
-                "band": quality_band_for(str(ev.get("url") or ""), str(ev.get("tier") or "")),
+                "band": quality_band_for(str(ev.get("url") or ""), str(ev.get("tier") or ""), str(ev.get("title") or "")),
                 "publication_status": publication_status(ev),
                 "year": year_of(ev),
             }
@@ -745,21 +780,21 @@ def method_notes_for_writer(
     quality = source_quality_rows(evidence, citations)
     lines = [
         "Adversarial method (follow this; do not bury it):",
-        "Hypotheses to keep in tension — argue ONCE under Contradictions & debates:",
+        "Hypotheses to keep in tension â€” argue ONCE under Contradictions & debates:",
         *[f"- {h}" for h in hyps[:2]],
         "Subquestions:",
         *[f"- {s}" for s in subs[:8]],
         "Attribution discipline: never write that this memo/pipeline surveyed N papers. "
         "If a source reviewed N artifacts, attribute that count to [n].",
         "Scalability: if the question asks for it, treat KV-cache / GPU memory bandwidth / "
-        "multi-node as its own analysis subsection — not a latency synonym.",
-        "Worked example: when ≥2 named systems appear in notes, include one concrete walkthrough.",
+        "multi-node as its own analysis subsection â€” not a latency synonym.",
+        "Worked example: when â‰¥2 named systems appear in notes, include one concrete walkthrough.",
         "Quantitative fragments already in the working set (table these; do not pad empties):",
     ]
     if numbers:
         lines.extend(
-            f"- [{row['n']}] {row['metric']} — condition: {row.get('condition') or 'unset'}; "
-            f"baseline: {row.get('comparison_baseline') or 'not explicitly compared'} — "
+            f"- [{row['n']}] {row['metric']} â€” condition: {row.get('condition') or 'unset'}; "
+            f"baseline: {row.get('comparison_baseline') or 'not explicitly compared'} â€” "
             f"{row['title']} ({row['year'] or 'year?'}, {row['band']})"
             for row in numbers
         )
@@ -800,7 +835,7 @@ def claim_register_markdown(claims: list[Any], citations: list[dict] | None = No
         text = _field(claim, "text") or ""
         kind = normalize_kind(str(_field(claim, "kind") or ""), has_quote=bool(_field(claim, "quote")))
         prov = _field(claim, "provenance") or "unknown"
-        verify = verify_label.get(str(_field(claim, "verification_status") or ""), _field(claim, "verification_status") or "—")
+        verify = verify_label.get(str(_field(claim, "verification_status") or ""), _field(claim, "verification_status") or "â€”")
         indep = independent_source_count(claim, evidence)
         flags = []
         if indep < 2:
@@ -809,16 +844,16 @@ def claim_register_markdown(claims: list[Any], citations: list[dict] | None = No
             flags.append("author-estimate")
         if prov == "secondhand":
             flags.append("secondhand")
-        support = ", ".join(str(x) for x in (_field(claim, "support_ids") or [])[:3]) or "—"
-        year = _field(claim, "published") or "—"
+        support = ", ".join(str(x) for x in (_field(claim, "support_ids") or [])[:3]) or "â€”"
+        year = _field(claim, "published") or "â€”"
         band = _field(claim, "quality_band") or quality_band_for(
             str(_field(claim, "url") or ""), str(_field(claim, "tier") or "")
         )
         conf = _field(claim, "confidence")
-        pct = f"{int(float(conf) * 100)}%" if conf is not None else "—"
+        pct = f"{int(float(conf) * 100)}%" if conf is not None else "â€”"
         rows.append(
             f"| {(text or '')[:70]} | {kind} | {prov} | {verify} | {indep} | "
-            f"{', '.join(flags) or '—'} | {support} | {year} | {band} | {pct} |"
+            f"{', '.join(flags) or 'â€”'} | {support} | {year} | {band} | {pct} |"
         )
     return "\n".join(rows)
 
@@ -834,7 +869,7 @@ def quantitative_table_markdown(rows: list[dict[str, Any]]) -> str:
         lines.append(
             f"| [{row.get('n')}] | {row.get('metric_name') or row.get('metric')} | "
             f"{row.get('value') or row.get('metric')} | {row.get('benchmark_name') or 'unverified benchmark'} | "
-            f"{row.get('condition') or '—'} | {row.get('comparison_baseline') or 'not explicitly compared'} | "
-            f"{row.get('warning') or '—'} | {row.get('year') or '—'} |"
+            f"{row.get('condition') or 'â€”'} | {row.get('comparison_baseline') or 'not explicitly compared'} | "
+            f"{row.get('warning') or 'â€”'} | {row.get('year') or 'â€”'} |"
         )
     return "\n".join(lines)

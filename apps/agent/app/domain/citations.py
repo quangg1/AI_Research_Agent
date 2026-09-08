@@ -254,7 +254,7 @@ TIER_INLINE = {
     "vendor_or_consultancy": "vendor",
 }
 
-INLINE_TIER_WORDS = frozenset(TIER_INLINE.values()) | {"repo"}
+INLINE_TIER_WORDS = frozenset(TIER_INLINE.values()) | {"repo", "preprint", "unreliable"}
 MULTI_CITE_RE = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
 
 TIER_BAND_LABEL = {
@@ -298,15 +298,38 @@ def format_source_quality_section(citations: list) -> str:
 
 
 def inline_tier_label(citation: dict) -> str:
+    """Human label for [n peer] etc. Never call preprints/predatory venues peer."""
     url = (citation.get("url") or "").lower()
+    title = str(citation.get("title") or "")
     if "github.com" in url or "gitlab.com" in url:
         return "repo"
+    try:
+        from app.domain.adversarial import is_predatory_venue, publication_status
+
+        if is_predatory_venue(url, title):
+            return "unreliable"
+        status = publication_status({"url": url, "tier": citation.get("tier") or "", "title": title})
+        if status == "preprint":
+            return "preprint"
+        if status == "predatory_or_unreliable":
+            return "unreliable"
+        if status == "peer_reviewed":
+            return "peer"
+        if status == "standard":
+            return "primary"
+        if status == "technical_report":
+            return "specialist"
+        if status == "secondary":
+            return "news"
+    except Exception:
+        pass
     tier = (citation.get("tier") or "").strip().lower()
+    if tier == "peer_reviewed" and ("arxiv.org" in url or "export.arxiv.org" in url):
+        return "preprint"
     return TIER_INLINE.get(tier, "")
 
-
 def annotate_inline_citation_tiers(md: str, citations: list) -> str:
-    """Transform [3] → [3 peer] using ledger tier metadata."""
+    """Transform [3] â†’ [3 peer] using ledger tier metadata."""
     by_n = {_as_dict(c).get("n"): _as_dict(c) for c in citations if _as_dict(c).get("n")}
 
     def _annotate_inner(inner: str) -> str:

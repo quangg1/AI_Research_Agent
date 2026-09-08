@@ -1,20 +1,37 @@
 {
-  "name": "Kiln",
-  "install": "bash .cursor/install.sh",
-  "start": "bash .cursor/start.sh",
-  "terminals": [
-    {
-      "name": "agent",
-      "command": "cd apps/agent && set -a && source ../../.env && set +a && export POSTGRES_HOST=localhost AGENT_SHARED_KEY=kiln_dev_agent_key && exec ../../.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000"
-    },
-    {
-      "name": "api",
-      "command": "cd apps/api && set -a && source ../../.env && set +a && export AGENT_BASE_URL=http://localhost:8000 AGENT_SHARED_KEY=kiln_dev_agent_key && exec npm run start:dev"
-    },
-    {
-      "name": "web",
-      "command": "cd apps/web && set -a && source ../../.env && set +a && exec npm run dev"
-    }
-  ],
-  "ports": [5173, 3000, 8000, 6333]
+    "name":  "Kiln",
+    "install":  "bash .cursor/install.sh",
+    "start":  "bash .cursor/start.sh",
+    "terminals":  [
+                      {
+                          "name":  "agent",
+                          "command":  "cd apps/agent && set -a && source ../../.env && set +a && export POSTGRES_HOST=localhost AGENT_SHARED_KEY=kiln_dev_agent_key && exec ../../.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000"
+                      },
+                      {
+                          "name":  "api",
+                          "command":  "cd apps/api && set -a && source ../../.env && set +a && export AGENT_BASE_URL=http://localhost:8000 AGENT_SHARED_KEY=kiln_dev_agent_key && exec npm run start:dev"
+                      },
+                      {
+                          "name":  "web",
+                          "command":  "cd apps/web && set -a && source ../../.env && set +a && exec npm run dev"
+                      }
+                  ],
+    "ports":  [
+                  {
+                      "name":  "web",
+                      "port":  5173
+                  },
+                  {
+                      "name":  "api",
+                      "port":  3000
+                  },
+                  {
+                      "name":  "agent",
+                      "port":  8000
+                  },
+                  {
+                      "name":  "qdrant",
+                      "port":  6333
+                  }
+              ]
 }

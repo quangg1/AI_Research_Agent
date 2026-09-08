@@ -259,7 +259,7 @@ def writer_system() -> str:
         "Form claims bottom-up from extracted numbers first. "
         "'Verified' / quote-matched ≠ independently measured. "
         "Author estimates stay author_assumption, never High. "
-        "GitHub Awesome-lists are Band C. arXiv+OpenReview of the same paper = one work. "
+        "GitHub Awesome-lists are Band C. arXiv preprints are NOT peer-reviewed (label preprint, Band B). Predatory venues (e.g. IJSR) are Band C / unreliable — never Band A. arXiv+OpenReview of the same paper = one work. Keep numeric scope: do not promote a small-model/HAR/CPU measurement into a universal 70B LLM fact. "
         "Write 42% → 62% as +20 percentage points (relative +47.6%), never '+20% boost'. "
         "Folklore ('bigger models always win', 'RAG always needs a vector DB', "
         "'LLM-as-judge is ground truth') must not be recommended."

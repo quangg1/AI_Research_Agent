@@ -85,10 +85,10 @@ HOST_TIER: dict[str, SourceTier] = {
     "microsoft.github.io": SourceTier.STANDARD_BODY,
     "nvidia.com": SourceTier.STANDARD_BODY,
     "docs.nvidia.com": SourceTier.STANDARD_BODY,
-    "arxiv.org": SourceTier.SPECIALIST_RESEARCH,  # ArXiv is preprint server, not peer-reviewed
-    "openalex.org": SourceTier.PEER_REVIEWED,
-    "semanticscholar.org": SourceTier.PEER_REVIEWED,
-    "doi.org": SourceTier.PEER_REVIEWED,
+    "arxiv.org": SourceTier.SPECIALIST_RESEARCH,  # preprint â€” not venue peer-reviewed
+    "openalex.org": SourceTier.NEWS_ANALYSIS,  # aggregator
+    "semanticscholar.org": SourceTier.NEWS_ANALYSIS,  # aggregator
+    "doi.org": SourceTier.SPECIALIST_RESEARCH,  # DOI host != peer venue
     "aclanthology.org": SourceTier.PEER_REVIEWED,
     "crfm.stanford.edu": SourceTier.INTERGOVERNMENTAL,
     "helm.stanford.edu": SourceTier.INTERGOVERNMENTAL,
@@ -270,7 +270,7 @@ class ResearchBrief(BaseModel):
     query_type: str = QueryType.OPEN_RESEARCH.value
     sector: str = ""
     geography: str = ""
-    time_horizon: str = "2025–2026"
+    time_horizon: str = "2025â€“2026"
     decision_type: str = ""
     constraints: list[str] = Field(default_factory=list)
     must_cover: list[str] = Field(default_factory=list)

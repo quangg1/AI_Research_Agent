@@ -12,11 +12,13 @@ from typing import Any
 # "increased from 20.59% to 35.51%" / "from 20.59% to 35.51% (+14.92 pp)"
 CAUSAL_DELTA_RE = re.compile(
     r"(?:increased|improved|rose|grew|jumped|lifted|boosted|raised)\s+"
-    r"(?:(?:end[- ]to[- ]end\s+)?(?:task\s+)?(?:success|completion|pass(?:\s+rate)?)\s+)?"
+    r"(?:(?:end[- ]to[- ]end\s+)?(?:task\s+|predictive\s+|diagnostic\s+)?(?:success|completion|accuracy|pass(?:\s+rate)?)\s+)?"
     r"(?:from\s+)?"
+    r"(?:(?:an?\s+)?(?:unadapted\s+|adapted\s+)?baseline\s+of\s+)?"
     r"(?P<a>\d{1,3}(?:,\d{3})*(?:\.\d+)?%?)\s+to\s+(?P<b>\d{1,3}(?:,\d{3})*(?:\.\d+)?%?)"
     r"|"
-    r"from\s+(?P<a2>\d{1,3}(?:,\d{3})*(?:\.\d+)?%?)\s+to\s+(?P<b2>\d{1,3}(?:,\d{3})*(?:\.\d+)?%?)"
+    r"from\s+(?:(?:an?\s+)?(?:unadapted\s+|adapted\s+)?baseline\s+of\s+)?"
+    r"(?P<a2>\d{1,3}(?:,\d{3})*(?:\.\d+)?%?)\s+to\s+(?P<b2>\d{1,3}(?:,\d{3})*(?:\.\d+)?%?)"
     r"(?:\s*\(\+?\d+(?:\.\d+)?\s*(?:percentage\s+points?|pp|%))",
     re.I,
 )
@@ -30,7 +32,9 @@ SUBSET_CUE_RE = re.compile(
     r"\b("
     r"hard(?:[- ]tasks?)?|easy(?:[- ]tasks?)?|medium(?:[- ]tasks?)?|"
     r"all\s+tasks|overall|subset|difficulty\s+split|pass\s+rate\s+is\s+only|"
-    r"of\s+all\s+tasks|of\s+hard"
+    r"of\s+all\s+tasks|of\s+hard|"
+    r"single[- ]dataset|cross[- ]condition|cross[- ]dataset|few[- ]shot|small[- ]sample|"
+    r"few\s+shot|small\s+samples?|evaluation\s+condition|test\s+condition"
     r")\b",
     re.I,
 )
@@ -163,3 +167,55 @@ def audit_memo_causal_deltas(memo: str) -> list[str]:
         "or two unrelated rows. If the source lacks that comparison, write "
         "'not explicitly compared in source' and do not invent +pp / relative %."
     ]
+
+
+SCOPE_NARROW_RE = re.compile(
+    r"\b("
+    r"HAR|human\s+activity|wearable|sensor|2\.?\d?\s*M\s*(?:param|parameters)|"
+    r"million\s+parameters|CPU[- ]based|simplified\s+implementation|"
+    r"single\s+transformer\s+block|encoder\s+block|MAE\s+backbone"
+    r")\b",
+    re.I,
+)
+SCOPE_BROAD_RE = re.compile(
+    r"\b("
+    r"70B|65B|48\s*GB|LLM|large\s+language\s+model|domain[- ]specific\s+adaptation|"
+    r"hardware\s+memory\s+measurement|static\s+(?:base\s+)?weight\s+memory"
+    r")\b",
+    re.I,
+)
+
+
+def assess_scope_overgeneralization(claim_text: str, source_text: str) -> dict | None:
+    """Flag when a narrow-experiment number is stated as a universal LLM systems fact."""
+    claim = claim_text or ""
+    source = source_text or ""
+    if not claim.strip() or len(source) < 40:
+        return None
+    if not SCOPE_BROAD_RE.search(claim):
+        return None
+    if not SCOPE_NARROW_RE.search(source):
+        return None
+    # Broad claim + narrow source, and claim omits the narrow qualifier.
+    if SCOPE_NARROW_RE.search(claim):
+        return None
+    return {
+        "status": "scope_bleed",
+        "note": (
+            "Numeric claim is phrased as a general LLM/systems fact, but the cited source "
+            "measures a narrow setup (e.g. small HAR encoder / CPU simplified impl). "
+            "Keep the source scope qualifier in the memo sentence."
+        ),
+    }
+
+
+def audit_memo_scope_bleed(memo: str) -> list[str]:
+    if not memo:
+        return []
+    if SCOPE_BROAD_RE.search(memo) and re.search(r"\b10\.06\s*MB\b|\b6\.22\s*MB\b|\b0\.01\s*MB\b", memo):
+        return [
+            "Memo cites micro-block memory figures (e.g. 10.06 MB / 6.22 MB) alongside "
+            "70B/48GB-scale language. Keep each number scoped to the experiment that measured it; "
+            "do not present HAR/CPU block MB as a universal QLoRA LLM fact."
+        ]
+    return []

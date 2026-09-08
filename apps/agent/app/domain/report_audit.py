@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from app.domain.metric_grounding import audit_memo_causal_deltas
+from app.domain.metric_grounding import audit_memo_causal_deltas, audit_memo_scope_bleed
 
 EXPONENTIAL_TOKEN_RE = re.compile(
     r"exponentially larger (?:set|number) of (?:key-value pairs|tokens|premises)|"
@@ -163,6 +163,7 @@ def audit_memo(text: str, *, query: str = "") -> list[str]:
                 "and/or multi-node behavior as its own subsection — not only latency/cost."
             )
     notes.extend(audit_memo_causal_deltas(blob))
+    notes.extend(audit_memo_scope_bleed(blob))
     try:
         from app.domain.report_integrity import audit_memo_integrity
 

@@ -1,4 +1,4 @@
-# Kiln / AI_Research_Agent — zero-clone quickstart (Windows / PowerShell)
+# Kiln / AI_Research_Agent â€” zero-clone quickstart (Windows / PowerShell)
 # Usage:
 #   irm https://raw.githubusercontent.com/quangg1/AI_Research_Agent/<ref>/scripts/quickstart.ps1 | iex
 # Overrides: $env:KILN_REF, $env:KILN_HOME, $env:KILN_REPO, $env:KILN_USE_GHCR=0
@@ -6,7 +6,7 @@
 $ErrorActionPreference = "Stop"
 
 $RepoUrl = if ($env:KILN_REPO) { $env:KILN_REPO } else { "https://github.com/quangg1/AI_Research_Agent.git" }
-$Ref = if ($env:KILN_REF) { $env:KILN_REF } else { "cursor/fix-kiln-memo-quality-4dd5" }
+$Ref = if ($env:KILN_REF) { $env:KILN_REF } else { "main" }
 $InstallDir = if ($env:KILN_HOME) { $env:KILN_HOME } else { Join-Path $env:USERPROFILE ".kiln\AI_Research_Agent" }
 
 Write-Host "==> Kiln quickstart"

@@ -2,70 +2,151 @@
 
 [![CI](https://github.com/quangg1/AI_Research_Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/quangg1/AI_Research_Agent/actions/workflows/ci.yml)
 
-**Kiln** (`AI_Research_Agent`) is a deep-research agent stack that turns high-stakes LLM-systems questions — serving economics, RAG architecture, agent design, evaluation — into **cited decision memos** with coverage gates, contradiction analysis, and human approval checkpoints.
-
-It is **not** a general-purpose chatbot. Every run is a bounded LangGraph pipeline with tool budgets, falsifiable routing rules, and post-generation integrity checks.
+**Kiln** (`AI_Research_Agent`) turns high-stakes LLM-systems questions — serving economics, RAG architecture, agent design, evaluation — into **cited decision memos**. It is a bounded LangGraph research pipeline with tool budgets, coverage gates, contradiction analysis, and human approval checkpoints — not a general-purpose chatbot.
 
 ### Tóm tắt (VI)
 
-**Kiln** là nền tảng nghiên cứu sâu (deep research) cho quyết định hệ thống LLM: agent Python/LangGraph + API NestJS + Web React, kèm Postgres / Redis / Qdrant. Pipeline có ngân sách tool, cổng kiểm tra coverage, và memo có trích dẫn.
+**Kiln** là stack nghiên cứu sâu cho quyết định hệ thống LLM: Web (React) → API (NestJS/BullMQ) → Agent (Python/LangGraph), kèm Postgres / Redis / Qdrant. Pipeline có ngân sách tool, ResearchContract, cổng chất lượng memo (provenance số liệu, nguồn bắt buộc, lọc off-topic), và HITL trước khi publish.
 
-- **Chạy nhanh (không clone tay):** dùng one-liner bên dưới — script tự shallow-clone vào thư mục quản lý (`~/.kiln/...`), tạo `.env`, rồi `docker compose up`.
-- **Yêu cầu:** Docker Desktop.
-- **Auth local:** `AUTH_MODE=dev` (header `X-Dev-Org-Id=org_default`) — mở UI và gửi câu hỏi nghiên cứu.
-- **Nhánh hiện tại:** `cursor/fix-kiln-memo-quality-4dd5` (README/quickstart đẩy trên nhánh này; GitHub mặc định có thể vẫn là `main` — merge khi sẵn sàng).
+- **Chạy nhanh:** one-liner bên dưới (shallow-clone vào `~/.kiln/...`, tạo `.env`, `docker compose up`).
+- **Yêu cầu:** Docker Desktop; nên có ít nhất một LLM key + `TAVILY_API_KEY` cho research thật.
+- **Auth local:** `AUTH_MODE=dev` (`X-Dev-Org-Id=org_default`).
 
 ---
 
-## Features (high level)
+## Architecture
 
-| Area | What you get |
-|------|----------------|
-| **Research agent** | LangGraph pipeline: brief → plan → multi-source retrieval → critic loops → cited memo |
-| **API** | NestJS BFF, BullMQ jobs, SSE progress, org tenancy |
-| **Web** | React + Vite UI (research, workspace, corpus, scenarios) |
-| **Data** | PostgreSQL 16 (runs, checkpoints, evidence), Redis (queue), Qdrant (corpus vectors) |
-| **Quality** | Coverage gates, claim–quote checks, folklore blocking, Trust Bench eval harnesses |
+### System topology
 
+```mermaid
+flowchart LR
+  subgraph Client
+    Web["Web<br/>React + Vite :5173"]
+  end
+  subgraph ControlPlane
+    API["API<br/>NestJS + BullMQ :3000"]
+    Redis[(Redis<br/>job queue)]
+  end
+  subgraph ResearchPlane
+    Agent["Agent<br/>FastAPI + LangGraph :8000"]
+    PG[(Postgres 16<br/>runs · evidence · checkpoints)]
+    QD[(Qdrant<br/>corpus vectors)]
+  end
+  Web -->|REST / SSE| API
+  API --> Redis
+  API -->|enqueue + shared key| Agent
+  Agent --> PG
+  Agent --> QD
+  API --> PG
 ```
-Web (React :5173) ──► API (NestJS :3000) ──► Agent (FastAPI/LangGraph :8000)
-                           │                        │
-                        Redis                    Postgres + Qdrant
+
+| Layer | Tech | Role |
+|-------|------|------|
+| **Web** | React, Vite, TypeScript | Research UI, workspace, corpus, scenarios |
+| **API** | NestJS, BullMQ, SSE | Auth, org tenancy, jobs, progress stream |
+| **Agent** | Python 3.12, FastAPI, LangGraph | Budgeted research graph + memo writer |
+| **Postgres** | 16 | Runs, events, checkpoints, evidence |
+| **Redis** | 7 | Job queue |
+| **Qdrant** | 1.13 | Org-scoped corpus embeddings |
+
+Repo layout: `apps/agent` · `apps/api` · `apps/web` · `packages/contracts` · `infra/` · `data/corpus` · `docs/`
+
+### Research pipeline
+
+```mermaid
+flowchart TD
+  Q[Research question] --> Brief[Briefing]
+  Brief -->|OOD / cancel| Memo
+  Brief --> Plan[Planner]
+  Plan --> PG[Plan gate HITL]
+  PG --> Retrieve
+  subgraph Retrieve["Multi-source retrieval"]
+    Search[Web search]
+    Scholar[Papers / Scholar]
+    Docs[Corpus / docs]
+  end
+  Retrieve --> Collect[Collector + extract]
+  Collect --> Critic[Critic · coverage · depth]
+  Critic -->|follow-ups + budget left| Enrich[Enrich / re-retrieve]
+  Enrich --> Critic
+  Critic -->|sufficient or budget exhausted| HITL[HITL review]
+  HITL --> Report[Report writer]
+  Report --> MQ[Memo gate · quality polish]
+  MQ --> Memo[Cited decision memo]
 ```
 
----
-
-## Prerequisites
-
-- **Docker Desktop** (Docker Engine + Compose v2)
-- Optional but recommended for real runs: at least one LLM API key (`GOOGLE_API_KEY` / `OPENAI_API_KEY` / `XAI_API_KEY`) and `TAVILY_API_KEY` for web search
+Retrieval is **three-source** (web, papers, org corpus). The critic owns coverage slots; model “looks done” claims do not override gates. Brief, plan, and memo can interrupt for human approval (`enable_hitl=True`); showcase/eval runs can auto-pass those gates.
 
 ---
 
-## Quick start — no manual clone (primary)
+## Capabilities
 
-The quickstart script creates a managed install directory, shallow-clones this repo, copies `.env.example` → `.env` (safe local demo defaults: `AUTH_MODE=dev`), and starts the stack.
+### What Kiln does well
 
-### macOS / Linux
+| Strength | Detail |
+|----------|--------|
+| **Decision-shaped output** | Memos target tradeoffs (cost, quality, ops risk), not open-ended chat |
+| **Budgeted depth** | Split retrieval/enrich pools; critic respects remaining iterations and stops on real stagnation |
+| **Multi-source evidence** | Web + Scholar/papers + org corpus, with domain-balanced pooling (e.g. code-skew caps) |
+| **Org tenancy** | Corpus and runs are org-scoped; no cross-tenant leakage by design |
+| **Eval harnesses** | Trust Bench + regression checks for citation/structure regressions in CI |
+
+### Research agent depth
+
+The agent is a **graph**, not a single prompt:
+
+1. **Brief** — scope, OOD routing, constraints  
+2. **Plan** — agents to run, must-answer slots  
+3. **Retrieve → critic loop** — search / scholar / docs → collect → critic → enrich until coverage/depth targets or budget exhaustion  
+4. **Write** — adaptive word targets from evidence quality (thin evidence → shorter memo; no forced padding)  
+5. **Polish + gates** — integrity, provenance, off-topic demotion before publish  
+
+Adaptive depth ties target length to evidence count and coverage tier so the writer is not pressured to hallucinate filler.
+
+### Memo quality gates
+
+Before a memo is treated as publishable, Kiln applies layered checks (domain modules under `apps/agent/app/domain/`):
+
+| Gate | Purpose |
+|------|---------|
+| **ResearchContract** | Compiles query + brief into enforceable scope: `must_cover`, excluded domains, authority policy (prefer primary papers / official repos / measured evidence) |
+| **Mandatory sources** | Topic-specific primaries (e.g. Hu LoRA + Dettmers QLoRA for LoRA/QLoRA VRAM questions) must appear or the run hard-gates |
+| **Number provenance** | Classifies figures as span-quote / computed / multi-source estimate; demotes false “as reported by” attribution |
+| **Off-topic / OOD** | Demotes HAR-sensor and other irrelevant domains that pollute ranking or memo body |
+| **Coverage & structure** | Must-answer slots, citation stacking/saturation limits, composite-example labeling, empty-filler / placeholder detection |
+| **Claim ↔ evidence** | Scale/topic mismatch and claim–quote style checks before publish |
+
+These are **programmatic** gates where possible — not prompt-only hopes.
+
+### Limitations (read before production use)
+
+- **Full stack needs Docker** (Compose). Agent-only CLI exists for lighter experiments but is not the product UX.  
+- **LLM + search keys** — without provider keys (and ideally `TAVILY_API_KEY`), runs degrade or stay demo-thin.  
+- **Measured-evidence caveat** — memos cite and gate evidence they retrieve; they do not replace your own benchmarks. Multi-source estimates are labeled; treat unverified numbers with caution.  
+- **Domain focus** — strongest on LLM systems (serving, RAG, agents, eval). Out-of-scope topics are routed short, not “force researched.”  
+- **No public LICENSE yet** — third-party APIs (Clerk, Stripe, Tavily, LLM vendors) remain under their own terms.
+
+---
+
+## Quick start
+
+**Prerequisites:** Docker Desktop (Engine + Compose v2).
+
+### One-liner (managed shallow clone)
+
+macOS / Linux:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/quangg1/AI_Research_Agent/cursor/fix-kiln-memo-quality-4dd5/scripts/quickstart.sh | bash
+curl -fsSL https://raw.githubusercontent.com/quangg1/AI_Research_Agent/main/scripts/quickstart.sh | bash
 ```
 
-### Windows (PowerShell)
+Windows (PowerShell):
 
 ```powershell
-irm https://raw.githubusercontent.com/quangg1/AI_Research_Agent/cursor/fix-kiln-memo-quality-4dd5/scripts/quickstart.ps1 | iex
+irm https://raw.githubusercontent.com/quangg1/AI_Research_Agent/main/scripts/quickstart.ps1 | iex
 ```
 
-Or download-and-run:
-
-```powershell
-curl.exe -fsSL https://raw.githubusercontent.com/quangg1/AI_Research_Agent/cursor/fix-kiln-memo-quality-4dd5/scripts/quickstart.ps1 -o quickstart.ps1
-powershell -ExecutionPolicy Bypass -File .\quickstart.ps1
-```
-
-### What you get
+Install path defaults to `~/.kiln/AI_Research_Agent` (`KILN_HOME` to override). Default ref is **`main`** (`KILN_REF` to pin another branch/tag).
 
 | Service | URL |
 |---------|-----|
@@ -73,175 +154,80 @@ powershell -ExecutionPolicy Bypass -File .\quickstart.ps1
 | API health | http://localhost:3000/health |
 | Agent health | http://localhost:8000/health |
 
-Default install path: `~/.kiln/AI_Research_Agent` (override with `KILN_HOME` / `$env:KILN_HOME`).
+First run builds images (several minutes). If [publish-ghcr](.github/workflows/publish-ghcr.yml) has published packages, quickstart prefers `ghcr.io/quangg1/kiln-*` pulls.
 
-Pin a branch/tag:
+### Keys for real research
 
-```bash
-KILN_REF=main curl -fsSL https://raw.githubusercontent.com/quangg1/AI_Research_Agent/cursor/fix-kiln-memo-quality-4dd5/scripts/quickstart.sh | bash
-```
-
-```powershell
-$env:KILN_REF = "main"; irm https://raw.githubusercontent.com/quangg1/AI_Research_Agent/cursor/fix-kiln-memo-quality-4dd5/scripts/quickstart.ps1 | iex
-```
-
-> **Note:** First run **builds** images from source (several minutes). After the [publish-ghcr](.github/workflows/publish-ghcr.yml) workflow has published images, quickstart will prefer `ghcr.io/quangg1/kiln-*` pulls when available.
-
-### Add API keys (for real research)
-
-Edit the generated `.env` in the install directory, set e.g. `GOOGLE_API_KEY=...` (and ideally `TAVILY_API_KEY=...`), then:
+Edit `.env` in the install dir (`GOOGLE_API_KEY` / `OPENAI_API_KEY` / `XAI_API_KEY`, ideally `TAVILY_API_KEY`), then recreate agent + API:
 
 ```bash
 cd ~/.kiln/AI_Research_Agent
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --force-recreate agent api
 ```
 
-### Submit a research run
+Open http://localhost:5173 → ask a research question → confirm brief/plan gates → wait for the cited memo.
 
-1. Open http://localhost:5173
-2. Dev auth attaches `X-Dev-User-Id` / `X-Dev-Org-Id=org_default` automatically
-3. Enter a research question → confirm briefing / plan gates → wait for the cited memo
-
-Example questions: *Fine-tune weekly runbooks vs RAG for a 50k-chunk corpus?* · *Self-host 8B FP8 vs 70B API at fixed QPS?*
-
----
-
-## Alternative: managed shallow clone (no pipe-to-shell)
-
-```bash
-mkdir -p ~/.kiln && cd ~/.kiln
-git clone --depth 1 --branch cursor/fix-kiln-memo-quality-4dd5 https://github.com/quangg1/AI_Research_Agent.git AI_Research_Agent
-cd AI_Research_Agent
-cp .env.example .env
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
-```
-
-Windows (PowerShell):
-
-```powershell
-New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.kiln" | Out-Null
-Set-Location "$env:USERPROFILE\.kiln"
-git clone --depth 1 --branch cursor/fix-kiln-memo-quality-4dd5 https://github.com/quangg1/AI_Research_Agent.git AI_Research_Agent
-Set-Location AI_Research_Agent
-Copy-Item .env.example .env
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
-```
-
-> Pure `docker compose -f https://raw.githubusercontent.com/...` without a checkout usually fails here because build contexts and volume mounts need the repo files locally — that is why quickstart manages a shallow clone for you.
-
----
-
-## Full local-dev clone (secondary)
+### Full local clone
 
 ```bash
 git clone https://github.com/quangg1/AI_Research_Agent.git
 cd AI_Research_Agent
-git checkout cursor/fix-kiln-memo-quality-4dd5   # or main after merge
-cp .env.example .env
-# edit .env — set LLM + search keys
+cp .env.example .env   # set LLM + search keys
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 ```
 
-Useful Make targets: `make up`, `make down`, `make logs`, `make test`, `make eval`.
+Make targets: `make up` · `make down` · `make logs` · `make test` · `make eval`.
 
-### Agent-only (no full stack)
+Agent-only smoke (no full stack):
 
 ```bash
-cd apps/agent
-pip install -e ".[dev]"
-pytest -q
+cd apps/agent && pip install -e ".[dev]" && pytest -q
 python -m app.cli "Does RAG always require a vector database?"
 ```
 
 ---
 
-## Environment variables
+## Configuration (short)
 
-See **[`.env.example`](.env.example)** for the full list. Quickstart copies it to `.env` with safe local defaults.
+Full list: **[`.env.example`](.env.example)**. Quickstart copies it with safe local defaults (`AUTH_MODE=dev`).
 
-| Variable | Purpose | Local demo default |
-|----------|---------|-------------------|
-| `AUTH_MODE` / `VITE_AUTH_MODE` | `dev` / `clerk` / `disabled` | `dev` |
-| `ALLOW_DEV_AUTH` | Allow `X-Dev-*` headers | `true` |
-| `GOOGLE_API_KEY` / `OPENAI_API_KEY` / `XAI_API_KEY` | LLM providers | empty (set for real runs) |
-| `TAVILY_API_KEY` | Web search | empty (recommended) |
-| `S2_API_KEY` | Semantic Scholar (rate limits) | empty |
-| `WEB_PORT` | Host port for UI | `5173` |
-| `DATABASE_URL` / `REDIS_URL` / `QDRANT_URL` | Infra (compose overrides hosts inside containers) | localhost URLs in example |
-| `AGENT_SHARED_KEY` / `API_*_KEY` | Service-to-service | empty OK for local demo |
-| `CLERK_*` / `STRIPE_*` | Production auth/billing | empty |
+| Variable | Purpose |
+|----------|---------|
+| `AUTH_MODE` / `VITE_AUTH_MODE` | `dev` / `clerk` / `disabled` |
+| `GOOGLE_API_KEY` / `OPENAI_API_KEY` / `XAI_API_KEY` | LLM providers |
+| `TAVILY_API_KEY` | Web search (recommended) |
+| `S2_API_KEY` | Semantic Scholar rate limits |
+| `DATABASE_URL` / `REDIS_URL` / `QDRANT_URL` | Infra (Compose overrides hosts in containers) |
+| `CLERK_*` / `STRIPE_*` | Production auth / billing |
 
-**Do not commit** a filled `.env`. Shared keys and Stripe/Clerk secrets stay local.
+Do not commit a filled `.env`.
 
----
+**Ports:** Web `5173` · API `3000` · Agent `8000` · Postgres `5432` · Redis `6379` · Qdrant `6333` (dev overlay publishes API/agent for host health checks).
 
-## Ports
-
-| Service | Host port | Notes |
-|---------|-----------|-------|
-| Web | **5173** | Nginx serves SPA and proxies `/v1/` → API |
-| API | **3000** | Published via `docker-compose.dev.yml` |
-| Agent | **8000** | Health: `/health` |
-| Postgres | 5432 | Dev overlay |
-| Redis | 6379 | Dev overlay |
-| Qdrant | 6333 / 6334 | Dev overlay |
-
-Production-style `docker-compose.yml` alone publishes only the web port; quickstart always includes `docker-compose.dev.yml` so API/agent health checks are reachable on the host.
+**Prebuilt images (optional):** [`docker-compose.ghcr.yml`](docker-compose.ghcr.yml) → `ghcr.io/quangg1/kiln-{agent,api,web}`.
 
 ---
 
-## Prebuilt images (GHCR) — optional
+## Further docs
 
-Workflow: [`.github/workflows/publish-ghcr.yml`](.github/workflows/publish-ghcr.yml)  
-Override: [`docker-compose.ghcr.yml`](docker-compose.ghcr.yml)
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.ghcr.yml -f docker-compose.dev.yml pull
-docker compose -f docker-compose.yml -f docker-compose.ghcr.yml -f docker-compose.dev.yml up -d
-```
-
-Images: `ghcr.io/quangg1/kiln-agent`, `kiln-api`, `kiln-web`.
-
-**Caveat:** Until the workflow has run successfully and packages are public (or you `docker login ghcr.io`), pulls fail and quickstart **falls back to local build**. Trigger via Actions → *publish-ghcr* → *Run workflow* after merge/push.
+- [docs/agent-research-system.md](docs/agent-research-system.md) — pipeline topology, budgets, writer controls  
+- [docs/ops.md](docs/ops.md) — operations  
+- [docs/deploy-render.md](docs/deploy-render.md) · [docs/deploy-oracle.md](docs/deploy-oracle.md) — deploy  
+- [docs/regression-testing.md](docs/regression-testing.md) — quality regression harness  
 
 ---
 
-## Architecture (short)
+## Design principles
 
-| Layer | Tech | Role |
-|-------|------|------|
-| Web | React, Vite, TypeScript | Research UI, workspace, corpus |
-| API | NestJS, BullMQ | Auth, tenancy, jobs, SSE |
-| Agent | Python 3.12, FastAPI, LangGraph | Research graph + memo writer |
-| Postgres | 16 | Runs, events, checkpoints, evidence |
-| Redis | 7 | Job queue |
-| Qdrant | 1.13 | Corpus embeddings |
-
-Repo layout: `apps/agent`, `apps/api`, `apps/web`, `packages/contracts`, `infra/postgres`, `data/corpus`, `docs/`.
-
-Deeper docs: [docs/agent-research-system.md](docs/agent-research-system.md) · [docs/ops.md](docs/ops.md) · [docs/deploy-render.md](docs/deploy-render.md) · [docs/deploy-oracle.md](docs/deploy-oracle.md)
-
----
-
-## Status / branch notes
-
-- Active development branch for memo-quality work: **`cursor/fix-kiln-memo-quality-4dd5`** (this README and quickstart scripts live here).
-- GitHub’s default branch may still be **`main`**. Visitors who land on `main` without this README should switch branches or merge this branch when ready.
-- CD today: Render auto-deploy from `main` (see `render.yaml`). GHCR publish is additive for local/quickstart pulls.
+1. **Budgeted pipeline** — split retrieval/enrich pools; critic respects remaining iterations.  
+2. **Rules outside the graph** — business logic in `domain/`; nodes orchestrate.  
+3. **Critic is authoritative** — coverage slots trump model “sufficient” claims.  
+4. **Three-source retrieval** — web, papers, corpus.  
+5. **Human gates** — brief, plan, and memo before publish.  
+6. **Org-scoped knowledge** — no cross-tenant corpus leakage.
 
 ---
 
 ## License
 
-No `LICENSE` file is published in the repository yet. Third-party APIs (Clerk, Stripe, Tavily, LLM providers) require their own account keys and terms.
-
----
-
-## Design principles (for reviewers)
-
-1. **Budgeted pipeline** — split retrieval/enrich pools; critic respects remaining iterations.
-2. **Rules outside the graph** — business logic in `domain/`; nodes orchestrate.
-3. **Critic is authoritative** — coverage slots trump model “sufficient” claims.
-4. **Three-source retrieval** — web, papers, and corpus.
-5. **Human gates** — brief, plan, and memo before publish.
-6. **Org-scoped knowledge** — no cross-tenant corpus leakage.
+No `LICENSE` file is published yet. Third-party APIs require their own account keys and terms.

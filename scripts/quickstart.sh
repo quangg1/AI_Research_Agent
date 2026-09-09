@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Kiln / AI_Research_Agent — zero-clone quickstart
+# Kiln / AI_Research_Agent â€” zero-clone quickstart
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/quangg1/AI_Research_Agent/<ref>/scripts/quickstart.sh | bash
 # Overrides: KILN_REF, KILN_HOME, KILN_REPO, KILN_USE_GHCR=0
 set -euo pipefail
 
 REPO_URL="${KILN_REPO:-https://github.com/quangg1/AI_Research_Agent.git}"
-REF="${KILN_REF:-cursor/fix-kiln-memo-quality-4dd5}"
+REF="${KILN_REF:-main}"
 INSTALL_DIR="${KILN_HOME:-${HOME}/.kiln/AI_Research_Agent}"
 
 echo "==> Kiln quickstart"

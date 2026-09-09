@@ -24,6 +24,7 @@ __all__ = [
     "contradiction_signals",
     "coverage_gaps",
     "decision_rule_for",
+    "flip_condition_for",
     "decompose_subquestions",
     "demote_secondary",
     "host_of",
@@ -219,6 +220,29 @@ def decompose_subquestions(query: str, remaining_calls: int = 8) -> list[SubQuer
     return subquestions_for(query, remaining_calls=remaining_calls)
 
 
+
+
+def flip_condition_for(query: str, critic: dict | None = None) -> str:
+    """User-facing REVISIT IF line — conditions only, never Act-on/Verify bullets."""
+    goal = user_goal(query) or (query or "").strip()
+    coverage = ((critic or {}).get("coverage") or {})
+    open_slots = [
+        str(s.get("label") or s.get("id") or "").strip()
+        for s in (coverage.get("slots") or [])
+        if s.get("status") == "open"
+    ]
+    open_slots = [s for s in open_slots if s and len(s.split()) >= 2][:2]
+    if open_slots:
+        joined = "; ".join(open_slots)
+        return (
+            f"Revisit if: measured evidence closes “{joined}”, or a primary source "
+            f"undercuts the lead recommendation for “{goal[:100]}”."
+        )
+    return (
+        f"Revisit if: new measured evidence undercuts the lead recommendation for "
+        f"“{goal[:120]}”, or your latency/cost envelope forbids the gated path."
+    )
+
 def decision_rule_for(query: str, ledger: list, critic: dict) -> str:
     """An actionable rule built from what the evidence actually established."""
     goal = user_goal(query)
@@ -310,6 +334,8 @@ def decision_rule_for(query: str, ledger: list, critic: dict) -> str:
         f"Applied to “{goal[:140]}”: empirical bullets are decision input; verify/do-not-assume "
         f"are open. This rests on {n_src} cited sources."
     )
+    lines.append("")
+    lines.append(flip_condition_for(query, critic))
     return "\n".join(lines)
 
 

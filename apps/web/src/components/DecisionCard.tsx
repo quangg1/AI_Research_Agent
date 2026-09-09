@@ -88,15 +88,16 @@ function extractRecommendation(rule: string): string {
 
 function extractFlip(rule: string): string {
   const cleaned = rule.replace(/```[\s\S]*?```/g, " ");
-  // Deliberate callout phrases only — bare "unless"/"except" are common
-  // inside ordinary decision-rule prose (e.g. "...unless absolute accuracy
-  // overrides budget constraints") and were matching mid-sentence, cutting
-  // off the clause before them and keeping a trailing citation marker.
+  // Deliberate revisit/flip callouts ONLY. Never fall back to the first
+  // Engineering-heuristics / Act-on / Verify adapter bullet — those are
+  // decision guidance, not REVISIT IF conditions.
   const m =
     /(?:revisit if|flip condition|reconsider if|invalidat(?:e|ing) this)[:\s]+([^\n]+)/i.exec(
       cleaned,
-    ) || /###\s*Engineering heuristics[\s\S]*?\n[-*]\s+([^\n]+)/i.exec(cleaned);
-  const hit = (m?.[1] || "").replace(/\*\*/g, "").replace(/\s*\[\d+[^\]]*\]\s*$/, "").trim();
+    );
+  let hit = (m?.[1] || "").replace(/\*\*/g, "").replace(/\s*\[\d+[^\]]*\]\s*$/, "").trim();
+  // Reject Act-on / Verify / Do-not-assume leaks that somehow share a line.
+  if (/^(verify|act on|do not assume)\b/i.test(hit)) hit = "";
   if (!hit || looksLikeDiagram(hit)) return "";
   return firstSentences(hit, 2) || hit;
 }

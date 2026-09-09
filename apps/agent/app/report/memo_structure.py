@@ -354,15 +354,8 @@ _SLOT_LABEL_DECISION_RE = re.compile(
     re.I,
 )
 
-_HAR_SENSOR_RE = re.compile(
-    r"\b(?:HHAR|UCI[-_ ]?HAR|\bHAR\b|Human\s+Activity\s+Recognition|"
-    r"accelerometer|gyroscope|wearable\s+sensor|activity\s+recognition)\b",
-    re.I,
-)
-_LLM_FT_MEMO_RE = re.compile(
-    r"\b(?:LoRA|QLoRA|fine[- ]?tun(?:ing|e)?|language\s+model|\bLLM\b|PEFT)\b",
-    re.I,
-)
+from app.domain.offtopic_domains import HAR_SENSOR_RE as _HAR_SENSOR_RE
+from app.domain.offtopic_domains import LLM_FT_QUERY_RE as _LLM_FT_MEMO_RE
 _METRIC_LIKE_COL_RE = re.compile(
     r"^(?:vram|bf16|fp16|fp32|strict|latency|throughput|tokens?/s|memory|rank|batch)$",
     re.I,

@@ -72,6 +72,21 @@ PROTECTED_SECTIONS = ("source quality", "references")
 
 CITE_RE = re.compile(r"\[(\d+(?:\s+[A-Za-z]+)?(?:\s*,\s*\d+(?:\s+[A-Za-z]+)?)*)\]")
 
+AUTHOR_STOPWORDS = frozenset(
+    {
+        "as", "on", "in", "when", "benchmark", "estimate", "results", "the", "a",
+        "an", "for", "with", "from", "by", "at", "to", "of", "and", "or", "if",
+        "then", "than", "that", "this", "these", "those", "our", "we", "they",
+        "their", "its", "his", "her", "not", "no", "yes", "per", "via", "using",
+        "used", "use", "based", "according", "reported", "report", "reports",
+        "measure", "measures", "measured", "find", "finds", "found", "observe",
+        "observes", "observed", "calculation", "computed", "synthesis",
+        "multi", "source", "direct", "cited", "author", "authors", "paper",
+        "study", "studies", "table", "figure", "section", "key", "findings",
+        "comparison", "decision", "rule", "worked", "example",
+    }
+)
+
 _AUTHOR_TOKEN = r"[A-Z][\w.\-]+(?:\s+et\s+al\.?)?"
 _NUM_TOKEN = r"\d{1,3}(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?(?:[eE][+]?\d+)?"
 _UNIT_TOKEN = r"GB|GiB|MB|MiB|TB|TiB|%|percent|VRAM"
@@ -118,10 +133,26 @@ COMPUTED_FORMULA_RE = re.compile(
 SECTION_SPLIT_RE = re.compile(r"(^##\s+.+$)", re.M)
 
 
+def _is_valid_author_token(token: str | None) -> bool:
+    """Reject English stopwords / section nouns mistaken for author surnames."""
+    raw = (token or "").strip()
+    if not raw:
+        return False
+    head = raw.split()[0].rstrip(".")
+    if head.lower() in AUTHOR_STOPWORDS:
+        return False
+    # Single stopword-like tokens or all-lowercase non-names.
+    if len(head) <= 2:
+        return False
+    if not head[0].isupper():
+        return False
+    return True
+
+
 def _match_author(m: re.Match) -> str | None:
     for key in ("author", "author2", "author3"):
         val = m.groupdict().get(key)
-        if val:
+        if val and _is_valid_author_token(val):
             return val.strip()
     return None
 
@@ -220,13 +251,15 @@ def _first_author(text: str) -> str | None:
         text or "",
         re.I,
     )
-    if m:
+    if m and _is_valid_author_token(m.group(1)):
         return m.group(1).strip()
     m = re.search(
         r"\b([A-Z][\w.\-]+(?:\s+et\s+al\.?)?)\s+(?:report|reports|measure|measures|find|finds|found|measured)\b",
         text or "",
     )
-    return m.group(1).strip() if m else None
+    if m and _is_valid_author_token(m.group(1)):
+        return m.group(1).strip()
+    return None
 
 
 def _first_attributed_number(text: str) -> str | None:
@@ -333,7 +366,7 @@ def _rewrite_false_attribution(line: str, *, kind: str, author: str | None) -> s
     estimate labels rather than deleting the claim or blanking [n].
     """
     text = line
-    who = (author or "the cited author").strip()
+    who = (author if _is_valid_author_token(author) else None) or "the cited source"
 
     if kind == COMPUTED:
         label = f"Calculation (not a measured figure reported by {who})"

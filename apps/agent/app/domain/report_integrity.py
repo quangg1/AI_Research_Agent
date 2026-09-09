@@ -309,6 +309,13 @@ def enforce_report_integrity(
         if depth.get("quantitative_evidence")  # {} for non-numeric questions, falsy
         else None
     )
+    if quant_pct == 0 and "vendor_reported_numbers_hardened" not in flags:
+        body, harden_flags = harden_unverified_numeric_claims(body, quant_absent=True)
+        flags.extend(harden_flags)
+        hardened_rule = _section(body, "Decision rule")
+        if hardened_rule:
+            decision_rule = hardened_rule
+
     confidence_breakdown = {
         "score": _corrected_score(depth, quant_pct),
         "label": depth.get("label"),
@@ -820,6 +827,80 @@ def first_sentence(text: str) -> str:
 
 def _looks_like_diagram(s: str) -> bool:
     return bool(re.search(r"[▼▲─│]|^\|", s or ""))
+
+
+
+VENDOR_UNVERIFIED_LABEL = "(vendor-reported / not independently verified)"
+_HARDEN_SECTIONS = ("Key findings", "Comparison", "Decision rule")
+_HARD_NUM_RE = re.compile(
+    r"\b(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)(\s*(?:%|percent|tokens?|tok/s|ms|GB|GiB|MB|MiB|OCPU|vCPU))?(?=[\s.,;:)\]]|$)",
+    re.I,
+)
+
+
+def harden_unverified_numeric_claims(body: str, *, quant_absent: bool) -> tuple[str, list[str]]:
+    """When measured evidence is 0%, label every hard number in load-bearing sections.
+
+    Post-write pass: Comparison / Decision rule / Key findings must not assert
+    hard figures as if independently measured when the Quantitative findings
+    table is empty / quant_absent.
+    """
+    flags: list[str] = []
+    if not quant_absent or not (body or "").strip():
+        return body or "", flags
+
+    text = body
+    changed_any = False
+    for heading in _HARDEN_SECTIONS:
+        section = _section(text, heading)
+        if not section or not section.strip():
+            continue
+        if "vendor-reported" in section.lower() and "not independently verified" in section.lower():
+            # Already hardened — still fill any unlabeled numbers.
+            pass
+
+        def _label_num(m: re.Match) -> str:
+            raw = m.group(0)
+            # Skip years and tiny integers without units.
+            num = (m.group(1) or "").replace(",", "")
+            unit = m.group(2) or ""
+            if num.isdigit() and not unit and 1900 <= int(num) <= 2035:
+                return raw
+            if num.isdigit() and not unit and len(num) < 3:
+                return raw
+            # Already labeled nearby.
+            window_start = max(0, m.start() - 8)
+            window_end = min(len(section), m.end() + len(VENDOR_UNVERIFIED_LABEL) + 8)
+            around = section[window_start:window_end]
+            if "vendor-reported" in around.lower():
+                return raw
+            return f"{raw} {VENDOR_UNVERIFIED_LABEL}"
+
+        new_section = _HARD_NUM_RE.sub(_label_num, section)
+        if new_section != section:
+            text = _rewrite_named_section(text, heading, new_section)
+            changed_any = True
+
+    if changed_any:
+        flags.append("vendor_reported_numbers_hardened")
+    return text, flags
+
+
+def _rewrite_named_section(body: str, heading: str, new_body: str) -> str:
+    pattern = re.compile(rf"(^##\s+{re.escape(heading)}\s*$)", re.I | re.M)
+    match = pattern.search(body or "")
+    if not match:
+        return body
+    start = match.end()
+    rest = body[start:]
+    nxt = re.search(r"^##\s+", rest, re.M)
+    return (
+        body[:start]
+        + "\n\n"
+        + new_body.strip()
+        + "\n\n"
+        + (rest[nxt.start() :] if nxt else "")
+    )
 
 
 def integrity_severity(issues: list[str], body: str) -> str:

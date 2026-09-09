@@ -278,6 +278,19 @@ TIER_INLINE = {
 }
 
 INLINE_TIER_WORDS = frozenset(TIER_INLINE.values()) | {"repo", "preprint", "unreliable"}
+INLINE_TO_BAND_LABEL = {
+    "peer": "Peer-Reviewed Publications",
+    "primary": "Official Documentation & Standards",
+    "specialist": "Specialist Research & Preprints",
+    "preprint": "Specialist Research & Preprints",
+    "industry": "Industry Association Sources",
+    "news": "News & Analysis",
+    "vendor": "Vendor & Consultancy Sources",
+    "repo": "Code Repositories",
+    "unreliable": "Unreliable or Predatory Venues",
+    "docs": "Official Documentation & Standards",
+}
+
 MULTI_CITE_RE = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
 # Includes optional tier words so [1 peer] / [2, 3 preprint] still count as used.
 CITED_MARKER_RE = re.compile(
@@ -309,7 +322,9 @@ def format_source_quality_section(citations: list) -> str:
     Citations with missing/unknown tiers still get an Other sources bullet so
     ## Source quality is never left as empty band stubs after bind/polish.
     """
-    by_tier: dict[str, list[int]] = {}
+    # Group by the SAME display tag used in inline [n tag] markers so
+    # Source quality never says SPECIALIST while the body shows [4 repo].
+    by_tag: dict[str, list[int]] = {}
     other: list[int] = []
     for raw in citations:
         c = _as_dict(raw)
@@ -320,18 +335,26 @@ def format_source_quality_section(citations: list) -> str:
             n_int = int(n)
         except (TypeError, ValueError):
             continue
-        tier = (c.get("tier") or "").strip().lower()
-        if tier not in TIER_BAND_LABEL:
+        tag = (inline_tier_label(c) or "").strip().lower()
+        if not tag:
             other.append(n_int)
             continue
-        by_tier.setdefault(tier, []).append(n_int)
+        by_tag.setdefault(tag, []).append(n_int)
     lines = []
-    for tier, label in TIER_BAND_LABEL.items():
-        nums = by_tier.get(tier)
+    # Stable order: known inline tags first, then any extras.
+    ordered_tags = [t for t in (
+        "peer", "primary", "docs", "specialist", "preprint", "repo",
+        "industry", "news", "vendor", "unreliable",
+    ) if t in by_tag]
+    for tag in list(by_tag.keys()):
+        if tag not in ordered_tags:
+            ordered_tags.append(tag)
+    for tag in ordered_tags:
+        nums = by_tag.get(tag) or []
         if not nums:
             continue
-        tag = TIER_INLINE.get(tier, "")
-        group = ", ".join(f"{n} {tag}".strip() for n in sorted(nums))
+        label = INLINE_TO_BAND_LABEL.get(tag) or tag.replace("_", " ").title()
+        group = ", ".join(f"{n} {tag}".strip() for n in sorted(set(nums)))
         lines.append(f"- **{label}**: [{group}]")
     if other:
         group = ", ".join(str(n) for n in sorted(set(other)))

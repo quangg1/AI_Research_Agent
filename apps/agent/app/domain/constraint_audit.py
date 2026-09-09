@@ -81,18 +81,112 @@ def _section(text: str, name: str) -> str | None:
     return text[start:end].strip()
 
 
+
+def audit_note_to_measurement_gap_prose(note: str) -> str:
+    """Rewrite machine/audit flags into Measurement-gaps voice for the memo.
+
+    All user-visible Uncertainties bullets must pass through this helper —
+    never dump raw flag ids like ``mandatory_missing_2305.14314``.
+    """
+    raw = (note or "").strip()
+    if not raw:
+        return ""
+    low = raw.lower()
+
+    # Already prose-like measurement gap — keep.
+    if raw.startswith(("- ", "* ")):
+        raw = raw[2:].strip()
+
+    # Strip raw flag-id shape: snake_case tokens with no spaces.
+    if re.fullmatch(r"[a-z][a-z0-9_.]{3,100}", low) and "_" in low:
+        pretty = low.replace("_", " ").replace("hard fail ", "").strip()
+        if pretty.startswith("mandatory missing"):
+            rest = pretty[len("mandatory missing"):].strip(" :.")
+            return (
+                f"Primary reference not yet in the citation ledger: {rest}. "
+                "Until it is retrieved, treat related claims as provisional."
+            )
+        return (
+            f"Open measurement gap: {pretty}. Collect a primary source that "
+            "closes this before treating related claims as settled."
+        )
+
+    if "mandatory source missing" in low:
+        # "Mandatory source missing from citations/evidence: Label (id)."
+        m = re.search(
+            r"mandatory source missing from citations/evidence:\s*(.+?)(?:\.|$)",
+            raw,
+            re.I,
+        )
+        label = (m.group(1).strip() if m else raw)
+        label = re.sub(r"^mandatory source missing[^:]*:\s*", "", label, flags=re.I)
+        return (
+            f"Primary reference not yet in the citation ledger: {label.rstrip('.')}. "
+            "Until it is retrieved, treat related memory/method claims as provisional."
+        )
+
+    if "excluded domain" in low:
+        m = re.search(r"excluded domain\s+'([^']+)'", raw, re.I)
+        dom = m.group(1) if m else "out-of-scope topic"
+        return (
+            f"Collected excerpts still lean on {dom}, which is out of scope for this "
+            "question — do not treat those passages as load-bearing evidence."
+        )
+
+    if "scale mismatch" in low:
+        return (
+            "Model-scale figures in the draft may not match the scale asked in the "
+            "question. Keep each number scoped to the model size that was actually measured."
+        )
+
+    if "qlora memory claims lack" in low or "dettmers" in low and "identity" in low:
+        return (
+            "QLoRA memory figures are not yet anchored to the Tim Dettmers / "
+            "artidoro/qlora (or bitsandbytes) primaries — prefer those before locking VRAM claims."
+        )
+
+    if "lora primary identity" in low or ("hu et" in low and "lora" in low):
+        return (
+            "LoRA method claims are not yet anchored to Hu et al. / microsoft/LoRA — "
+            "prefer those primaries before treating adapter details as settled."
+        )
+
+    if "mis-attribution" in low or "misattribution" in low:
+        return (
+            "Authorship for a core method may be mis-attributed in the draft. "
+            "Verify against Hu 2106.09685 / Dettmers 2305.14314 before publishing."
+        )
+
+    # Soft scrub of audit jargon while keeping meaning.
+    cleaned = re.sub(r"\b(flag|audit|hard_fail|should_block_publish)\b", "", raw, flags=re.I)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" -—:")
+    if not cleaned:
+        cleaned = raw
+    if cleaned[0].islower():
+        cleaned = cleaned[0].upper() + cleaned[1:]
+    if not cleaned.endswith("."):
+        cleaned += "."
+    return cleaned
+
+
 def _replace_or_insert_uncertainties(body: str, bullets: list[str]) -> str:
     """Append gap bullets under Uncertainties & gaps (create section if missing)."""
     if not bullets:
         return body or ""
     text = body or ""
-    block = "\n".join(f"- {b}" for b in bullets)
+    prose_bullets = [audit_note_to_measurement_gap_prose(b) for b in bullets]
+    prose_bullets = [b for b in prose_bullets if b]
+    if not prose_bullets:
+        return text
+    block = "\n".join(f"- {b}" for b in prose_bullets)
 
     for alias in ("Uncertainties & gaps", "What we don't know yet"):
         existing = _section(text, alias)
         if existing is not None:
             # Avoid duplicating identical bullets.
-            additions = [b for b in bullets if b not in existing]
+            prose_all = [audit_note_to_measurement_gap_prose(b) for b in bullets]
+            prose_all = [b for b in prose_all if b]
+            additions = [b for b in prose_all if b not in existing]
             if not additions:
                 return text
             extra = "\n".join(f"- {b}" for b in additions)

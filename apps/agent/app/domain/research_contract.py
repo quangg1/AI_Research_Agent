@@ -192,6 +192,11 @@ def topic_relevance_score(ev: dict, query: str = "") -> float:
         re.I,
     )
 
+    from app.domain.offtopic_domains import evidence_is_har_sensor_ood
+
+    if evidence_is_har_sensor_ood(ev, query):
+        return 0.0
+
     goal = user_goal(query) if query else ""
     anchors = set(distinctive_terms(goal, limit=10)) if goal else set()
     blob = " ".join(str(ev.get(k) or "") for k in ("title", "snippet", "quote", "full_text"))

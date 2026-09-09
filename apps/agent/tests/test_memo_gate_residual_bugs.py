@@ -71,8 +71,10 @@ def test_format_source_quality_includes_unbanded_tiers():
     )
     assert "Peer-Reviewed Publications" in out
     assert "2 peer" in out
-    assert "Other sources" in out
-    assert "[1]" in out
+    # Empty ledger tier still resolves via inline_tier_label (arxiv → preprint)
+    # so Source quality matches inline markers instead of dumping Other sources.
+    assert "1 preprint" in out
+    assert "Specialist Research & Preprints" in out
 
 
 def test_bind_rebuilds_empty_bands_even_without_tiers():
@@ -94,7 +96,8 @@ Cites [1] and [2].
         {"n": 2, "title": "B", "url": "https://arxiv.org/abs/2106.09685", "tier": ""},
     ]
     out = bind_markdown_to_ledger(md, citations)
-    assert "Other sources" in out
+    # arXiv with blank tier → preprint via shared inline_tier_label vocabulary
+    assert "preprint" in out
     assert "[1" in out and "[2" in out or "1, 2" in out
     assert "****" not in out
     # empty stub labels should be gone

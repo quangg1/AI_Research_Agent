@@ -24,7 +24,7 @@ _REQUIRED_SECTIONS = (
 )
 
 _TRUNC_TAIL_RE = re.compile(r"[.!?)\]\"']$")
-_CITE_STACK_RE = re.compile(r"(\[\d+(?:\s+(?:peer|repo|docs|news))?\])(?:\s*\[\d+(?:\s+(?:peer|repo|docs|news))?\]){2,}")
+_CITE_STACK_RE = re.compile(r"(\[\d+(?:\s+(?:peer|repo|docs|news|preprint|primary|specialist|vendor|unreliable|industry))?\])(?:\s*\[\d+(?:\s+(?:peer|repo|docs|news|preprint|primary|specialist|vendor|unreliable|industry))?\]){2,}")
 
 
 def race_criteria(query: str, brief: dict | None = None, dossier: list[dict] | None = None) -> dict:
@@ -118,7 +118,7 @@ def missing_sections(markdown: str) -> list[str]:
     return [h for h in _REQUIRED_SECTIONS if not re.search(rf"^##\s+{re.escape(h)}\s*$", text, re.I | re.M)]
 
 
-_CITE_ANY_RE = re.compile(r"\[\d+(?:\s+(?:peer|repo|docs|news))?\]")
+_CITE_ANY_RE = re.compile(r"\[\d+(?:\s+(?:peer|repo|docs|news|preprint|primary|specialist|vendor|unreliable|industry))?\]")
 _SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
 

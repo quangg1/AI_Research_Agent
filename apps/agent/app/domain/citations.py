@@ -262,6 +262,11 @@ TIER_INLINE = {
 
 INLINE_TIER_WORDS = frozenset(TIER_INLINE.values()) | {"repo", "preprint", "unreliable"}
 MULTI_CITE_RE = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
+# Includes optional tier words so [1 peer] / [2, 3 preprint] still count as used.
+CITED_MARKER_RE = re.compile(
+    r"\[(\d+(?:\s+[A-Za-z]+)?(?:\s*,\s*\d+(?:\s+[A-Za-z]+)?)*)\]"
+)
+CITED_NUM_TOKEN_RE = re.compile(r"(\d+)(?:\s+[A-Za-z]+)?")
 
 TIER_BAND_LABEL = {
     "peer_reviewed": "Peer-Reviewed Publications",
@@ -283,15 +288,26 @@ def format_source_quality_section(citations: list) -> str:
     empty citation list ("Band B — Specialist ...: ") despite specialist
     citations being used throughout the body. Build it from the ledger
     instead, the same way References already is.
+
+    Citations with missing/unknown tiers still get an Other sources bullet so
+    ## Source quality is never left as empty band stubs after bind/polish.
     """
     by_tier: dict[str, list[int]] = {}
+    other: list[int] = []
     for raw in citations:
         c = _as_dict(raw)
         n = c.get("n")
-        tier = (c.get("tier") or "").strip().lower()
-        if n is None or tier not in TIER_BAND_LABEL:
+        if n is None or n == "":
             continue
-        by_tier.setdefault(tier, []).append(int(n))
+        try:
+            n_int = int(n)
+        except (TypeError, ValueError):
+            continue
+        tier = (c.get("tier") or "").strip().lower()
+        if tier not in TIER_BAND_LABEL:
+            other.append(n_int)
+            continue
+        by_tier.setdefault(tier, []).append(n_int)
     lines = []
     for tier, label in TIER_BAND_LABEL.items():
         nums = by_tier.get(tier)
@@ -300,6 +316,9 @@ def format_source_quality_section(citations: list) -> str:
         tag = TIER_INLINE.get(tier, "")
         group = ", ".join(f"{n} {tag}".strip() for n in sorted(nums))
         lines.append(f"- **{label}**: [{group}]")
+    if other:
+        group = ", ".join(str(n) for n in sorted(set(other)))
+        lines.append(f"- **Other sources**: [{group}]")
     return "\n".join(lines)
 
 
@@ -335,7 +354,16 @@ def inline_tier_label(citation: dict) -> str:
     return TIER_INLINE.get(tier, "")
 
 def annotate_inline_citation_tiers(md: str, citations: list) -> str:
-    """Transform [3] â†’ [3 peer] using ledger tier metadata."""
+    """Transform [3] → [3 peer] using ledger tier metadata.
+
+    Never mutate ## References / ## Core references — those lines use
+    **[n]** markers that must stay ledger-aligned. An 80-char lookback
+    previously missed later reference rows and rewrote them to **[n tier]**.
+    """
+    raw = md or ""
+    refs = re.search(r"(?im)^##\s+(?:Core\s+references|References)\s*$", raw)
+    head = raw[: refs.start()] if refs else raw
+    tail = raw[refs.start() :] if refs else ""
     by_n = {_as_dict(c).get("n"): _as_dict(c) for c in citations if _as_dict(c).get("n")}
 
     def _annotate_inner(inner: str) -> str:
@@ -354,30 +382,40 @@ def annotate_inline_citation_tiers(md: str, citations: list) -> str:
 
     def _repl(match: re.Match) -> str:
         inner = match.group(1)
-        if "## References" in (md[max(0, match.start() - 80) : match.start()]):
-            return match.group(0)
         # A LaTeX interval like "$c \in [0, 1]$" has the same shape as a
         # citation-number list. Skip when an odd number of "$" precede the
         # match — i.e. we're inside an open math span (real memo output:
         # "$c \in [0, 1 peer]$" from annotating [0, 1] as citations 0 and 1).
-        if md.count("$", 0, match.start()) % 2 == 1:
+        if head.count("$", 0, match.start()) % 2 == 1:
             return match.group(0)
         return f"[{_annotate_inner(inner)}]"
 
-    return MULTI_CITE_RE.sub(_repl, md or "")
+    return MULTI_CITE_RE.sub(_repl, head) + tail
 
 
 def _cited_numbers(md: str) -> set[int]:
     """Citation numbers actually used as an [n] marker in the prose (not the
-    References list's own numbering)."""
-    heading = re.search(r"(?im)^##\s+(?:Core\s+references|References)\s*$", md or "")
-    body = (md or "")[: heading.start()] if heading else (md or "")
+    References / Source quality list's own numbering).
+
+    Must recognize tiered markers ([1 peer], [2, 3 preprint]) — writers and
+    annotate_inline emit those forms. Matching only bare [n] dropped every
+    tiered-only cite from References / Source quality rebuilds.
+    """
+    body = md or ""
+    # Drop protected list sections so their band/list markers do not define "used".
+    for heading_re in (
+        r"(?im)^##\s+(?:Core\s+references|References)\s*$",
+        r"(?im)^##\s+Source quality\s*$",
+    ):
+        heading = re.search(heading_re, body)
+        if heading:
+            body = body[: heading.start()]
     nums: set[int] = set()
-    for match in MULTI_CITE_RE.finditer(body):
+    for match in CITED_MARKER_RE.finditer(body):
         for piece in match.group(1).split(","):
-            piece = piece.strip()
-            if piece.isdigit():
-                nums.add(int(piece))
+            m = CITED_NUM_TOKEN_RE.match(piece.strip())
+            if m:
+                nums.add(int(m.group(1)))
     return nums
 
 

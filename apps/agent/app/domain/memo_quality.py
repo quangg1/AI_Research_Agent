@@ -305,30 +305,47 @@ def _detect_duplicate_quotes_across_sections(body: str) -> tuple[float, str]:
     return (duplicate_ratio, details)
 
 
+
+def _prose_without_protected_lists(body: str) -> str:
+    """Drop ## Source quality / ## References so list bands are not scored as stacking."""
+    text = body or ""
+    cut = len(text)
+    for heading_re in (
+        r"(?im)^##\s+Source quality\s*$",
+        r"(?im)^##\s+(?:Core\s+references|References)\s*$",
+    ):
+        m = re.search(heading_re, text)
+        if m:
+            cut = min(cut, m.start())
+    return text[:cut]
+
+
 def _detect_citation_stacking(body: str) -> tuple[int, list[str]]:
     """Detect sentences that cite 3+ distinct sources (citation stacking).
     
     Note: Citing 2 sources together is acceptable (e.g., "Evidence from [1, 2]").
     Only 3+ sources in a single citation is considered stacking.
     """
-    # Match sentences with citation markers like [1], [2, 3], [4 peer]
-    sentences = re.split(r'(?<=[.!?])\s+', body)
+    # Match sentences with citation markers like [1], [2, 3], [4 peer].
+    # Exclude Source quality / References — those intentionally group 3+ cites.
+    sentences = re.split(r'(?<=[.!?])\s+', _prose_without_protected_lists(body))
     
     stacking_count = 0
     examples: list[str] = []
     
     for sentence in sentences:
         # Find all citation markers [n] or [n, m, ...] or [n peer, m repo, ...]
-        citation_markers = re.findall(r'\[([^\]]+)\]', sentence)
+        # Citation-shaped markers only — not markdown link titles like
+        # "[Is Model Collapse Inevitable? ...](url)" which previously leaked
+        # year digits into stacking counts.
+        citation_markers = _MARKER_RE.findall(sentence)
         if not citation_markers:
             continue
         
-        # Extract distinct citation numbers
         cited_numbers: set[int] = set()
         for marker in citation_markers:
-            # Extract all numbers from the marker (e.g., "1, 2, 3 peer" -> [1, 2, 3])
-            numbers = re.findall(r'\b(\d+)\b', marker)
-            cited_numbers.update(int(n) for n in numbers)
+            for n, _tier in _marker_numbers(marker):
+                cited_numbers.add(n)
         
         # Only flag if 3 or more distinct sources in a single sentence
         if len(cited_numbers) >= 3:
@@ -348,8 +365,8 @@ def _detect_source_saturation(body: str) -> tuple[int, list[str]]:
     This catches over-reliance on a single source within a paragraph, which indicates
     insufficient evidence diversity or quote-dumping from one paper.
     """
-    # Split by double newlines to get paragraphs
-    paragraphs = re.split(r'\n\s*\n', body)
+    # Split by double newlines to get paragraphs (exclude protected list sections)
+    paragraphs = re.split(r'\n\s*\n', _prose_without_protected_lists(body))
     
     saturation_count = 0
     examples: list[str] = []
@@ -358,17 +375,13 @@ def _detect_source_saturation(body: str) -> tuple[int, list[str]]:
         if len(para.strip()) < 50:  # Skip very short paragraphs
             continue
         
-        # Find all citation markers [n] or [n peer] etc.
-        citation_markers = re.findall(r'\[([^\]]+)\]', para)
+        citation_markers = _MARKER_RE.findall(para)
         if not citation_markers:
             continue
         
-        # Count occurrences of each source number
         source_counts: dict[int, int] = {}
         for marker in citation_markers:
-            numbers = re.findall(r'\b(\d+)\b', marker)
-            for num_str in numbers:
-                num = int(num_str)
+            for num, _tier in _marker_numbers(marker):
                 source_counts[num] = source_counts.get(num, 0) + 1
         
         # Check if any single source appears 3+ times in this paragraph

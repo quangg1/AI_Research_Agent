@@ -6,7 +6,7 @@ import re
 
 from app.domain.report_audit import _section
 
-_CITE_RE = re.compile(r"\[\d+(?:\s+(?:peer|repo|docs|news))?\]")
+_CITE_RE = re.compile(r"\[\d+(?:\s+(?:peer|repo|docs|news|preprint|primary|specialist|vendor|unreliable|industry))?\]")
 _NESTED_CONTRA_RE = re.compile(
     r"^#{3,4}\s+.*(?:contradict|counter-evidence|counter evidence|open questions?)\s*$",
     re.I | re.M,
@@ -146,7 +146,7 @@ def _merge_metric_gaps_into_uncertainties(text: str) -> str:
     return text
 
 
-_CITE_PARSE = re.compile(r"\[(\d+)(?:\s+(peer|repo|docs|news))?\]")
+_CITE_PARSE = re.compile(r"\[(\d+)(?:\s+(peer|repo|docs|news|preprint|primary|specialist|vendor|unreliable|industry))?\]")
 _QUALITATIVE_METRIC_RE = re.compile(
     r"\b(eliminates?|prevents?|reduces?|improves?|enables?|addresses?|"
     r"hallucination|collapse|without|not reported|qualitative|mechanism)\b",

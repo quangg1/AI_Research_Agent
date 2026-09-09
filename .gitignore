@@ -37,12 +37,32 @@ Thumbs.db
 .vscode/
 .cursor/settings.json
 
+# agent IDE runtime / learning caches (never commit)
+.claude/learning/
+.claude/mcp-usage.jsonl
+**/.claude/learning/
+**/.claude/mcp-usage.jsonl
+.cursor/learning/
+.kiro/learning/
+
 # local tooling clones / UA scratch
 Understand-Anything/
 .ua/tmp/
 .ua/intermediate/
 .ua/.trash-*/
 
+# scratch memos, local dumps, research PDFs (not product docs)
+.tmp_*
+*.pdf
+!docs/**/*.pdf
+
 # logs
 *.log
 logs/
+
+# local inventory helpers (agent scratch)
+_all_files.txt
+_status.txt
+_to_delete.txt
+_claude_left.txt
+_gi.txt

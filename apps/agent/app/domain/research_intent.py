@@ -237,11 +237,34 @@ def decision_rule_for(query: str, ledger: list, critic: dict) -> str:
         "",
     ]
     empirical_bullets = False
+    def _is_slot_label_leak(label: str) -> bool:
+        low = (label or "").lower().strip()
+        if not low:
+            return True
+        # Coverage-slot metadata / poison domains — never emit as decision thresholds.
+        if re.search(
+            r"preference|class[-_ ]?rebalanc|self[-_ ]?supervised|clinical|abstention|"
+            r"direct answer to the question|implementation or source-level|"
+            r"differences between the named|constraints.? limitations|"
+            r"constraints_and_limitations",
+            low,
+        ):
+            return True
+        # Bare hyphenated slot ids with no decision language.
+        bare = re.sub(r"\[[^\]]*\]", "", low).strip(" -—:")
+        if re.fullmatch(r"[a-z0-9]+(?:[-_][a-z0-9]+){0,4}", bare) and not re.search(
+            r"\b(prefer|use|choose|when|if|avoid|require|gb|%|threshold)\b", bare
+        ):
+            return True
+        return False
+
     if supported:
         lines.append("**Act on these — the sources support them directly:**")
         lines.append("")
         for s in supported[:6]:
-            label = s.get("label") or s.get("id")
+            label = str(s.get("label") or s.get("id") or "")
+            if _is_slot_label_leak(label):
+                continue
             cite = s.get("support") or s.get("citation") or ""
             suffix = f" — see {cite}." if cite else f" — from the {n_src} cited sources."
             lines.append(f"- {label}{suffix}")
@@ -264,7 +287,9 @@ def decision_rule_for(query: str, ledger: list, critic: dict) -> str:
         lines.append("**Verify before acting — evidence is indirect or single-sourced:**")
         lines.append("")
         for s in partial[:6]:
-            label = s.get("label") or s.get("id")
+            label = str(s.get("label") or s.get("id") or "")
+            if _is_slot_label_leak(label):
+                continue
             lines.append(
                 f"- Verify: {label} — weak/single-sourced; confirm with one independent primary source."
             )

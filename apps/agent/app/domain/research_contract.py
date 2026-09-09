@@ -134,8 +134,13 @@ def compile_research_contract(query: str, brief: dict[str, Any] | None = None) -
     )
     if memory_q or LORA_QLORA_RE.search(q):
         excluded = list(DEFAULT_EXCLUDED_FOR_MEMORY)
-        # Always require Hu / Dettmers for LoRA/QLoRA VRAM comparisons.
-        if memory_q or re.search(r"\b(?:LoRA|QLoRA).{0,40}(?:QLoRA|LoRA)\b", q, re.I):
+        # Always require Hu / Dettmers for LoRA/QLoRA VRAM or FT tradeoff comparisons.
+        if memory_q or re.search(r"\b(?:LoRA|QLoRA).{0,40}(?:QLoRA|LoRA)\b", q, re.I) or re.search(
+            r"\b(?:full[\s-]?(?:FT|fine)|fine[\s-]?tun).{0,80}\b(?:LoRA|QLoRA)\b|"
+            r"\b(?:LoRA|QLoRA).{0,80}\b(?:full[\s-]?(?:FT|fine)|fine[\s-]?tun|accuracy|OOD|trade-?off)\b",
+            q,
+            re.I,
+        ):
             mandatory = [dict(x) for x in MANDATORY_LORA_QLORA_SOURCES]
         if scale_bounds:
             raw_constraints.append(
@@ -364,3 +369,261 @@ def mandatory_sources_present(
         if not found:
             missing.append(dict(src))
     return missing
+
+
+# --- Contract-aligned must-answer (LoRA / QLoRA / FT tradeoff queries) --------
+
+POISON_CRITICAL_SLOT_RE = re.compile(
+    r"preference(?:[-_ ]based)?|class[-_ ]?rebalanc|self[-_ ]?supervised|"
+    r"clinical|abstention|email[-_ ]?qa|\bdpo\b|\borpo\b|\bkto\b|\brlhf\b|"
+    r"mental[-_ ]health",
+    re.I,
+)
+
+FT_TRADEOFF_SIGNAL_RE = re.compile(
+    r"\b(?:full[\s-]?(?:FT|fine[\s-]?tun(?:ing|e)?)|fine[\s-]?tun(?:ing|e)?|"
+    r"VRAM|memory|footprint|accuracy|trade-?offs?|OOD|cost|PEFT|"
+    r"catastrophic\s+forget|quantiz)\b",
+    re.I,
+)
+
+# Canonical dimensions for LoRA/QLoRA/FT empirical tradeoff questions.
+# Aligned to typical must_cover; never preference/clinical/abstention.
+LORA_FT_MUST_ANSWER_SPECS: list[dict[str, Any]] = [
+    {
+        "id": "task_accuracy",
+        "label": "Task accuracy versus full fine-tuning",
+        "critical": True,
+        "patterns": [
+            r"accurac",
+            r"benchmark",
+            r"perplexity",
+            r"downstream",
+            r"MMLU",
+            r"evaluat",
+            r"full\s+fine[- ]?tun",
+        ],
+        "hint": "task accuracy full fine-tuning vs LoRA QLoRA",
+    },
+    {
+        "id": "vram_memory",
+        "label": "VRAM / peak training memory",
+        "critical": True,
+        "patterns": [
+            r"VRAM",
+            r"peak\s+(?:training\s+)?mem",
+            r"memory\s+footprint",
+            r"\d+(?:\.\d+)?\s*GB",
+            r"GPU\s+mem",
+        ],
+        "hint": "peak VRAM memory footprint LoRA QLoRA",
+    },
+    {
+        "id": "compute_cost",
+        "label": "Compute cost and training efficiency",
+        "critical": True,
+        "patterns": [
+            r"cost",
+            r"FLOP",
+            r"throughput",
+            r"tokens?/s",
+            r"training\s+time",
+            r"efficien",
+            r"wall[- ]?clock",
+        ],
+        "hint": "compute cost training time efficiency LoRA QLoRA",
+    },
+    {
+        "id": "ood_generalization",
+        "label": "OOD generalization / catastrophic forgetting",
+        "critical": True,
+        "patterns": [
+            r"\bOOD\b",
+            r"out[- ]of[- ]distribution",
+            r"catastrophic\s+forget",
+            r"forget",
+            r"generaliz",
+            r"retention",
+        ],
+        "hint": "OOD generalization catastrophic forgetting LoRA",
+    },
+    {
+        "id": "quantization_tradeoffs",
+        "label": "Quantization tradeoffs (QLoRA / NF4 / precision)",
+        "critical": True,
+        "patterns": [
+            r"quantiz",
+            r"NF4",
+            r"4[- ]?bit",
+            r"QLoRA",
+            r"precision",
+            r"bitsandbytes",
+            r"double\s+quant",
+        ],
+        "hint": "QLoRA NF4 quantization precision tradeoffs",
+    },
+    {
+        "id": "constraints_and_limitations",
+        "label": "Constraints and limitations",
+        "critical": False,
+        "patterns": [
+            r"limitation",
+            r"constraint",
+            r"trade-?off",
+            r"drawback",
+            r"bottleneck",
+            r"fails?\b",
+        ],
+        "hint": "limitations constraints LoRA QLoRA fine-tuning",
+    },
+]
+
+
+def is_lora_qlora_ft_query(query: str) -> bool:
+    """True for LoRA/QLoRA/FT tradeoff or VRAM/accuracy comparison questions."""
+    q = (query or "").strip()
+    if not q or not LORA_QLORA_RE.search(q):
+        return False
+    return FT_TRADEOFF_SIGNAL_RE.search(q) is not None
+
+
+def is_poison_critical_slot(slot_id: str = "", label: str = "") -> bool:
+    """Preference/clinical/abstention-style slots must never be critical for FT queries."""
+    blob = f"{slot_id or ''} {label or ''}"
+    return bool(POISON_CRITICAL_SLOT_RE.search(blob))
+
+
+def _slot_from_spec(spec: dict[str, Any], topic: list[str], goal: str) -> dict[str, Any]:
+    critical = bool(spec.get("critical"))
+    hint = str(spec.get("hint") or "")
+    followup = f"{goal[:120]} {hint}".strip()[:200]
+    return {
+        "id": spec["id"],
+        "label": spec["label"],
+        "status": "open",
+        "evidence_ids": [],
+        "critical": critical,
+        "priority": "critical" if critical else "standard",
+        "patterns": list(spec.get("patterns") or []),
+        "topic_terms": topic[:8],
+        "followup": followup,
+        "aspect": spec["id"],
+        "from_contract": True,
+    }
+
+
+def must_answer_from_contract(
+    query: str,
+    contract: ResearchContract | dict | None = None,
+    *,
+    brief: dict | None = None,
+) -> list[dict[str, Any]] | None:
+    """Derive must-answer slots from ResearchContract for LoRA/QLoRA/FT queries.
+
+    Returns None when the query is not a LoRA/FT tradeoff (caller uses derive_slots).
+    Never marks preference/clinical/abstention slots as critical coverage.
+    """
+    c = contract if isinstance(contract, ResearchContract) else ResearchContract.from_dict(
+        contract if isinstance(contract, dict) else None
+    )
+    if c is None and brief:
+        c = ResearchContract.from_dict(brief.get("research_contract"))
+    q = (query or (c.query if c else "") or (brief or {}).get("goal") or "").strip()
+    if not is_lora_qlora_ft_query(q) and not (
+        c and (c.mandatory_sources or (LORA_QLORA_RE.search(c.query or q) and c.excluded_domains))
+    ):
+        return None
+
+    # Prefer must_cover labels from contract/brief when they map cleanly; always
+    # seed with the canonical FT/LoRA dimension set so retrieval hunts the right slots.
+    try:
+        from app.domain.textutil import distinctive_terms, user_goal
+
+        goal = user_goal(q) or q
+        topic = distinctive_terms(goal, limit=8)
+    except Exception:
+        goal, topic = q, []
+
+    slots = [_slot_from_spec(spec, topic, goal) for spec in LORA_FT_MUST_ANSWER_SPECS]
+
+    # If must_cover mentions a dimension not in the canonical set, add as non-poison.
+    must = list((c.must_cover if c else []) or (brief or {}).get("must_cover") or [])
+    seen = {s["id"] for s in slots}
+    for item in must:
+        label = str(item).strip()
+        if not label or is_poison_critical_slot(label=label):
+            continue
+        sid = re.sub(r"[^a-z0-9_]+", "_", label.lower()).strip("_")[:40]
+        if not sid or sid in seen:
+            continue
+        if is_poison_critical_slot(slot_id=sid, label=label):
+            continue
+        # Skip if clearly covered by an existing canonical id.
+        low = label.lower()
+        if any(
+            key in low
+            for key in (
+                "vram",
+                "memory",
+                "accuracy",
+                "cost",
+                "ood",
+                "forget",
+                "quantiz",
+                "constraint",
+                "limitation",
+            )
+        ):
+            continue
+        seen.add(sid)
+        slots.append(
+            {
+                "id": sid,
+                "label": label[:120],
+                "status": "open",
+                "evidence_ids": [],
+                "critical": False,
+                "priority": "standard",
+                "patterns": [re.escape(w) for w in low.split()[:6] if len(w) > 2],
+                "topic_terms": topic[:8],
+                "followup": f"{goal[:100]} {label}"[:200],
+                "aspect": sid,
+                "from_contract": True,
+            }
+        )
+
+    # Safety: strip any poison that slipped in; never leave them critical.
+    cleaned: list[dict[str, Any]] = []
+    for s in slots:
+        if is_poison_critical_slot(slot_id=str(s.get("id") or ""), label=str(s.get("label") or "")):
+            continue
+        cleaned.append(s)
+    if cleaned and not any(s.get("critical") for s in cleaned):
+        cleaned[0]["critical"] = True
+        cleaned[0]["priority"] = "critical"
+    return cleaned or None
+
+
+def filter_poison_must_answer_slots(
+    slots: list[dict[str, Any]] | None,
+    query: str = "",
+    *,
+    demote_only: bool = False,
+) -> list[dict[str, Any]]:
+    """Drop or demote preference/clinical slots for LoRA/FT queries."""
+    rows = [dict(s) for s in (slots or [])]
+    if not rows:
+        return rows
+    if not (is_lora_qlora_ft_query(query) or LORA_QLORA_RE.search(query or "")):
+        return rows
+    out: list[dict[str, Any]] = []
+    for s in rows:
+        if is_poison_critical_slot(slot_id=str(s.get("id") or ""), label=str(s.get("label") or "")):
+            if demote_only:
+                s["critical"] = False
+                s["priority"] = "standard"
+                out.append(s)
+            continue
+        out.append(s)
+    return out
+

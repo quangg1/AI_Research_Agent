@@ -11,6 +11,74 @@ from app.observability.logging import event
 # TEMPORARILY DISABLED: from app.maintenance.hitl_timeout import add_interrupt_metadata
 
 
+
+def _mandatory_hard_fail_patch(state: ResearchState, report: dict) -> dict | None:
+    """If contract mandatory primaries are missing, block soft-publish.
+
+    Prefer one retrieval pass toward the missing arXiv ids (status=revising → critic).
+    After that retry is exhausted, keep Uncertainties but refuse green auto-publish.
+    """
+    metrics = (report or {}).get("metrics") or {}
+    audit = metrics.get("constraint_audit") or {}
+    missing = list(audit.get("missing_mandatory") or [])
+    hard = bool(audit.get("hard_fail") or audit.get("should_block_publish"))
+    if not hard and not missing:
+        flags = audit.get("flags") or []
+        hard = any(
+            str(f).startswith("mandatory_missing_")
+            or f in {"hard_fail_mandatory_missing", "should_block_publish"}
+            for f in flags
+        )
+    if not hard and not missing:
+        return None
+
+    retries = int(state.get("mandatory_retrieval_retries") or 0)
+    if retries < 1 and missing:
+        from app.domain.schema import AgentName, SubQuery
+
+        followups = []
+        for src in missing[:4]:
+            aid = (src.get("arxiv_id") or "").strip()
+            label = (src.get("label") or aid or "mandatory primary").strip()
+            q = f"arxiv.org/abs/{aid} {label}" if aid else label
+            followups.append(
+                dump(
+                    SubQuery(
+                        agent=AgentName.SCHOLAR,
+                        question=q[:200],
+                        rationale=f"Retrieve mandatory primary: {label}",
+                    )
+                )
+            )
+        if followups:
+            event(
+                "memo_gate_mandatory_retrieval",
+                missing=[s.get("arxiv_id") for s in missing],
+                attempt=retries + 1,
+            )
+            return {
+                "status": "revising",
+                "memo_confirmed": False,
+                "followups": followups,
+                "mandatory_retrieval_retries": retries + 1,
+                "traces": [
+                    {
+                        "node": "memo_gate",
+                        "action": "mandatory_retrieval",
+                        "missing": [s.get("arxiv_id") for s in missing],
+                        "attempt": retries + 1,
+                    }
+                ],
+            }
+
+    return {
+        "_mandatory_block": True,
+        "missing_mandatory": missing,
+        "hard_fail": True,
+    }
+
+
+
 def memo_gate_node(state: ResearchState) -> dict:
     """Review the written memo draft before publishing to the user."""
     from app.domain.memo_quality import check_memo_quality, declutter_citations
@@ -103,6 +171,20 @@ def memo_gate_node(state: ResearchState) -> dict:
             # Don't fail the gate if semantic validation fails
             event("memo_gate_semantic_validation_error", error=str(exc)[:200])
 
+    # Hard gate: missing mandatory primaries (Hu / Dettmers) must not soft-publish green.
+    _mand = _mandatory_hard_fail_patch(state, report)
+    if _mand and not _mand.get("_mandatory_block"):
+        return _mand
+    if _mand and _mand.get("_mandatory_block"):
+        quality_check["issues"].append(
+            "Mandatory primary sources missing (e.g. Hu 2106.09685 / Dettmers 2305.14314); "
+            "do not treat this memo as green until they are cited."
+        )
+        quality_check["should_regenerate"] = True
+        quality_check["hard_fail"] = True
+        quality_check["should_block_publish"] = True
+        event("memo_gate_mandatory_hard_fail", missing=_mand.get("missing_mandatory"))
+
     # Track regeneration attempts to prevent infinite loops
     quality_regen_count = int(state.get("quality_regeneration_count") or 0)
     MAX_QUALITY_REGENERATIONS = QualityThresholds.MAX_QUALITY_REGENERATIONS
@@ -192,6 +274,21 @@ def memo_gate_node(state: ResearchState) -> dict:
             "traces": [{"node": "memo_gate", "action": "revise_critic", "followups": len(followups)}],
         }
 
+    # Human chose publish; if mandatory hard-fail remains, record it (not a silent green).
+    if action == "publish":
+        audit = ((report.get("metrics") or {}).get("constraint_audit") or {})
+        if audit.get("hard_fail") or audit.get("should_block_publish") or (quality_check or {}).get("hard_fail"):
+            report = {
+                **report,
+                "metrics": {
+                    **(report.get("metrics") or {}),
+                    "hard_fail": True,
+                    "published_despite_mandatory_gap": True,
+                    "should_block_publish": True,
+                },
+            }
+            event("memo_gate_publish_despite_mandatory_hard_fail")
+
     # `report` here already carries the decluttered body_markdown from above —
     # persist and publish that version, not state's original.
     stored = _persist_knowledge(state, report)
@@ -234,6 +331,37 @@ def memo_gate_node_auto(state: ResearchState) -> dict:
     # Run same quality check as HITL path (with coverage for retrieval awareness)
     if body_markdown:
         quality_check = check_memo_quality(body_markdown, evidence=evidence, coverage=coverage)
+        
+        _mand = _mandatory_hard_fail_patch(state, report)
+        if _mand and not _mand.get("_mandatory_block"):
+            return _mand
+        if _mand and _mand.get("_mandatory_block"):
+            quality_check["issues"].append(
+                "Mandatory primary sources missing; blocking auto-publish."
+            )
+            quality_check["should_regenerate"] = True
+            quality_check["hard_fail"] = True
+            quality_check["should_block_publish"] = True
+            event("memo_gate_auto_mandatory_block", missing=_mand.get("missing_mandatory"))
+            return {
+                "status": "draft",
+                "memo_confirmed": False,
+                "report": {
+                    **report,
+                    "metrics": {
+                        **(report.get("metrics") or {}),
+                        "hard_fail": True,
+                        "should_block_publish": True,
+                        "publish_blocked_reason": "mandatory_sources_missing",
+                    },
+                },
+                "traces": [{
+                    "node": "memo_gate_auto",
+                    "action": "block_publish_mandatory",
+                    "missing": _mand.get("missing_mandatory"),
+                }],
+            }
+
         
         # If quality issues detected, trigger rewrite from notes (not new search)
         quality_regen_count_auto = int(state.get("quality_regeneration_count") or 0)

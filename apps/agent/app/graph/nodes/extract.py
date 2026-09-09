@@ -45,22 +45,43 @@ def extract_node(state: ResearchState) -> dict:
     
     if should_refine_dimensions:
         from app.domain.decompose import synthesize_dimensions_from_evidence
-        
-        # Extract paper-specific dimensions
-        paper_dimensions = synthesize_dimensions_from_evidence(query, working, fallback_to_heuristic=True)
-        
-        # Update brief with refined dimensions
+        from app.domain.research_contract import (
+            filter_poison_must_answer_slots,
+            must_answer_from_contract,
+        )
+
+        # Contract-aligned slots win for LoRA/QLoRA/FT queries — never let
+        # off-topic paper concepts (HAR / preference / class-rebalanced) become
+        # critical must-answer dimensions.
+        contract_slots = must_answer_from_contract(
+            query,
+            brief.get("research_contract") or state.get("research_contract"),
+            brief=brief,
+        )
+        if contract_slots:
+            paper_dimensions = contract_slots
+            source = "research_contract"
+        else:
+            paper_dimensions = synthesize_dimensions_from_evidence(
+                query, working, fallback_to_heuristic=True
+            )
+            paper_dimensions = filter_poison_must_answer_slots(paper_dimensions, query)
+            source = "paper_concepts"
+
         brief = {
             **brief,
             "must_answer": paper_dimensions,
             "dimensions_refined": True,
         }
-        event("extract_dimensions_refined", 
-              old_count=len(brief.get("must_answer") or []),
-              new_count=len(paper_dimensions),
-              paper_specific=sum(1 for d in paper_dimensions if d.get("paper_cite")))
-    
-    slots = brief.get("must_answer") or must_answer_for(query)
+        event(
+            "extract_dimensions_refined",
+            old_count=len(brief.get("must_answer") or []),
+            new_count=len(paper_dimensions),
+            paper_specific=sum(1 for d in paper_dimensions if d.get("paper_cite")),
+            source=source,
+        )
+
+    slots = brief.get("must_answer") or must_answer_for(query, brief=brief)
     coverage = score_must_answer(query, working, slots)
 
     gap_retries = int(state.get("gap_micro_retries") or 0)

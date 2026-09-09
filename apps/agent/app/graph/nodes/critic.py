@@ -27,7 +27,7 @@ def critic_node(state: ResearchState) -> dict:
     brief = state.get("brief") or {}
     depth = effective_depth(brief)
     gap_limit = {"quick": 2, "standard": 3, "deep": 4}.get(depth, 3)
-    slots = brief.get("must_answer") or must_answer_for(query)
+    slots = brief.get("must_answer") or must_answer_for(query, brief=brief if isinstance(brief, dict) else {})
     coverage = score_must_answer(query, retrieved, slots)
 
     verdict = _llm_critic(state, retrieved, coverage) or _heuristic_critic(state, retrieved, coverage, budget)

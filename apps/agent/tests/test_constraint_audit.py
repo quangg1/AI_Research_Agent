@@ -61,6 +61,8 @@ def test_audit_records_exclude_and_mandatory_gaps():
     assert out["gaps"]
     # Hu LoRA mandatory still missing
     assert any("2106.09685" in g or "Hu" in g for g in out["gaps"])
+    assert out.get("hard_fail") is True
+    assert out.get("should_block_publish") is True
     # Uncertainties section should appear
     assert "## Uncertainties & gaps" in out["body_markdown"]
     # demote should have fired on preference subsection for memory query

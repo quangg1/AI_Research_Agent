@@ -37,6 +37,14 @@ def _brief_with_contract(query: str, brief: ResearchBrief) -> dict:
     try:
         contract = compile_research_contract(query, data)
         data["research_contract"] = contract.to_dict()
+        # Prefer contract-aligned must-answer for LoRA/QLoRA/FT queries.
+        from app.domain.research_contract import must_answer_from_contract
+
+        contract_slots = must_answer_from_contract(query, contract, brief=data)
+        if contract_slots:
+            data["must_answer"] = contract_slots
+        else:
+            data["must_answer"] = must_answer_for(query, brief=data)
     except Exception:
         # Fail-soft: briefing must not die if contract compile fails.
         data.setdefault("research_contract", {})

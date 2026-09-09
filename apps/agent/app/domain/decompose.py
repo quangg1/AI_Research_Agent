@@ -317,11 +317,19 @@ def synthesize_dimensions_from_evidence(
     
     # Limit to 6 dimensions max
     final_dimensions = dimension_candidates[:6]
-    
+
+    # Never let preference/clinical/HAR-poison concepts stay critical on LoRA/FT queries.
+    try:
+        from app.domain.research_contract import filter_poison_must_answer_slots
+
+        final_dimensions = filter_poison_must_answer_slots(final_dimensions, query)
+    except Exception:
+        pass
+
     # Ensure at least one is marked critical
-    if not any(d.get("critical") for d in final_dimensions):
+    if final_dimensions and not any(d.get("critical") for d in final_dimensions):
         final_dimensions[0]["critical"] = True
-    
+
     return final_dimensions
 
 

@@ -246,6 +246,9 @@ def audit_memo_against_contract(
             "gaps": [],
             "flags": flags,
             "had_contract": False,
+            "hard_fail": False,
+            "should_block_publish": False,
+            "missing_mandatory": [],
         }
 
     gaps.extend(_exclude_violations(text, c))
@@ -263,6 +266,13 @@ def audit_memo_against_contract(
         )
         flags.append(f"mandatory_missing_{aid or label}")
 
+    # Hard fail: mandatory Hu/Dettmers (or other contract primaries) absent.
+    # Keep Uncertainties bullets, but signal so memo_gate cannot soft-publish green.
+    hard_fail = bool(missing)
+    if hard_fail:
+        flags.append("hard_fail_mandatory_missing")
+        flags.append("should_block_publish")
+
     if gaps:
         flags.append("constraint_gaps_recorded")
         text = _replace_or_insert_uncertainties(text, gaps)
@@ -273,6 +283,8 @@ def audit_memo_against_contract(
         "flags": flags,
         "had_contract": True,
         "missing_mandatory": missing,
+        "hard_fail": hard_fail,
+        "should_block_publish": hard_fail,
     }
 
 
@@ -297,6 +309,9 @@ def apply_constraint_audit(
             "flags": [],
             "had_contract": False,
             "skipped": True,
+            "hard_fail": False,
+            "should_block_publish": False,
+            "missing_mandatory": [],
         }
     return audit_memo_against_contract(
         body,

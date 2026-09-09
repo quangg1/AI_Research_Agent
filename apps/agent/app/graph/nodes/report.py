@@ -143,6 +143,8 @@ def _report_sync(state: ResearchState) -> dict:
                 "flags": audited.get("flags") or [],
                 "gaps": audited.get("gaps") or [],
                 "missing_mandatory": audited.get("missing_mandatory") or [],
+                "hard_fail": bool(audited.get("hard_fail")),
+                "should_block_publish": bool(audited.get("should_block_publish")),
             }
     except Exception as _audit_exc:
         report.metrics["constraint_audit"] = {"skipped": True, "error": type(_audit_exc).__name__}
@@ -892,9 +894,15 @@ def _format_dossier_for_prompt(dossier: list[dict], citations: list[dict]) -> st
 
 
 def _sanitize_decision_rule(query: str, rule: str, citations: list[dict], critic: dict) -> str:
-    """Reject a rule that drifted off the asked subject, whatever that subject is."""
+    """Reject a rule that drifted off the asked subject, whatever that subject is.
+
+    Always strip coverage-slot label leaks (preference-based / class-rebalanced /
+    "from the N cited sources") so re-injecting decision_rule into body_markdown
+    cannot undo consolidate_memo_structure's sanitize pass.
+    """
     from app.domain.citations import Citation
     from app.domain.research_intent import decision_rule_for
+    from app.report.memo_structure import _drop_slot_label_decision_bullets
 
     ledger = []
     for c in citations:
@@ -904,11 +912,12 @@ def _sanitize_decision_rule(query: str, rule: str, citations: list[dict], critic
             continue
     text = (rule or "").strip()
     if not text:
-        return decision_rule_for(query, ledger, critic)
-    anchors = distinctive_terms(user_goal(query), limit=8)
-    if anchors and not any(term in text.lower() for term in anchors):
-        return decision_rule_for(query, ledger, critic)
-    return text
+        text = decision_rule_for(query, ledger, critic)
+    else:
+        anchors = distinctive_terms(user_goal(query), limit=8)
+        if anchors and not any(term in text.lower() for term in anchors):
+            text = decision_rule_for(query, ledger, critic)
+    return _drop_slot_label_decision_bullets(text or "").strip()
 
 
 def _template_report(state: ResearchState, evidence: list[dict], critic: dict) -> Report:
@@ -1212,6 +1221,8 @@ def _regenerate_for_quality(state: ResearchState) -> dict:
                 "flags": audited.get("flags") or [],
                 "gaps": audited.get("gaps") or [],
                 "missing_mandatory": audited.get("missing_mandatory") or [],
+                "hard_fail": bool(audited.get("hard_fail")),
+                "should_block_publish": bool(audited.get("should_block_publish")),
             }
     except Exception as _audit_exc:
         report.metrics["constraint_audit"] = {"skipped": True, "error": type(_audit_exc).__name__}

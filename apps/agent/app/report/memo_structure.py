@@ -60,6 +60,7 @@ def consolidate_memo_structure(
     text = _merge_metric_gaps_into_uncertainties(text)
     text = _polish_source_quality_section(text, citations)
     text = _sanitize_quantitative_table(text)
+    text = _sanitize_offtopic_sensor_quant_table(text)
     text = _sanitize_comparison_table(text)
     if citations is not None or evidence is not None:
         text = _drop_ungrounded_quantitative_rows(text, citations=citations or [], evidence=evidence or [])
@@ -282,6 +283,25 @@ def _merge_source_quality_bullets(section: str) -> str:
     return body.strip()
 
 
+def _sanitize_offtopic_sensor_quant_table(text: str) -> str:
+    """Drop HHAR/sensor benchmark tables when the memo is an LLM FT / LoRA query."""
+    body = text or ""
+    if not _LLM_FT_MEMO_RE.search(body[:2500]):
+        return body
+    section = _section(body, "Quantitative findings")
+    if not section or not _HAR_SENSOR_RE.search(section):
+        return body
+    # Keep if the table also clearly reports LoRA/QLoRA/VRAM figures as the main content.
+    if _LLM_FT_MEMO_RE.search(section) and re.search(r"\b(?:VRAM|NF4|7B|peak\s+mem)\b", section, re.I):
+        if not re.search(r"\bHHAR\b", section, re.I):
+            return body
+    note = (
+        "*Quantitative table omitted: sensor/HAR benchmarks are off-topic for this "
+        "LLM fine-tuning / LoRA–QLoRA query.*"
+    )
+    return _replace_section(body, "Quantitative findings", note)
+
+
 def _sanitize_quantitative_table(text: str) -> str:
     """Drop qualitative filler rows from the Quantitative findings table."""
     section = _section(text, "Quantitative findings")
@@ -326,7 +346,21 @@ _SLOT_LABEL_DECISION_RE = re.compile(
     r"direct answer to the question as asked|"
     r"implementation or source-level evidence|"
     r"differences between the named options|"
-    r"constraints,? limitations,? and failure modes",
+    r"constraints,? limitations,? and failure modes|"
+    r"preference(?:[-_ ]based)?|"
+    r"class[-_ ]?rebalanc(?:ed)?|"
+    r"self[-_ ]?supervised|"
+    r"constraints_and_limitations",
+    re.I,
+)
+
+_HAR_SENSOR_RE = re.compile(
+    r"\b(?:HHAR|UCI[-_ ]?HAR|\bHAR\b|Human\s+Activity\s+Recognition|"
+    r"accelerometer|gyroscope|wearable\s+sensor|activity\s+recognition)\b",
+    re.I,
+)
+_LLM_FT_MEMO_RE = re.compile(
+    r"\b(?:LoRA|QLoRA|fine[- ]?tun(?:ing|e)?|language\s+model|\bLLM\b|PEFT)\b",
     re.I,
 )
 _METRIC_LIKE_COL_RE = re.compile(
@@ -352,6 +386,18 @@ def _drop_slot_label_decision_bullets(rule: str) -> str:
             continue
         bullet = re.sub(r"^[-*]\s+", "", stripped)
         bullet = re.sub(r"\[[^\]]+\]", "", bullet).strip(trail)
+        # Bare coverage-slot ids (e.g. "preference-based", "class-rebalanced") with no action verb.
+        if (
+            stripped.startswith(("-", "*"))
+            and bullet
+            and re.fullmatch(r"[a-z0-9]+(?:[-_][a-z0-9]+){0,4}", bullet.lower() or "")
+            and not re.search(
+                r"\b(prefer|use|choose|when|if|avoid|require|unless|threshold|gb|%|re-benchmark)\b",
+                bullet,
+                re.I,
+            )
+        ):
+            continue
         if stripped.lower().startswith(("- verify:", "* verify:")):
             rest = re.sub(r"^[-*]\s*verify:\s*", "", stripped, flags=re.I)
             rest = re.sub(r"\[[^\]]+\]", "", rest)

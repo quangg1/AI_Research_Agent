@@ -221,9 +221,37 @@ def evidence_type_of(ev: dict, query: str = "") -> str:
     return "reference"
 
 
-def must_answer_for(query: str) -> list[dict[str, Any]]:
-    """Must-answer dimensions for any question, derived from the question itself."""
-    return derive_slots(query)
+def must_answer_for(
+    query: str,
+    brief: dict | None = None,
+    contract: dict | None = None,
+) -> list[dict[str, Any]]:
+    """Must-answer dimensions derived from ResearchContract when applicable.
+
+    For LoRA/QLoRA/FT tradeoff queries, prefer contract-aligned slots (accuracy,
+    VRAM, cost, OOD, quantization) over generic/paper-concept templates that
+    inject preference/clinical poison dimensions.
+    """
+    brief = brief if isinstance(brief, dict) else {}
+    try:
+        from app.domain.research_contract import (
+            filter_poison_must_answer_slots,
+            must_answer_from_contract,
+        )
+
+        raw_contract = contract or brief.get("research_contract")
+        contract_slots = must_answer_from_contract(query, raw_contract, brief=brief)
+        if contract_slots:
+            return contract_slots
+    except Exception:
+        pass
+    slots = derive_slots(query)
+    try:
+        from app.domain.research_contract import filter_poison_must_answer_slots
+
+        return filter_poison_must_answer_slots(slots, query)
+    except Exception:
+        return slots
 
 
 def slot_label(slot_id: str, slots: list[dict] | None = None) -> str:

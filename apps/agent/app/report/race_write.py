@@ -95,13 +95,17 @@ def _tail_looks_complete(text: str) -> bool:
 
 
 def memo_looks_truncated(markdown: str) -> bool:
+    """False-positive guard: research memos normally end on References URLs.
+
+    Root bug was treating URL/path tails as truncation, then discarding the whole
+    LLM memo for compose. Section contract (including At a glance) stays strict.
+    """
     text = (markdown or "").strip()
     if not text or word_count(text) < 400:
         return True
-    # At a glance is often a sidecar field; missing heading alone must not discard a full LLM memo.
-    required = tuple(h for h in _REQUIRED_SECTIONS if h.lower() != "at a glance")
-    if any(not re.search(rf"^##\s+{re.escape(h)}\s*$", text, re.I | re.M) for h in required):
-        return True
+    for heading in _REQUIRED_SECTIONS:
+        if not re.search(rf"^##\s+{re.escape(heading)}\s*$", text, re.I | re.M):
+            return True
     if not _tail_looks_complete(text):
         return True
     if "## Detailed analysis" in text and text.count("### ") < 2:

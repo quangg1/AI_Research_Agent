@@ -1,4 +1,4 @@
-"""Regression: do not discard full LLM memos that end with References URLs."""
+"""Regression: URL Reference tails must not discard LLM memos as truncated."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ def _fat_memo(*, end: str = "https://arxiv.org/abs/2305.14314") -> str:
         "papers and vendor guides for practitioners choosing fine-tuning methods. "
     )
     body = f"""# LoRA vs QLoRA
+## At a glance
+Prefer QLoRA under memory pressure; re-benchmark domain quality before locking the choice.
 ## Executive summary
 This memo compares full-parameter fine-tuning, LoRA, and QLoRA on domain tasks with selection criteria for memory, speed, and quality.
 ## Key findings
@@ -48,8 +50,7 @@ def test_missing_decision_rule_still_truncated():
     assert memo_looks_truncated(body)
 
 
-def test_at_a_glance_heading_not_required():
-    """Writer often puts At a glance in sidecar; missing H2 must not force truncate."""
-    body = _fat_memo()
-    assert "## At a glance" not in body
-    assert not memo_looks_truncated(body)
+def test_missing_at_a_glance_still_truncated():
+    """Writer contract requires ## At a glance; UI may also derive the field, but body QA stays strict."""
+    body = _fat_memo().replace("## At a glance\nPrefer QLoRA under memory pressure; re-benchmark domain quality before locking the choice.\n", "")
+    assert memo_looks_truncated(body)

@@ -56,9 +56,11 @@ def consolidate_memo_structure(
     text = _strip_nested_contradictions(text)
     text = _fix_leaked_transition_headings(text)
     text = _strip_fenced_code_blocks(text)
+    text = _strip_writer_qa_banners(text)
     text = _merge_metric_gaps_into_uncertainties(text)
     text = _polish_source_quality_section(text, citations)
     text = _sanitize_quantitative_table(text)
+    text = _sanitize_comparison_table(text)
     if citations is not None or evidence is not None:
         text = _drop_ungrounded_quantitative_rows(text, citations=citations or [], evidence=evidence or [])
     text = _sanitize_decision_thresholds(text)
@@ -262,12 +264,18 @@ def _merge_source_quality_bullets(section: str) -> str:
         for row in lines:
             all_cites.extend(_CITE_PARSE.findall(row))
         if len(lines) == 1 and len(all_cites) <= 2:
+            # Drop empty Other-sources stubs ("- **Other sources**:") rather than
+            # republishing a band with no numbers.
+            if not all_cites and re.search(r"other sources\s*:?\s*$", first, re.I):
+                continue
             bullets.append(f"- {first}")
             continue
         nums = sorted({int(n) for n, _ in all_cites})
         suffixes = [s for _, s in all_cites if s]
         suffix = f" {suffixes[0]}" if suffixes and len(set(suffixes)) == 1 else ""
         cite_block = f"[{', '.join(str(n) for n in nums)}{suffix}]" if nums else ""
+        if not cite_block and re.search(r"other sources\s*:?\s*$", display_head, re.I):
+            continue
         bullet = f"- {display_head}: {cite_block}".strip() if cite_block else f"- {display_head}"
         bullets.append(bullet.rstrip("."))
     body = "\n".join(other_lines + bullets)
@@ -308,6 +316,98 @@ def _sanitize_quantitative_table(text: str) -> str:
     return _replace_section(text, "Quantitative findings", cleaned)
 
 
+
+_WRITER_QA_BANNER_RE = re.compile(
+    r"^>\s*\*\*Note:\*\*\s*Writer QA flagged this memo\b.*$",
+    re.I | re.M,
+)
+_SLOT_LABEL_DECISION_RE = re.compile(
+    r"from the\s+\d+\s+cited sources|"
+    r"direct answer to the question as asked|"
+    r"implementation or source-level evidence|"
+    r"differences between the named options|"
+    r"constraints,? limitations,? and failure modes",
+    re.I,
+)
+_METRIC_LIKE_COL_RE = re.compile(
+    r"^(?:vram|bf16|fp16|fp32|strict|latency|throughput|tokens?/s|memory|rank|batch)$",
+    re.I,
+)
+
+
+def _strip_writer_qa_banners(text: str) -> str:
+    """Remove internal Writer-QA banners from published memo bodies."""
+    cleaned = _WRITER_QA_BANNER_RE.sub("", text or "")
+    cleaned = re.sub(r"^.*Writer QA flagged this memo\b.*$", "", cleaned, flags=re.I | re.M)
+    return re.sub(r"\n{3,}", "\n\n", cleaned)
+
+
+def _drop_slot_label_decision_bullets(rule: str) -> str:
+    """Drop Act-on / Verify bullets that are coverage-slot or section-title leaks."""
+    out: list[str] = []
+    trail = " -:" + "\u2014"
+    for line in (rule or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith(("-", "*")) and _SLOT_LABEL_DECISION_RE.search(stripped):
+            continue
+        bullet = re.sub(r"^[-*]\s+", "", stripped)
+        bullet = re.sub(r"\[[^\]]+\]", "", bullet).strip(trail)
+        if stripped.lower().startswith(("- verify:", "* verify:")):
+            rest = re.sub(r"^[-*]\s*verify:\s*", "", stripped, flags=re.I)
+            rest = re.sub(r"\[[^\]]+\]", "", rest)
+            rest = re.sub(r"weak/single-sourced.*$", "", rest, flags=re.I).strip(trail + ";")
+            if _SLOT_LABEL_DECISION_RE.search(rest) or (
+                rest
+                and len(rest.split()) <= 4
+                and not re.search(r"\b(prefer|use|choose|when|if|gb|%)\b", rest, re.I)
+            ):
+                continue
+        if (
+            stripped.startswith(("-", "*"))
+            and bullet
+            and bullet[0].isupper()
+            and len(bullet.split()) >= 3
+            and not re.search(
+                r"\b(prefer|use|choose|when|if|avoid|require|unless|threshold|gb|%|re-benchmark)\b",
+                bullet,
+                re.I,
+            )
+            and re.fullmatch(r"[A-Za-z0-9 ,/&()-]+", bullet)
+        ):
+            continue
+        out.append(line)
+    return "\n".join(out)
+
+
+def _sanitize_comparison_table(text: str) -> str:
+    """Drop Comparison tables whose header is keyword soup, not method columns."""
+    section = _section(text, "Comparison")
+    if not section:
+        return text
+    header = None
+    for line in section.splitlines():
+        if line.strip().startswith("|") and "---" not in line:
+            header = line
+            break
+    if not header:
+        return text
+    cells = [c.strip() for c in header.strip().strip("|").split("|")]
+    if len(cells) < 3:
+        return text
+    value_cols = cells[1:]
+    metric_like = sum(1 for c in value_cols if _METRIC_LIKE_COL_RE.match(c.strip()))
+    single_token = sum(1 for c in value_cols if len(c.split()) == 1)
+    if metric_like >= 2 or (
+        metric_like >= 1 and single_token >= 3 and metric_like >= (len(value_cols) / 2)
+    ):
+        note = (
+            "*Comparison table omitted: column headers looked like metric keywords "
+            "(e.g. VRAM / BF16) rather than the methods being compared.*"
+        )
+        return _replace_section(text, "Comparison", note)
+    return text
+
+
 def _sanitize_decision_thresholds(text: str) -> str:
     rule = _section(text, "Decision rule")
     if not rule:
@@ -344,8 +444,9 @@ def _sanitize_decision_thresholds(text: str) -> str:
                 )
             continue
         out.append(line)
-    new_rule = "\n".join(out).strip()
-    if new_rule == rule.strip():
+    new_rule = _drop_slot_label_decision_bullets("\n".join(out)).strip()
+    original = _section(text, "Decision rule").strip()
+    if new_rule == original:
         return text
     return _replace_section(text, "Decision rule", new_rule)
 

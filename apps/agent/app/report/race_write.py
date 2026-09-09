@@ -14,14 +14,19 @@ from app.llm.roles import use_role_model
 from app.report.deep_write import notes_max_chars, word_count, word_target, writer_system
 from app.report.memo_structure import consolidate_memo_structure, merge_inline_citations
 
-_REQUIRED_SECTIONS = (
+# References is omitted from truncation-required on purpose:
+# bind_markdown_to_ledger always rebuilds ## References after the writer
+# finishes. Treating a missing References heading as truncation caused
+# truncated_unrepaired on otherwise-complete memos (live run ff3c5688).
+_TRUNCATION_REQUIRED_SECTIONS = (
     "At a glance",
     "Executive summary",
     "Key findings",
     "Detailed analysis",
     "Decision rule",
-    "References",
 )
+_REQUIRED_SECTIONS = _TRUNCATION_REQUIRED_SECTIONS + ("References",)
+
 
 _TRUNC_TAIL_RE = re.compile(r"[.!?)\]\"']$")
 _CITE_STACK_RE = re.compile(r"(\[\d+(?:\s+(?:peer|repo|docs|news|preprint|primary|specialist|vendor|unreliable|industry))?\])(?:\s*\[\d+(?:\s+(?:peer|repo|docs|news|preprint|primary|specialist|vendor|unreliable|industry))?\]){2,}")
@@ -103,7 +108,7 @@ def memo_looks_truncated(markdown: str) -> bool:
     text = (markdown or "").strip()
     if not text or word_count(text) < 400:
         return True
-    for heading in _REQUIRED_SECTIONS:
+    for heading in _TRUNCATION_REQUIRED_SECTIONS:
         if not re.search(rf"^##\s+{re.escape(heading)}\s*$", text, re.I | re.M):
             return True
     if not _tail_looks_complete(text):

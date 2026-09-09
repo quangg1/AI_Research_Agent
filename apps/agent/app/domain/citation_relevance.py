@@ -15,7 +15,9 @@ AI_ML_KEYWORDS = [
     r"\b(synthetic data|data generation|generative model)\b",
     r"\b(reinforcement learning|supervised learning)\b",
     r"\b(natural language processing|NLP|computer vision)\b",
-    r"\b(model training|fine-tuning|pre-training)\b",
+    r"\b(model training|fine-tuning|fine tuning|pre-training|pretraining)\b",
+    r"\b(LoRA|QLoRA|adapters?|quantization|bitsandbytes|PEFT|VRAM)\b",
+    r"\b(parameter-efficient|parameter efficient|low-rank adaptation)\b",
 ]
 
 # Domains that should NOT be cited for AI/ML claims
@@ -95,14 +97,19 @@ def check_citation_relevance(
     paper_keywords = _extract_key_terms(content)
     
     keyword_overlap = len(claim_keywords & paper_keywords)
+    soft_issues: list[str] = []
     if keyword_overlap < 2:
-        issues.append(
+        soft_issues.append(
             f"Weak keyword overlap between claim and paper "
             f"(overlap={keyword_overlap}, claim terms={claim_keywords})"
         )
-        # Don't reject yet, just flag
+        # Soft signal only — never reject. A narrow term list (and empty claim
+        # terms for many queries) previously returned is_relevant=False here,
+        # which made enforce_report_integrity strip every [n] from the memo,
+        # turning References lines "**[n]**" into "****".
     
-    return len(issues) == 0, issues
+    # Hard reject only via the off-topic domain branch above.
+    return True, soft_issues
 
 
 def _detect_domain(content: str) -> str:

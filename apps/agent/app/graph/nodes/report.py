@@ -402,6 +402,26 @@ def _llm_memo_worth_keeping(markdown: str) -> bool:
     return True
 
 
+
+_WRITER_QA_NOTICE_RE = re.compile(
+    r"^>\s*\*\*Note:\*\*\s*Writer QA flagged this memo\b.*$",
+    re.I | re.M,
+)
+
+
+def _strip_writer_qa_notices(markdown: str) -> str:
+    """Remove internal Writer-QA banners from published memo bodies."""
+    text = _WRITER_QA_NOTICE_RE.sub("", markdown or "")
+    text = re.sub(
+        r"^.*Writer QA flagged this memo\b.*$",
+        "",
+        text,
+        flags=re.I | re.M,
+    )
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return text + ("\n" if text else "")
+
+
 def _prefer_llm_or_compose(
     *,
     llm_markdown: str,
@@ -411,24 +431,10 @@ def _prefer_llm_or_compose(
 ):
     """Keep substantial LLM drafts instead of silently replacing with compose."""
     if _llm_memo_worth_keeping(llm_markdown):
-        notice = (
-            "> **Note:** Writer QA flagged this memo ("
-            + reason
-            + "); kept the LLM draft instead of replacing it with the heuristic template."
-        )
-        body = llm_markdown
-        if reason not in body and "kept the LLM draft" not in body:
-            lines = body.splitlines()
-            out: list[str] = []
-            inserted = False
-            for i, line in enumerate(lines):
-                out.append(line)
-                if not inserted and line.startswith("## Executive summary"):
-                    if i + 1 < len(lines) and lines[i + 1].strip():
-                        out.append("")
-                        out.append(notice)
-                        inserted = True
-            body = "\n".join(out) if inserted else (notice + "\n\n" + body)
+        # Keep the LLM draft, but never publish internal Writer-QA banners into
+        # user-facing markdown (live ff3c5688 leaked truncated_unrepaired into
+        # ## Executive summary). Record the reason on metrics only.
+        body = _strip_writer_qa_notices(llm_markdown)
         return compose_report_obj.model_copy(
             update={
                 "body_markdown": body,
@@ -437,6 +443,7 @@ def _prefer_llm_or_compose(
                     **metrics,
                     "synthesis_status": reason,
                     "kept_llm_despite_qa": True,
+                    "writer_qa_reason": reason,
                     "writer": "markdown",
                     "word_count": word_count(body),
                 },
@@ -1111,16 +1118,17 @@ def _regenerate_for_quality(state: ResearchState) -> dict:
         report.metrics["tokens"] = budget.used_tokens
         report.metrics["usd_est"] = round(budget.used_tokens / 1_000_000 * 0.40, 4)
     
-    # Apply integrity checks
+    # Bind ledger lists first (same order as the main report path), then
+    # integrity. Integrity may strip off-topic inline cites; binding first
+    # ensures References use **[n]** markers and a second bind inside
+    # integrity can rebuild clean lists after a strip.
+    report.body_markdown = bind_markdown_to_ledger(report.body_markdown or "", citations)
     integrity = _apply_integrity(report, citations, critic, retrieved, query=state.get("query") or "")
     report.body_markdown = integrity["body_markdown"]
     report.decision_rule = integrity["decision_rule"]
     report.at_a_glance = integrity["at_a_glance"]
     report.limitations = integrity["limitations"]
     report.metrics = {**report.metrics, **integrity["metrics_patch"]}
-    
-    # Bind citations
-    report.body_markdown = bind_markdown_to_ledger(report.body_markdown or "", citations)
     report.body_markdown = annotate_inline_citation_tiers(report.body_markdown or "", citations)
     report.decision_rule = annotate_inline_citation_tiers(report.decision_rule or "", citations)
     

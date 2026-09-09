@@ -8,8 +8,6 @@ from difflib import SequenceMatcher
 from app.domain.report_audit import _section
 from app.domain.research_intent import user_goal
 from app.domain.schema import AgentName, SubQuery
-from app.graph.serde import dump
-
 # Sections where citation lists should remain intact (not be stripped/decluttered)
 PROTECTED_SECTIONS = ("Source quality", "References")
 
@@ -204,30 +202,64 @@ def enforce_report_integrity(
                 "retrieved sources and their citations were removed."
             )
     
-    # NEW: Check citation relevance - prevent off-topic papers from being cited
-    # (e.g. biology/neuroscience papers for AI/ML claims)
+    # Check citation relevance - prevent off-topic papers from being cited
+    # (e.g. biology/neuroscience papers for AI/ML claims). Never mutate
+    # ## References / ## Source quality: blanking [n] inside **[n]** leaves
+    # **** and empty Other-sources bands (live run ff3c5688).
     if evidence is not None:
         from app.domain.citation_relevance import check_citation_relevance
-        
+
+        off_topic_ns: list[int] = []
         for ev in evidence:
-            # Check if this evidence is off-topic for the query domain
             is_relevant, issues = check_citation_relevance(ev, query or "", strict=True)
-            if not is_relevant and issues:
-                # Find citations using this evidence
-                ev_url = (ev.get("url") or "").strip().rstrip("/").lower()
-                for cit in (citations or []):
-                    cit_url = (cit.get("url") or "").strip().rstrip("/").lower()
-                    if cit_url == ev_url:
-                        n = cit.get("n")
-                        if n:
-                            # Strip this citation from body
-                            cite_pattern = re.compile(rf"\[{n}(?:\s+[A-Za-z]+)?\]")
-                            body = cite_pattern.sub("", body)
-                            flags.append(f"off_topic_citation_stripped_{n}")
-                            limitations.append(
-                                f"Source [{n}] removed: {issues[0] if issues else 'off-topic for query domain'}"
-                            )
-                        break
+            if is_relevant or not issues:
+                continue
+            ev_url = (ev.get("url") or "").strip().rstrip("/").lower()
+            for cit in (citations or []):
+                cit_url = (cit.get("url") or "").strip().rstrip("/").lower()
+                if cit_url != ev_url:
+                    continue
+                n = cit.get("n")
+                if n is None or n == "":
+                    break
+                try:
+                    n_int = int(n)
+                except (TypeError, ValueError):
+                    break
+                off_topic_ns.append(n_int)
+                flags.append(f"off_topic_citation_stripped_{n_int}")
+                limitations.append(
+                    f"Source [{n_int}] removed: {issues[0] if issues else 'off-topic for query domain'}"
+                )
+                break
+        if off_topic_ns:
+            body = _strip_cite_markers_outside_protected(body, off_topic_ns)
+            # Rebuild ledger lists so References never keep **** and Source
+            # quality never keeps empty Other-sources stubs after a strip.
+            try:
+                from app.domain.citations import bind_markdown_to_ledger
+
+                kept = [
+                    c
+                    for c in (citations or [])
+                    if _as_cite_n(c) is not None and _as_cite_n(c) not in set(off_topic_ns)
+                ]
+                if kept:
+                    body = bind_markdown_to_ledger(body, kept)
+            except Exception:
+                body = body.replace("****", "")
+
+    # Always rebuild Source quality / References from the ledger after any
+    # cite-marker surgery. This drops empty Other-sources stubs and repairs
+    # **** left by older strippers, matching bind_markdown_to_ledger's contract.
+    if citations:
+        try:
+            from app.domain.citations import bind_markdown_to_ledger
+
+            body = bind_markdown_to_ledger(body, citations)
+        except Exception:
+            body = body.replace("****", "")
+            body = _drop_empty_other_sources_band(body)
 
     audit_notes = audit_memo_integrity(
         body,
@@ -547,6 +579,52 @@ def _renumber_ordered_list(text: str) -> str:
     return "\n".join(out)
 
 
+
+def _as_cite_n(citation: dict | object) -> int | None:
+    if isinstance(citation, dict):
+        raw = citation.get("n")
+    else:
+        raw = getattr(citation, "n", None)
+    if raw is None or raw == "":
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _strip_cite_markers_outside_protected(body: str, numbers: list[int]) -> str:
+    """Remove [n] / [n tier] markers from prose only.
+
+    Skips ## Source quality and ## References so list markers stay intact.
+    Also scrubs residual **** left if a bold marker was emptied upstream.
+    """
+    if not body or not numbers:
+        return body or ""
+    nums = sorted({int(n) for n in numbers})
+    patterns = [re.compile(rf"\[{n}(?:\s+[A-Za-z]+)?\]") for n in nums]
+
+    sections = re.split(r"(^##\s+.+$)", body, flags=re.M)
+    out_parts: list[str] = []
+    in_protected = False
+    for part in sections:
+        if re.match(r"^##\s+", part):
+            section_name = re.sub(r"^##\s+", "", part).strip()
+            in_protected = any(protected in section_name for protected in PROTECTED_SECTIONS)
+            out_parts.append(part)
+            continue
+        if in_protected:
+            out_parts.append(part)
+            continue
+        chunk = part
+        for pat in patterns:
+            chunk = pat.sub("", chunk)
+        chunk = chunk.replace("****", "")
+        chunk = re.sub(r"[ \t]{2,}", " ", chunk)
+        out_parts.append(chunk)
+    return "".join(out_parts)
+
+
 def _strip_ungrounded_entity_citations(
     body: str, *, citations: list[dict], evidence: list[dict], query: str
 ) -> tuple[str, int]:
@@ -625,8 +703,17 @@ def _strip_ungrounded_entity_citations(
                 return ""
 
             out_lines.append(CITE_RE.sub(_repl, line).rstrip())
-        out_parts.append("\n".join(out_lines))
-    
+        # split() keeps the newline *before* the next ## header on this body
+        # chunk. splitlines()+join drops that trailing newline and glues the
+        # next header onto the previous line ("text## Decision rule"), which
+        # then fails every ^## heading matcher and looks like the memo was
+        # truncated. Always restore a trailing newline when the original chunk
+        # had one.
+        joined = "\n".join(out_lines)
+        if part.endswith("\n") and not joined.endswith("\n"):
+            joined += "\n"
+        out_parts.append(joined)
+
     return "".join(out_parts), stripped
 
 
@@ -728,6 +815,7 @@ def integrity_severity(issues: list[str], body: str) -> str:
 
 
 def build_integrity_reloop_followups(query: str, issues: list[str] | None = None) -> list[dict]:
+    from app.graph.serde import dump  # lazy: avoid pulling graph/psycopg at import time
     goal = user_goal(query or "")
     rationale = "Integrity re-loop: quantitative contradiction detected"
     if issues:

@@ -1,0 +1,28 @@
+# Override: prefer prebuilt GHCR images (build kept as fallback tag source).
+# After .github/workflows/publish-ghcr.yml has run at least once:
+#   docker compose -f docker-compose.yml -f docker-compose.ghcr.yml -f docker-compose.dev.yml pull
+#   docker compose -f docker-compose.yml -f docker-compose.ghcr.yml -f docker-compose.dev.yml up -d
+#
+# If packages are private: docker login ghcr.io, or set package visibility to Public.
+services:
+  agent:
+    image: ghcr.io/quangg1/kiln-agent:${KILN_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: apps/agent/Dockerfile
+
+  api:
+    image: ghcr.io/quangg1/kiln-api:${KILN_IMAGE_TAG:-latest}
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+
+  web:
+    image: ghcr.io/quangg1/kiln-web:${KILN_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_AUTH_MODE: ${VITE_AUTH_MODE:-dev}
+        VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:-}
+        VITE_API_URL: ${VITE_API_URL:-}

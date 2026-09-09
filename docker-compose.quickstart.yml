@@ -1,0 +1,8 @@
+# Optional overlay for documented quickstart.
+# Ports for api/agent/db are defined in docker-compose.dev.yml.
+# Usage (from install dir):
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+services:
+  web:
+    labels:
+      - "kiln.quickstart=true"

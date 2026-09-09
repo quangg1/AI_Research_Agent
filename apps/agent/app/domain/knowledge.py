@@ -208,8 +208,16 @@ def lookup(query: str, org_id: str | None = None) -> KnowledgeHit | None:
     if best is None:
         return None
     score, overlap, row = best
+    if overlap < 0.5:
+        # `score` is max(embedding cosine, fingerprint overlap) — a near-duplicate
+        # embedding can fire on topic alone even when the actual asks share almost
+        # no keywords (e.g. a broad new question that names five frameworks the
+        # stored answer never covered). Augmenting that instead of researching it
+        # fresh clamps the retrieval budget to a handful of calls for a question
+        # that is mostly new content, guaranteeing a thin memo.
+        return None
     age_days = max(0.0, (time.time() - _timestamp(row.get("updated_at"))) / 86400.0)
-    if score >= float(settings.knowledge_reuse_similarity) and overlap >= 0.5:
+    if score >= float(settings.knowledge_reuse_similarity):
         fresh_days = _fresh_days_for(row)
         mode = "cached" if age_days <= fresh_days else "augment"
         return KnowledgeHit(row, round(score, 4), mode, round(age_days, 2))
@@ -486,7 +494,7 @@ def _record_from_report(
     goal: str, report: dict[str, Any], coverage: dict[str, Any] | None
 ) -> dict[str, Any]:
     metrics = report.get("metrics") or {}
-    depth = _depth_of(metrics, coverage)
+    depth = depth_of(metrics, coverage)
     now = time.time()
     return {
         "id": str(uuid.uuid4()),
@@ -517,7 +525,7 @@ def _record_from_report(
     }
 
 
-def _depth_of(metrics: dict[str, Any], coverage: dict[str, Any] | None) -> int:
+def depth_of(metrics: dict[str, Any], coverage: dict[str, Any] | None) -> int:
     for candidate in (
         metrics.get("depth_score"),
         ((coverage or {}).get("depth_score") or {}).get("score"),

@@ -5,6 +5,7 @@ from langgraph.types import interrupt
 from app.graph.serde import dump, pythonize
 from app.graph.state import ResearchState, budget_from
 from app.observability.logging import event
+# TEMPORARILY DISABLED: from app.maintenance.hitl_timeout import add_interrupt_metadata
 
 # Human "Dig further" always gets one more research loop, even if the first
 # pass burned the original budget arriving at HITL.
@@ -17,6 +18,8 @@ REVISE_MAX_TOOL_CALLS_CAP = 40
 def hitl_node(state: ResearchState) -> dict:
     retrieved = state.get("retrieved") or state.get("evidence") or []
     critic = state.get("critic") or {}
+    
+    # TEMPORARILY DISABLED HITL timeout tracking (causing runtime error)
     payload = pythonize(
         {
             "type": "approve_report",

@@ -121,9 +121,9 @@
     {
       "id": "plan-gate-depth",
       "query": "Deep dive: compare SGMV vs grouped GEMM for heterogeneous LoRA ranks on one H100.",
-      "expected_type": "open_research",
+      "expected_type": "comparison",
       "expected_agents": ["search", "scholar"],
-      "notes": "Deep depth should emit multiple falsifiable sub-queries"
+      "notes": "Explicit 'compare X vs Y' → comparison; deep depth still emits multiple falsifiable sub-queries via search+scholar"
     },
     {
       "id": "fetch-injection",

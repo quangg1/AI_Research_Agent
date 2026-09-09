@@ -51,6 +51,31 @@ def host_of(url: str) -> str:
         return ""
 
 
+ARXIV_ID_RE = re.compile(r"/(?:abs|pdf|html)/(\d{4}\.\d{4,5})(v\d+)?", re.I)
+
+
+def arxiv_html_url(url: str) -> str:
+    """Rewrite an arXiv /abs/ (or /pdf/) link to its full-text /html/ rendering.
+
+    /abs/ID is the abstract landing page — a short blurb plus nav chrome, so
+    enrich fetches on it come back empty (looks_like_nav_chrome or <80 chars)
+    while the exact same paper via /html/ID yields the full paper text. This
+    was silently starving every arXiv "abs" source of full_text: 9/20 sources
+    in a real run had full_text, and every one that succeeded was already an
+    /html/ link — none of the /abs/ links did.
+    """
+    raw = (url or "").strip()
+    parsed = urlparse(raw)
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    if host not in {"arxiv.org", "export.arxiv.org"}:
+        return raw
+    m = ARXIV_ID_RE.search(parsed.path or "")
+    if not m:
+        return raw
+    arxiv_id, version = m.group(1), m.group(2) or ""
+    return f"https://arxiv.org/html/{arxiv_id}{version}"
+
+
 def is_citable_url(url: str) -> bool:
     """True for a specific landing page, not a site root like https://huggingface.co/."""
     raw = (url or "").strip()
@@ -84,18 +109,52 @@ def looks_like_nav_chrome(text: str) -> bool:
     return bool(NAV_CHROME_RE.search(t))
 
 
-def pick_quote(ev: dict, limit: int = 280) -> str:
-    raw = (ev.get("quote") or ev.get("snippet") or ev.get("full_text") or ev.get("title") or "").strip()
-    skip = ("source:", "url:", "published:", "credibility:", "secondary:")
-    lines = []
-    for line in raw.splitlines():
-        t = line.strip()
-        if not t or t.startswith("#") or t.lower().startswith(skip):
-            continue
-        if looks_like_nav_chrome(t):
-            continue
-        lines.append(t)
-    blob = " ".join(lines) or " ".join(raw.split())
+def pick_quote(ev: dict, limit: int = 280, *, claim_or_dimension: str = "", patterns: list[str] | None = None, topic_terms: list[str] | None = None) -> str:
+    """Select best quote from evidence, optionally reranking by claim/dimension relevance.
+    
+    If claim_or_dimension is provided, will select the most relevant passage from
+    the document rather than defaulting to the first chunk.
+    """
+    # If we have dimension-specific passage already selected, use it
+    if ev.get("selected_passage"):
+        blob = ev["selected_passage"]
+    elif claim_or_dimension:
+        # Use passage-level retrieval to find best chunk for this claim/dimension
+        from app.retrieval.passage import best_passage_for_claim
+        full_text = (
+            f"{ev.get('full_text') or ''} "
+            f"{ev.get('quote') or ''} "
+            f"{ev.get('snippet') or ''}"
+        ).strip()
+        if full_text:
+            best_passage = best_passage_for_claim(
+                full_text,
+                claim_or_dimension,
+                patterns=patterns,
+                topic_terms=topic_terms,
+                max_passage_len=limit * 3,
+            )
+            if best_passage:
+                blob = best_passage
+            else:
+                # Fallback to original logic
+                blob = ev.get("quote") or ev.get("snippet") or ev.get("full_text") or ev.get("title") or ""
+        else:
+            blob = ev.get("quote") or ev.get("snippet") or ev.get("full_text") or ev.get("title") or ""
+    else:
+        # Original fallback logic when no claim specified
+        raw = (ev.get("quote") or ev.get("snippet") or ev.get("full_text") or ev.get("title") or "").strip()
+        skip = ("source:", "url:", "published:", "credibility:", "secondary:")
+        lines = []
+        for line in raw.splitlines():
+            t = line.strip()
+            if not t or t.startswith("#") or t.lower().startswith(skip):
+                continue
+            if looks_like_nav_chrome(t):
+                continue
+            lines.append(t)
+        blob = " ".join(lines) or " ".join(raw.split())
+    
     blob = " ".join(blob.split())
     if looks_like_nav_chrome(blob):
         alt = (ev.get("title") or "").strip()
@@ -108,17 +167,34 @@ def pick_quote(ev: dict, limit: int = 280) -> str:
     return blob[:limit]
 
 
-def build_ledger(evidence: list[dict], k: int = 12) -> list[Citation]:
+def build_ledger(
+    evidence: list[dict],
+    k: int = 12,
+    *,
+    query: str = "",
+    contract: dict | None = None,
+) -> list[Citation]:
     from app.domain.coverage import canonical_source_key, dedupe_evidence, tag_evidence_roles
+    from app.domain.research_contract import (
+        filter_evidence_for_contract,
+        topic_relevance_score,
+    )
     from app.domain.research_intent import authority_score, demote_secondary
 
     seen: set[str] = set()
     out: list[Citation] = []
     cleaned = demote_secondary(tag_evidence_roles(dedupe_evidence(list(evidence or []))))
     cleaned = [e for e in cleaned if not e.get("off_topic")]
+    # Pre-cite scope filter (contract excludes + metric_grounding assessors).
+    if query or contract:
+        cleaned = filter_evidence_for_contract(cleaned, query, contract)
     ranked = sorted(
         cleaned,
-        key=lambda e: (authority_score(e), float(e.get("credibility") or e.get("retrieval_score") or 0)),
+        key=lambda e: (
+            topic_relevance_score(e, query) if query else 0.5,
+            authority_score(e),
+            float(e.get("credibility") or e.get("retrieval_score") or 0),
+        ),
         reverse=True,
     )
     n = 1
@@ -170,15 +246,23 @@ def _as_dict(c) -> dict:
 
 def format_reference_list(citations: list) -> str:
     lines = []
-    for raw in citations:
+    for i, raw in enumerate(citations, start=1):
         c = _as_dict(raw)
         n = c.get("n")
+        if n is None or n == "":
+            n = i
+        try:
+            n_int = int(n)
+        except (TypeError, ValueError):
+            n_int = i
         title = (c.get("title") or c.get("url") or "source").strip()
         url = (c.get("url") or "").strip()
+        # Use bullet list with explicit [n] to prevent markdown auto-renumbering
+        # which causes reference numbers to jump when some citations are unused
         if url and is_citable_url(url):
-            lines.append(f"{n}. [{title}]({url}) — `{url}`")
+            lines.append(f"- **[{n_int}]** [{title}]({url}) — `{url}`")
         else:
-            lines.append(f"{n}. {title}")
+            lines.append(f"- **[{n_int}]** {title}")
     return "\n".join(lines)
 
 
@@ -193,20 +277,133 @@ TIER_INLINE = {
     "vendor_or_consultancy": "vendor",
 }
 
-INLINE_TIER_WORDS = frozenset(TIER_INLINE.values()) | {"repo"}
+INLINE_TIER_WORDS = frozenset(TIER_INLINE.values()) | {"repo", "preprint", "unreliable"}
+INLINE_TO_BAND_LABEL = {
+    "peer": "Peer-Reviewed Publications",
+    "primary": "Official Documentation & Standards",
+    "specialist": "Specialist Research & Preprints",
+    "preprint": "Specialist Research & Preprints",
+    "industry": "Industry Association Sources",
+    "news": "News & Analysis",
+    "vendor": "Vendor & Consultancy Sources",
+    "repo": "Code Repositories",
+    "unreliable": "Unreliable or Predatory Venues",
+    "docs": "Official Documentation & Standards",
+}
+
 MULTI_CITE_RE = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
+# Includes optional tier words so [1 peer] / [2, 3 preprint] still count as used.
+CITED_MARKER_RE = re.compile(
+    r"\[(\d+(?:\s+[A-Za-z]+)?(?:\s*,\s*\d+(?:\s+[A-Za-z]+)?)*)\]"
+)
+CITED_NUM_TOKEN_RE = re.compile(r"(\d+)(?:\s+[A-Za-z]+)?")
+
+TIER_BAND_LABEL = {
+    "peer_reviewed": "Peer-Reviewed Publications",
+    "official_regulation": "Official Documentation & Standards",
+    "standard_body": "Standards Body Documentation",
+    "intergovernmental": "Intergovernmental & Institutional Sources",
+    "specialist_research": "Specialist Research & Preprints",
+    "industry_association": "Industry Association Sources",
+    "news_analysis": "News & Analysis",
+    "vendor_or_consultancy": "Vendor & Consultancy Sources",
+}
+
+
+def format_source_quality_section(citations: list) -> str:
+    """One bullet per tier band, citing every source in that band.
+
+    The writer LLM is asked to write this section itself and is unreliable
+    at it — two consecutive real memos each left one or more bands with an
+    empty citation list ("Band B — Specialist ...: ") despite specialist
+    citations being used throughout the body. Build it from the ledger
+    instead, the same way References already is.
+
+    Citations with missing/unknown tiers still get an Other sources bullet so
+    ## Source quality is never left as empty band stubs after bind/polish.
+    """
+    # Group by the SAME display tag used in inline [n tag] markers so
+    # Source quality never says SPECIALIST while the body shows [4 repo].
+    by_tag: dict[str, list[int]] = {}
+    other: list[int] = []
+    for raw in citations:
+        c = _as_dict(raw)
+        n = c.get("n")
+        if n is None or n == "":
+            continue
+        try:
+            n_int = int(n)
+        except (TypeError, ValueError):
+            continue
+        tag = (inline_tier_label(c) or "").strip().lower()
+        if not tag:
+            other.append(n_int)
+            continue
+        by_tag.setdefault(tag, []).append(n_int)
+    lines = []
+    # Stable order: known inline tags first, then any extras.
+    ordered_tags = [t for t in (
+        "peer", "primary", "docs", "specialist", "preprint", "repo",
+        "industry", "news", "vendor", "unreliable",
+    ) if t in by_tag]
+    for tag in list(by_tag.keys()):
+        if tag not in ordered_tags:
+            ordered_tags.append(tag)
+    for tag in ordered_tags:
+        nums = by_tag.get(tag) or []
+        if not nums:
+            continue
+        label = INLINE_TO_BAND_LABEL.get(tag) or tag.replace("_", " ").title()
+        group = ", ".join(f"{n} {tag}".strip() for n in sorted(set(nums)))
+        lines.append(f"- **{label}**: [{group}]")
+    if other:
+        group = ", ".join(str(n) for n in sorted(set(other)))
+        lines.append(f"- **Other sources**: [{group}]")
+    return "\n".join(lines)
 
 
 def inline_tier_label(citation: dict) -> str:
+    """Human label for [n peer] etc. Never call preprints/predatory venues peer."""
     url = (citation.get("url") or "").lower()
+    title = str(citation.get("title") or "")
     if "github.com" in url or "gitlab.com" in url:
         return "repo"
+    try:
+        from app.domain.adversarial import is_predatory_venue, publication_status
+
+        if is_predatory_venue(url, title):
+            return "unreliable"
+        status = publication_status({"url": url, "tier": citation.get("tier") or "", "title": title})
+        if status == "preprint":
+            return "preprint"
+        if status == "predatory_or_unreliable":
+            return "unreliable"
+        if status == "peer_reviewed":
+            return "peer"
+        if status == "standard":
+            return "primary"
+        if status == "technical_report":
+            return "specialist"
+        if status == "secondary":
+            return "news"
+    except Exception:
+        pass
     tier = (citation.get("tier") or "").strip().lower()
+    if tier == "peer_reviewed" and ("arxiv.org" in url or "export.arxiv.org" in url):
+        return "preprint"
     return TIER_INLINE.get(tier, "")
 
-
 def annotate_inline_citation_tiers(md: str, citations: list) -> str:
-    """Transform [3] → [3 peer] using ledger tier metadata."""
+    """Transform [3] → [3 peer] using ledger tier metadata.
+
+    Never mutate ## References / ## Core references — those lines use
+    **[n]** markers that must stay ledger-aligned. An 80-char lookback
+    previously missed later reference rows and rewrote them to **[n tier]**.
+    """
+    raw = md or ""
+    refs = re.search(r"(?im)^##\s+(?:Core\s+references|References)\s*$", raw)
+    head = raw[: refs.start()] if refs else raw
+    tail = raw[refs.start() :] if refs else ""
     by_n = {_as_dict(c).get("n"): _as_dict(c) for c in citations if _as_dict(c).get("n")}
 
     def _annotate_inner(inner: str) -> str:
@@ -225,11 +422,41 @@ def annotate_inline_citation_tiers(md: str, citations: list) -> str:
 
     def _repl(match: re.Match) -> str:
         inner = match.group(1)
-        if "## References" in (md[max(0, match.start() - 80) : match.start()]):
+        # A LaTeX interval like "$c \in [0, 1]$" has the same shape as a
+        # citation-number list. Skip when an odd number of "$" precede the
+        # match — i.e. we're inside an open math span (real memo output:
+        # "$c \in [0, 1 peer]$" from annotating [0, 1] as citations 0 and 1).
+        if head.count("$", 0, match.start()) % 2 == 1:
             return match.group(0)
         return f"[{_annotate_inner(inner)}]"
 
-    return MULTI_CITE_RE.sub(_repl, md or "")
+    return MULTI_CITE_RE.sub(_repl, head) + tail
+
+
+def _cited_numbers(md: str) -> set[int]:
+    """Citation numbers actually used as an [n] marker in the prose (not the
+    References / Source quality list's own numbering).
+
+    Must recognize tiered markers ([1 peer], [2, 3 preprint]) — writers and
+    annotate_inline emit those forms. Matching only bare [n] dropped every
+    tiered-only cite from References / Source quality rebuilds.
+    """
+    body = md or ""
+    # Drop protected list sections so their band/list markers do not define "used".
+    for heading_re in (
+        r"(?im)^##\s+(?:Core\s+references|References)\s*$",
+        r"(?im)^##\s+Source quality\s*$",
+    ):
+        heading = re.search(heading_re, body)
+        if heading:
+            body = body[: heading.start()]
+    nums: set[int] = set()
+    for match in CITED_MARKER_RE.finditer(body):
+        for piece in match.group(1).split(","):
+            m = CITED_NUM_TOKEN_RE.match(piece.strip())
+            if m:
+                nums.add(int(m.group(1)))
+    return nums
 
 
 def bind_markdown_to_ledger(md: str, citations: list) -> str:
@@ -244,11 +471,45 @@ def bind_markdown_to_ledger(md: str, citations: list) -> str:
         return text
 
     md = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", _keep_link, md or "")
-    refs = format_reference_list(citations)
+    # A ranked-but-never-cited source (real memo output: 4/12 references never
+    # appeared as [n] anywhere in the body — collected but unused, padding
+    # the reference list rather than reflecting what the memo actually draws
+    # on) shouldn't get a References entry just because build_ledger ranked
+    # it into the top-k candidate pool.
+    cited = _cited_numbers(md)
+    used = [c for c in citations if _as_dict(c).get("n") in cited] if cited else citations
+    refs = format_reference_list(used)
+    quality = format_source_quality_section(used)
     reference_heading = re.search(r"(?im)^##\s+(?:Core\s+references|References)\s*$", md)
     if reference_heading:
         head = md[: reference_heading.start()].rstrip()
         md = f"{head}\n\n## References\n\n{refs}\n"
     elif refs:
         md = md.rstrip() + "\n\n## References\n\n" + refs + "\n"
+    quality_heading = re.search(r"(?im)^##\s+Source quality\s*$", md)
+    if quality and quality_heading:
+        q_start = quality_heading.start()
+        ref_after = re.search(
+            r"(?im)^##\s+(?:Core\s+references|References)\s*$",
+            md[q_start + 1 :],
+        )
+        if ref_after:
+            q_end = q_start + 1 + ref_after.start()
+            md = (
+                md[:q_start].rstrip()
+                + "\n\n## Source quality\n\n"
+                + quality
+                + "\n\n"
+                + md[q_end:]
+            )
+        else:
+            md = md[:q_start].rstrip() + "\n\n## Source quality\n\n" + quality + "\n"
+    elif quality and not quality_heading:
+        reference_heading = re.search(
+            r"(?im)^##\s+(?:Core\s+references|References)\s*$", md
+        )
+        if reference_heading:
+            head = md[: reference_heading.start()].rstrip()
+            tail = md[reference_heading.start() :]
+            md = head + "\n\n## Source quality\n\n" + quality + "\n\n" + tail
     return md

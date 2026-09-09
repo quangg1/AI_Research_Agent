@@ -5,6 +5,7 @@ from typing import Any
 
 from app.domain.schema import AgentName, SubQuery
 from app.domain.textutil import (
+    GOAL_META_RE,
     content_terms,
     distinctive_terms,
     entity_candidates,
@@ -220,6 +221,127 @@ _FILLER_ASPECTS = ("mechanism", "quantitative", "constraints", "scalability")
 _slot_cache: dict[str, list[dict[str, Any]]] = {}
 
 
+def synthesize_dimensions_from_evidence(
+    query: str,
+    evidence: list[dict],
+    fallback_to_heuristic: bool = True
+) -> list[dict[str, Any]]:
+    """Evidence-first dimension synthesis from paper concepts.
+    
+    Extracts technical concepts from papers and creates paper-specific
+    dimensions instead of generic templates.
+    
+    Args:
+        query: User's research question
+        evidence: Scholar/search results to extract concepts from
+        fallback_to_heuristic: Use heuristic dimensions if concept extraction fails
+        
+    Returns:
+        List of dimension dicts with paper-specific concepts
+    """
+    from app.domain.paper_concepts import extract_paper_concepts
+    from app.llm.client import llm
+    
+    # Extract concepts from top papers
+    concepts = extract_paper_concepts(evidence, limit=5)
+    
+    if not concepts and fallback_to_heuristic:
+        # No concepts found, fall back to heuristics
+        return derive_slots(query, use_llm=True)
+    
+    # Group concepts by type
+    methods = [c for c in concepts if c["concept_type"] == "method"]
+    frameworks = [c for c in concepts if c["concept_type"] == "framework"]
+    findings = [c for c in concepts if c["concept_type"] == "finding"]
+    limitations = [c for c in concepts if c["concept_type"] == "limitation"]
+    
+    # Build dimension candidates from concepts
+    dimension_candidates = []
+    
+    # Methods and frameworks become primary dimensions
+    for concept in (methods + frameworks)[:5]:
+        dim = {
+            "id": _sanitize_id(concept["concept_name"]),
+            "label": f"{concept['concept_name']} [{concept['cite_id']}]",
+            "patterns": [
+                concept["concept_name"].lower(),
+                *[m["raw_text"] for m in concept.get("metrics", [])[:2]]
+            ],
+            "topic_terms": distinctive_terms(concept["context"], limit=5),
+            "critical": True,
+            "paper_cite": concept["cite_id"],
+            "paper_title": concept["paper_title"],
+            "example_metrics": concept.get("metrics", []),
+        }
+        dimension_candidates.append(dim)
+    
+    # If we have findings with strong metrics, add them
+    for concept in findings[:3]:
+        if concept.get("metrics"):
+            dim = {
+                "id": _sanitize_id(concept["concept_name"][:30]),
+                "label": f"{concept['concept_name'][:50]}... [{concept['cite_id']}]",
+                "patterns": [m["raw_text"] for m in concept["metrics"][:3]],
+                "topic_terms": distinctive_terms(concept["context"], limit=5),
+                "critical": False,
+                "paper_cite": concept["cite_id"],
+                "paper_title": concept["paper_title"],
+                "example_metrics": concept["metrics"],
+            }
+            dimension_candidates.append(dim)
+    
+    # Add one limitations dimension if we have them
+    if limitations:
+        all_limitations = "; ".join([c["context"][:100] for c in limitations[:3]])
+        dim = {
+            "id": "constraints_and_limitations",
+            "label": "Constraints, Limitations, and Failure Modes",
+            "patterns": [
+                "limitation", "constraint", "fails", "cannot", "does not",
+                *[c["concept_name"] for c in limitations[:3]]
+            ],
+            "topic_terms": distinctive_terms(all_limitations, limit=5),
+            "critical": True,
+        }
+        dimension_candidates.append(dim)
+    
+    # If we still need more dimensions, add query-driven heuristics
+    if len(dimension_candidates) < 4:
+        heuristic_dims = _heuristic_slots(user_goal(query) or query)
+        # Only add heuristics that don't duplicate paper-specific concepts
+        for h_dim in heuristic_dims:
+            if not any(h_dim["id"] == d["id"] for d in dimension_candidates):
+                dimension_candidates.append(h_dim)
+                if len(dimension_candidates) >= 6:
+                    break
+    
+    # Limit to 6 dimensions max
+    final_dimensions = dimension_candidates[:6]
+
+    # Never let preference/clinical/HAR-poison concepts stay critical on LoRA/FT queries.
+    try:
+        from app.domain.research_contract import filter_poison_must_answer_slots
+
+        final_dimensions = filter_poison_must_answer_slots(final_dimensions, query)
+    except Exception:
+        pass
+
+    # Ensure at least one is marked critical
+    if final_dimensions and not any(d.get("critical") for d in final_dimensions):
+        final_dimensions[0]["critical"] = True
+
+    return final_dimensions
+
+
+def _sanitize_id(name: str) -> str:
+    """Convert concept name to valid dimension ID."""
+    # Remove special chars, lowercase, replace spaces with underscores
+    sanitized = re.sub(r'[^a-zA-Z0-9\s_-]', '', name)
+    sanitized = sanitized.lower().strip().replace(' ', '_')
+    # Limit length
+    return sanitized[:50]
+
+
 def derive_slots(query: str, use_llm: bool = True) -> list[dict[str, Any]]:
     """Must-answer dimensions derived from the question itself.
 
@@ -379,6 +501,48 @@ def subquestions_for(query: str, remaining_calls: int = 8) -> list[SubQuery]:
             rationale="Direct evidence for the question as asked.",
         )
     ]
+    # A question that names specific products/frameworks (e.g. "compare
+    # LangGraph and AutoGen") needs their own documentation as evidence, not
+    # a generic survey paper — otherwise the writer describes them from its
+    # own training data and cites whatever survey happened to be retrieved,
+    # which report_integrity's entity-citation check will later strip as
+    # unverified. Seed a docs-biased query per named subject, ahead of the
+    # generic slot followups below, so it survives the length cap even on a
+    # tight budget.
+    #
+    # Root cause traced live: after briefing runs, state["query"] is
+    # replaced with briefing._compose_query's blob — goal-line-1 followed by
+    # "Sector:/Must cover:/Constraints:" metadata lines — and the brief's
+    # own LLM-written goal line almost always PARAPHRASES AWAY the specific
+    # named subjects the user asked about (a real brief turned "compare
+    # OpenAI Agents, LangGraph, AutoGen, and CrewAI" into "...architectural
+    # trade-offs of transitioning from single-agent to multi-agent
+    # systems..."). `entity_candidates` calls `user_goal()` internally,
+    # which stops at the first such metadata line, so scanning `goal` alone
+    # found zero named entities even though they survived verbatim one line
+    # down, e.g. "Constraints: ...Must cover representative frameworks:
+    # OpenAI Agents, Anthropic Claude-based agents, LangGraph, AutoGen, and
+    # CrewAI." Use goal_with_named_subjects to recover these entities.
+    from app.domain.textutil import goal_with_named_subjects
+    
+    named = entity_candidates(goal_with_named_subjects(query), limit=16)[:8]
+    for name in named:
+        out.append(
+            SubQuery(
+                agent=AgentName.SEARCH,
+                # Short and terse on purpose: normalize_plan_subqueries's
+                # dedupe_subqueries drops any sub_query sharing >=50% of its
+                # >3-char tokens with an earlier one. A shared 4-word suffix
+                # like "official documentation architecture features" made
+                # every entity's query a near-duplicate of the last (real
+                # bug: only the first-listed entity ever survived planning,
+                # regardless of how many were seeded here) — one shared
+                # token ("docs") keeps distinct names well under that
+                # threshold while still reading as a real search query.
+                question=f"{name} docs",
+                rationale=f"Fetch official documentation for the named subject: {name}",
+            )
+        )
     for slot in slots:
         if slot["id"] == "direct_answer":
             continue
@@ -401,7 +565,16 @@ def subquestions_for(query: str, remaining_calls: int = 8) -> list[SubQuery]:
         seen.add(key)
         unique.append(sub)
     max_n = max(2, min(6, remaining_calls + 1))
-    return unique[:max_n]
+    # The direct-answer entry plus every seeded entity-docs query must
+    # survive this cap — a 5-framework comparison question needs all 5, not
+    # whichever ones happened to fit before the generic dimension-followup
+    # cap kicked in (real bug: direct(1) + 6 entities = 7 raw entries got
+    # sliced to 6, always dropping the last-listed subjects, e.g. AutoGen
+    # and CrewAI, while the earlier-listed OpenAI/Agents/Anthropic survived
+    # every time regardless of remaining_calls). Only the generic slot
+    # followups after them are subject to the tighter budget-based cap.
+    guaranteed = 1 + len(named)
+    return unique[: max(max_n, guaranteed)]
 
 
 def _agent_for_slot(slot: dict[str, Any]) -> AgentName:

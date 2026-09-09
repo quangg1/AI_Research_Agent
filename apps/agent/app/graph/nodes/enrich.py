@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from app.domain.adversarial import numeric_evidence_score
-from app.domain.citations import is_citable_url
+from app.domain.citations import arxiv_html_url, is_citable_url
+from app.domain.content_sanitization import sanitize_evidence_item
 from app.domain.research_depth import effective_depth
 from app.domain.gap_enrich import coverage_slots_from_state, urls_for_gap_slots
 from app.domain.retrieval_limits import ENRICH_FETCH_CAP
@@ -12,7 +13,16 @@ from app.observability.node_trace import trace_span
 from app.tools.fetch import evidence_from_url, is_fetchable, sanitize_fetched_content
 
 _PRIMARY_HOST_MARKERS = ("arxiv.org", "doi.org", "github.com", "gitlab.com", "openreview.net")
-_OFFICIAL_DOC_MARKERS = ("docs.", ".gov", "openai.com", "anthropic.com", "google.com", "microsoft.com")
+_OFFICIAL_DOC_MARKERS = (
+    "docs.",
+    ".gov",
+    "openai.com",
+    "anthropic.com",
+    "google.com",
+    "microsoft.com",
+    "microsoft.github.io",
+    "crewai.com",
+)
 
 
 def enrich_node(state: ResearchState) -> dict:
@@ -45,17 +55,37 @@ def enrich_node(state: ResearchState) -> dict:
             existing = next((e for e in evidence if e.get("url") == url), {})
             if len(existing.get("full_text") or existing.get("snippet") or "") >= 1600:
                 continue
-            row = evidence_from_url(url, title=existing.get("title") or "")
+            fetch_url = arxiv_html_url(url)
+            row = evidence_from_url(fetch_url, title=existing.get("title") or "")
+            if not row and fetch_url != url:
+                # /html/ID isn't rendered for every paper (older submissions) — fall
+                # back to the original abs/pdf link rather than getting nothing.
+                row = evidence_from_url(url, title=existing.get("title") or "")
             budget.used_enrich_calls += 1
             budget.sync_totals()
             fetched += 1
             if not row:
                 continue
+            
+            # Basic HTML sanitization (existing)
             if row.get("full_text"):
                 row["full_text"] = sanitize_fetched_content(str(row["full_text"]))
             if row.get("snippet"):
                 row["snippet"] = sanitize_fetched_content(str(row["snippet"]))[:1600]
-            extra.append(row)
+            
+            # Issue #10 fix: Prompt injection defense
+            # Sanitize content to remove/neutralize injection attempts before passing to writer
+            sanitized_row, detections = sanitize_evidence_item(row, aggressive=False)
+            
+            if detections:
+                # Log but don't block - we've neutralized the content
+                event("prompt_injection_detected_enrich",
+                    url=row.get("url", "unknown"),
+                    detection_count=len(detections),
+                    detection_types=list(set(d['type'] for d in detections))
+                )
+            
+            extra.append(sanitized_row)
         span["fetched"] = fetched
         span["n"] = len(extra)
         span["external_calls"] = fetched

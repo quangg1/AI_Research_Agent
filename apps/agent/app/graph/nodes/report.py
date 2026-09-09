@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import asyncio
 
 from app.domain.citations import annotate_inline_citation_tiers, bind_markdown_to_ledger, build_ledger
@@ -13,6 +15,7 @@ from app.domain.textutil import distinctive_terms
 from app.graph.serde import dump
 from app.graph.state import ResearchState, budget_from
 from app.llm.client import CreditsExhaustedError, llm
+from app.llm.roles import use_role_model
 from app.observability.logging import event
 from app.report.compose import (
     GRAPH_VERSION,
@@ -21,6 +24,7 @@ from app.report.compose import (
     memo_is_user_clean,
 )
 from app.domain.adversarial import method_notes_for_writer
+from app.report.adaptive_depth import calculate_adaptive_target, format_writer_guidance, should_use_graceful_degradation
 from app.report.deep_write import (
     claims_prompt,
     compress_max_tokens,
@@ -47,11 +51,22 @@ async def report_node(state: ResearchState) -> dict:
 def _report_sync(state: ResearchState) -> dict:
     if state.get("reuse_mode") == "cached" and state.get("prior_knowledge"):
         return _reuse_stored_answer(state)
+    
+    # Quality regeneration path: rewrite from existing notes with quality feedback
+    if state.get("status") == "revising_quality" and state.get("quality_gate_issues"):
+        return _regenerate_for_quality(state)
+    
     terminal_status = state.get("status") if state.get("status") in {"out_of_scope", "cancelled"} else "draft"
     retrieved = state.get("retrieved") or state.get("evidence") or []
     critic = state.get("critic") or {}
     budget = budget_from(state)
-    citations = [c.model_dump(mode="json") for c in build_ledger(retrieved)] or list(state.get("citations") or [])
+    brief_for_ledger = state.get("brief") or {}
+    contract_for_ledger = brief_for_ledger.get("research_contract") or state.get("research_contract")
+    citations = [c.model_dump(mode="json") for c in build_ledger(
+        retrieved,
+        query=state.get("query") or "",
+        contract=contract_for_ledger if isinstance(contract_for_ledger, dict) else None,
+    )] or list(state.get("citations") or [])
     metrics = _metrics(state, budget)
     metrics["query_type"] = state.get("query_type") or (state.get("brief") or {}).get("query_type")
     seed_claims = None
@@ -103,12 +118,66 @@ def _report_sync(state: ResearchState) -> dict:
     fact = verify_memo_citations(report.body_markdown or "", citations, retrieved)
     report.metrics["fact_lite"] = fact
     report.decision_rule = _sanitize_decision_rule(state.get("query") or "", report.decision_rule or "", citations, critic)
-    integrity = _apply_integrity(report, citations, critic)
+    integrity = _apply_integrity(report, citations, critic, retrieved, query=state.get("query") or "")
     report.body_markdown = integrity["body_markdown"]
     report.decision_rule = integrity["decision_rule"]
     report.at_a_glance = integrity["at_a_glance"]
     report.limitations = integrity["limitations"]
     report.metrics = {**report.metrics, **integrity["metrics_patch"]}
+    # Phase B: post-draft constraint audit vs ResearchContract (fail-soft).
+    try:
+        from app.domain.constraint_audit import apply_constraint_audit
+
+        _brief = state.get("brief") or {}
+        audited = apply_constraint_audit(
+            report.body_markdown or "",
+            query=state.get("query") or "",
+            brief=_brief if isinstance(_brief, dict) else {},
+            state=state if isinstance(state, dict) else {},
+            citations=citations,
+            evidence=retrieved,
+        )
+        if audited.get("had_contract") and not audited.get("skipped"):
+            report.body_markdown = audited.get("body_markdown") or report.body_markdown
+            report.metrics["constraint_audit"] = {
+                "flags": audited.get("flags") or [],
+                "gaps": audited.get("gaps") or [],
+                "missing_mandatory": audited.get("missing_mandatory") or [],
+                "hard_fail": bool(audited.get("hard_fail")),
+                "should_block_publish": bool(audited.get("should_block_publish")),
+            }
+    except Exception as _audit_exc:
+        report.metrics["constraint_audit"] = {"skipped": True, "error": type(_audit_exc).__name__}
+    # Phase C: number/claim provenance polish (fail-soft) after constraint_audit.
+    try:
+        from app.domain.number_provenance import apply_number_provenance_polish
+
+        _prov = apply_number_provenance_polish(
+            report.body_markdown or "",
+            citations=citations,
+            evidence=retrieved,
+        )
+        if not _prov.get("skipped"):
+            report.body_markdown = _prov.get("body_markdown") or report.body_markdown
+            report.metrics["number_provenance"] = {
+                "flags": _prov.get("flags") or [],
+                "rewrite_count": len(_prov.get("rewrites") or []),
+            }
+            if _prov.get("flags"):
+                lim = list(report.limitations or [])
+                lim.append(
+                    "Some author-attributed numbers were relabeled as estimates or "
+                    "calculations because they were not grounded in a 1-2 sentence "
+                    "source span."
+                )
+                # Dedupe while preserving order
+                seen = set()
+                report.limitations = [x for x in lim if not (x in seen or seen.add(x))]
+    except Exception as _prov_exc:
+        report.metrics["number_provenance"] = {
+            "skipped": True,
+            "error": type(_prov_exc).__name__,
+        }
     report.body_markdown = annotate_inline_citation_tiers(report.body_markdown or "", citations)
     report.decision_rule = annotate_inline_citation_tiers(report.decision_rule or "", citations)
     if "## Decision rule" in (report.body_markdown or "") and report.decision_rule:
@@ -372,6 +441,82 @@ def _metrics(state: ResearchState, budget) -> dict:
     }
 
 
+
+def _llm_memo_worth_keeping(markdown: str) -> bool:
+    """True when an LLM draft is clearly better than compose fallback."""
+    text = (markdown or "").strip()
+    if word_count(text) < 400:
+        return False
+    if not re.search(r"^##\s+Executive summary\s*$", text, re.I | re.M):
+        return False
+    if not re.search(r"^##\s+Detailed analysis\s*$", text, re.I | re.M):
+        return False
+    compose_markers = (
+        "taken together,",
+        "agree on this dimension, so it can be treated as established",
+        "evidence reaches ",
+    )
+    low = text.lower()
+    if sum(1 for m in compose_markers if m in low) >= 2:
+        return False
+    return True
+
+
+
+_WRITER_QA_NOTICE_RE = re.compile(
+    r"^>\s*\*\*Note:\*\*\s*Writer QA flagged this memo\b.*$",
+    re.I | re.M,
+)
+
+
+def _strip_writer_qa_notices(markdown: str) -> str:
+    """Remove internal Writer-QA banners from published memo bodies."""
+    text = _WRITER_QA_NOTICE_RE.sub("", markdown or "")
+    text = re.sub(
+        r"^.*Writer QA flagged this memo\b.*$",
+        "",
+        text,
+        flags=re.I | re.M,
+    )
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return text + ("\n" if text else "")
+
+
+def _prefer_llm_or_compose(
+    *,
+    llm_markdown: str,
+    compose_report_obj,
+    reason: str,
+    metrics: dict,
+):
+    """Keep substantial LLM drafts instead of silently replacing with compose."""
+    if _llm_memo_worth_keeping(llm_markdown):
+        # Keep the LLM draft, but never publish internal Writer-QA banners into
+        # user-facing markdown (live ff3c5688 leaked truncated_unrepaired into
+        # ## Executive summary). Record the reason on metrics only.
+        body = _strip_writer_qa_notices(llm_markdown)
+        return compose_report_obj.model_copy(
+            update={
+                "body_markdown": body,
+                "metrics": {
+                    **(compose_report_obj.metrics or {}),
+                    **metrics,
+                    "synthesis_status": reason,
+                    "kept_llm_despite_qa": True,
+                    "writer_qa_reason": reason,
+                    "writer": "markdown",
+                    "word_count": word_count(body),
+                },
+            }
+        )
+    compose_report_obj.metrics = {
+        **(compose_report_obj.metrics or {}),
+        **metrics,
+        "synthesis_status": reason,
+    }
+    return compose_report_obj
+
+
 def _llm_report(
     state: ResearchState,
     evidence: list[dict],
@@ -420,7 +565,36 @@ def _llm_report(
     )
 
     depth = (state.get("brief") or {}).get("depth") or "standard"
-    min_words = word_target(depth)
+    
+    # Calculate adaptive word target based on actual evidence
+    coverage = critic.get("coverage") or {}
+    adaptive_target = calculate_adaptive_target(dossier, coverage)
+    min_words = adaptive_target["total_words"]
+    adaptive_guidance = format_writer_guidance(adaptive_target)
+    
+    # P5: Graceful degradation - downgrade from 'deep' to 'standard' if evidence is sparse
+    should_degrade, suggested_depth = should_use_graceful_degradation(adaptive_target)
+    if should_degrade and depth == "deep":
+        event("graceful_degradation_triggered",
+            original_depth=depth,
+            new_depth=suggested_depth,
+            reason=f"Evidence too sparse for deep synthesis (target: {min_words} words, "
+                   f"coverage: {adaptive_target['coverage_tier']}, "
+                   f"evidence_count: {adaptive_target['evidence_count']})"
+        )
+        depth = suggested_depth
+    
+    # Log adaptive depth for transparency
+    event("adaptive_depth_calculated",
+        target_words=min_words,
+        coverage_tier=adaptive_target["coverage_tier"],
+        evidence_count=adaptive_target["evidence_count"],
+        dimension_count=adaptive_target["dimension_count"],
+        rationale=adaptive_target["rationale"],
+        final_depth=depth,
+        degraded=should_degrade
+    )
+    
     dossier = filter_dossier_for_writer(
         prioritize_dossier_for_writer(dossier),
         depth=depth,
@@ -463,6 +637,7 @@ def _llm_report(
         prior_note=prior_note,
         dimension_list=dimension_list,
         method_block=method_block,
+        adaptive_guidance=adaptive_guidance,
     )
     from app.report.race_write import (
         criteria_block,
@@ -503,7 +678,7 @@ def _llm_report(
             criteria=race,
             max_tokens=max(4096, report_max_tokens(depth) // 2),
         )
-    markdown = polish_citations(markdown)
+    markdown = polish_citations(markdown, citations=citations, evidence=evidence)
     expanded = False
     expand_passes = 0
     if word_count(markdown) < int(min_words * 0.92):
@@ -518,7 +693,7 @@ def _llm_report(
             max_passes=2,
         )
         expanded = expand_passes > 0
-        markdown = polish_citations(markdown)
+        markdown = polish_citations(markdown, citations=citations, evidence=evidence)
     if memo_looks_truncated(markdown):
         failed = compose_terminal_synthesis(
             query=state.get("query") or "",
@@ -537,8 +712,16 @@ def _llm_report(
             },
             terminal_followups=terminal_followups,
         )
-        failed.metrics["synthesis_status"] = "truncated_unrepaired"
-        return failed
+        return _prefer_llm_or_compose(
+            llm_markdown=markdown,
+            compose_report_obj=failed,
+            reason="truncated_unrepaired",
+            metrics={
+                **metrics,
+                "llm_error": llm.last_error,
+                "truncation_repaired": repaired,
+            },
+        )
     if not markdown.strip() or not memo_is_user_clean(markdown):
         failed = compose_terminal_synthesis(
             query=state.get("query") or "",
@@ -553,6 +736,35 @@ def _llm_report(
             metrics={**metrics, "llm_error": llm.last_error},
             terminal_followups=terminal_followups,
         )
+        cleaned = markdown
+        if markdown.strip() and not memo_is_user_clean(markdown):
+            drop_prefixes = tuple(
+                m.lower()
+                for m in (
+                    "Research quality",
+                    "Claim ledger",
+                    "Critic status",
+                    "Tool calls",
+                    "Working set",
+                    "Method and assumptions",
+                    "Generator:",
+                    "Graph:",
+                )
+            )
+            cleaned_lines = []
+            for line in markdown.splitlines():
+                stripped = line.strip().lstrip("#*|>-").strip().lower()
+                if stripped.startswith(drop_prefixes):
+                    continue
+                cleaned_lines.append(line)
+            cleaned = "\n".join(cleaned_lines).replace("[?]", "")
+        if _llm_memo_worth_keeping(cleaned):
+            return _prefer_llm_or_compose(
+                llm_markdown=cleaned,
+                compose_report_obj=failed,
+                reason="gemini_failed_fallback",
+                metrics={**metrics, "llm_error": llm.last_error},
+            )
         failed.metrics["synthesis_status"] = "gemini_failed_fallback"
         failed.metrics["llm_error"] = llm.last_error
         return failed
@@ -570,7 +782,7 @@ def _llm_report(
             critic=critic,
             max_tokens=report_max_tokens(depth),
         )
-        markdown = polish_citations(markdown)
+        markdown = polish_citations(markdown, citations=citations, evidence=evidence)
     critic_notes = audit_memo(markdown, query=user_goal(state.get("query") or "")) if rewritten else audit_notes
     parsed = parse_report_markdown(markdown)
     sidecar = _extract_report_sidecar(markdown, citations) or {}
@@ -629,11 +841,12 @@ def _compress_notes(state: ResearchState, dossier: list[dict], citations: list[d
     if should_skip_llm_compress(depth) or not llm.available:
         return raw, "raw_dossier"
     try:
-        cleaned = llm.generate(
-            compress_prompt(raw, user_goal(state.get("query") or ""), depth=depth),
-            system=compress_system(),
-            max_tokens=compress_max_tokens(depth),
-        )
+        with use_role_model(llm, "report"):
+            cleaned = llm.generate(
+                compress_prompt(raw, user_goal(state.get("query") or ""), depth=depth),
+                system=compress_system(),
+                max_tokens=compress_max_tokens(depth),
+            )
     except CreditsExhaustedError:
         raise
     except Exception:
@@ -646,23 +859,25 @@ def _compress_notes(state: ResearchState, dossier: list[dict], citations: list[d
 
 
 def _generate_report_markdown(prompt: str, max_tokens: int) -> str:
-    return (
-        llm.generate(
-            prompt=prompt,
-            system=writer_system(),
-            max_tokens=max_tokens,
-        )
-        or ""
-    ).strip()
+    with use_role_model(llm, "writer"):
+        return (
+            llm.generate(
+                prompt=prompt,
+                system=writer_system(),
+                max_tokens=max_tokens,
+            )
+            or ""
+        ).strip()
 
 
 def _extract_report_sidecar(markdown: str, citations: list[dict]) -> dict | None:
     try:
-        payload = llm.generate_json(
-            prompt=claims_prompt(markdown, citations),
-            system="Extract structured fields from a Kiln memo. JSON only. Do not rewrite the memo.",
-            max_tokens=2048,
-        )
+        with use_role_model(llm, "integrity"):
+            payload = llm.generate_json(
+                prompt=claims_prompt(markdown, citations),
+                system="Extract structured fields from a Kiln memo. JSON only. Do not rewrite the memo.",
+                max_tokens=2048,
+            )
     except CreditsExhaustedError:
         return None
     return payload if isinstance(payload, dict) else None
@@ -679,9 +894,15 @@ def _format_dossier_for_prompt(dossier: list[dict], citations: list[dict]) -> st
 
 
 def _sanitize_decision_rule(query: str, rule: str, citations: list[dict], critic: dict) -> str:
-    """Reject a rule that drifted off the asked subject, whatever that subject is."""
+    """Reject a rule that drifted off the asked subject, whatever that subject is.
+
+    Always strip coverage-slot label leaks (preference-based / class-rebalanced /
+    "from the N cited sources") so re-injecting decision_rule into body_markdown
+    cannot undo consolidate_memo_structure's sanitize pass.
+    """
     from app.domain.citations import Citation
     from app.domain.research_intent import decision_rule_for
+    from app.report.memo_structure import _drop_slot_label_decision_bullets
 
     ledger = []
     for c in citations:
@@ -691,11 +912,12 @@ def _sanitize_decision_rule(query: str, rule: str, citations: list[dict], critic
             continue
     text = (rule or "").strip()
     if not text:
-        return decision_rule_for(query, ledger, critic)
-    anchors = distinctive_terms(user_goal(query), limit=8)
-    if anchors and not any(term in text.lower() for term in anchors):
-        return decision_rule_for(query, ledger, critic)
-    return text
+        text = decision_rule_for(query, ledger, critic)
+    else:
+        anchors = distinctive_terms(user_goal(query), limit=8)
+        if anchors and not any(term in text.lower() for term in anchors):
+            text = decision_rule_for(query, ledger, critic)
+    return _drop_slot_label_decision_bullets(text or "").strip()
 
 
 def _template_report(state: ResearchState, evidence: list[dict], critic: dict) -> Report:
@@ -711,7 +933,13 @@ def _template_report(state: ResearchState, evidence: list[dict], critic: dict) -
     )
 
 
-def _apply_integrity(report: Report, citations: list[dict], critic: dict) -> dict:
+def _apply_integrity(
+    report: Report,
+    citations: list[dict],
+    critic: dict,
+    evidence: list[dict] | None = None,
+    query: str = "",
+) -> dict:
     from app.domain.report_integrity import enforce_report_integrity
 
     out = enforce_report_integrity(
@@ -722,6 +950,8 @@ def _apply_integrity(report: Report, citations: list[dict], critic: dict) -> dic
         citations=citations,
         critic=critic,
         limitations=list(report.limitations or []),
+        evidence=evidence,
+        query=query,
     )
     return {
         **out,
@@ -754,3 +984,298 @@ def _attach_evidence_graph(
     )
     report.metrics["evidence_graph"] = compact_graph(graph)
     persist_evidence_graph(str(state.get("thread_id") or ""), graph)
+
+
+def _regenerate_for_quality(state: ResearchState) -> dict:
+    """
+    Quality-triggered regeneration: rewrite the memo from existing dimension-filtered notes
+    with quality issues as additional instructions. Does NOT trigger new search.
+    
+    IMPORTANT: This function does NOT increment quality_regeneration_count.
+    The counter is incremented by memo_gate BEFORE triggering this regeneration.
+    This ensures a single shared counter across all regeneration paths (max 2 total).
+    
+    Flow:
+    1. memo_gate detects quality issue
+    2. memo_gate increments quality_regeneration_count
+    3. memo_gate sets status = "revising_quality"
+    4. report_node sees status → calls this function
+    5. This function generates new report using existing evidence + quality feedback
+    """
+    from app.observability.logging import event
+    
+    event("report_quality_regenerate", issues="; ".join(state.get("quality_gate_issues", [])[:3]))
+    
+    # Get existing report and evidence
+    prior_report = state.get("report") or {}
+    retrieved = state.get("retrieved") or state.get("evidence") or []
+    critic = state.get("critic") or {}
+    budget = budget_from(state)
+    
+    # Build quality feedback prompt
+    issues = state.get("quality_gate_issues") or []
+    quality_instructions = "\n".join(f"- {issue}" for issue in issues[:5])
+    quality_note = (
+        f"\n\nQUALITY REQUIREMENTS - The previous draft had these issues:\n"
+        f"{quality_instructions}\n"
+        f"Fix these issues in the new draft. Use DIFFERENT passages for different dimensions. "
+        f"Ensure every number has a clear metric and experimental condition.\n"
+    )
+    
+    # Rebuild dossier and citations (they're already dimension-filtered from first pass)
+    brief_for_ledger = state.get("brief") or {}
+    contract_for_ledger = brief_for_ledger.get("research_contract") or state.get("research_contract")
+    citations = [c.model_dump(mode="json") for c in build_ledger(
+        retrieved,
+        query=state.get("query") or "",
+        contract=contract_for_ledger if isinstance(contract_for_ledger, dict) else None,
+    )] or list(state.get("citations") or [])
+    metrics = _metrics(state, budget)
+    metrics["regeneration_trigger"] = "quality_gate"
+    metrics["quality_issues"] = issues
+    
+    # Get seed claims from prior report
+    seed_claims = None
+    if prior_report.get("claims"):
+        try:
+            from app.domain.schema import Claim
+            seed_claims = [Claim.model_validate(c) for c in prior_report["claims"]]
+        except Exception:
+            pass
+    
+    # Generate new report with quality feedback
+    dossier = build_evidence_dossier(state.get("query") or "", retrieved, critic.get("coverage") or {})
+    depth = (state.get("brief") or {}).get("depth") or "standard"
+    
+    # Calculate adaptive word target based on actual evidence
+    coverage = critic.get("coverage") or {}
+    adaptive_target = calculate_adaptive_target(dossier, coverage)
+    min_words = adaptive_target["total_words"]
+    adaptive_guidance = format_writer_guidance(adaptive_target)
+    
+    # P5: Graceful degradation - downgrade from 'deep' to 'standard' if evidence is sparse
+    should_degrade, suggested_depth = should_use_graceful_degradation(adaptive_target)
+    if should_degrade and depth == "deep":
+        event("graceful_degradation_triggered_regen",
+            original_depth=depth,
+            new_depth=suggested_depth,
+            reason=f"Evidence too sparse for deep synthesis (target: {min_words} words, "
+                   f"coverage: {adaptive_target['coverage_tier']}, "
+                   f"evidence_count: {adaptive_target['evidence_count']})"
+        )
+        depth = suggested_depth
+    
+    event("adaptive_depth_calculated_regen",
+        target_words=min_words,
+        coverage_tier=adaptive_target["coverage_tier"],
+        evidence_count=adaptive_target["evidence_count"],
+        dimension_count=adaptive_target["dimension_count"],
+        rationale=adaptive_target["rationale"],
+        final_depth=depth,
+        degraded=should_degrade
+    )
+    
+    dossier = filter_dossier_for_writer(
+        prioritize_dossier_for_writer(dossier),
+        depth=depth,
+    )
+    notes, notes_prep = _compress_notes(state, dossier, citations)
+    metrics = {**metrics, "notes_prep": notes_prep}
+    
+    dimension_list = "\n".join(
+        f"- {d.get('label')} (status: {d.get('status')})" for d in dossier if d.get("label")
+    ) or "- Answer the question directly"
+    
+    subjects = _comparison_subjects(state.get("query") or "", retrieved)
+    comparison_rule = (
+        "Include a '## Comparison' table with one column per subject: "
+        + ", ".join(subjects)
+        + ". Every cell must come from a source that names that subject; otherwise write "
+        "'Not established in collected sources'. Never repeat the same passage across columns.\n"
+        if len(subjects) >= 2
+        else "Omit the Comparison section — the question does not compare named subjects.\n"
+    )
+    
+    method_block = method_notes_for_writer(
+        user_goal(state.get("query") or ""),
+        state.get("brief") or {},
+        retrieved,
+        citations,
+    )
+    
+    # Inject quality feedback into writer prompt
+    prompt = writer_prompt(
+        query=user_goal(state.get("query") or ""),
+        brief=state.get("brief") or {},
+        notes=notes,
+        citations=citations,
+        min_words=min_words,
+        comparison_rule=comparison_rule,
+        prior_note="",
+        dimension_list=dimension_list,
+        method_block=method_block,
+        adaptive_guidance=adaptive_guidance,
+    ) + quality_note
+    
+    from app.report.race_write import (
+        criteria_block,
+        generate_sectionwise_memo,
+        polish_citations,
+        race_criteria,
+    )
+    
+    race = race_criteria(user_goal(state.get("query") or ""), state.get("brief") or {}, dossier)
+    prompt_with_race = f"{prompt}\n\n{criteria_block(race)}"
+    
+    tok_total = report_max_tokens(depth)
+    tok_front = int(tok_total * 0.55) if str(depth).lower() == "deep" else tok_total
+    tok_back = max(8192, tok_total - tok_front)
+    
+    markdown, write_mode = generate_sectionwise_memo(
+        prompt_with_race,
+        query=user_goal(state.get("query") or ""),
+        notes=notes,
+        citations=citations,
+        criteria=race,
+        comparison_rule=comparison_rule,
+        depth=depth,
+        max_tokens_front=tok_front,
+        max_tokens_back=tok_back,
+    )
+    
+    markdown = polish_citations(markdown, citations=citations, evidence=retrieved)
+
+    # Build new report
+    from app.domain.schema import Report, CitationRef
+    
+    parsed = parse_report_markdown(markdown)
+    sidecar = _extract_report_sidecar(markdown, citations) or {}
+    
+    claims = seed_claims or []
+    if isinstance(sidecar.get("claims"), list) and sidecar["claims"]:
+        try:
+            from app.domain.schema import Claim
+            claims = [Claim.model_validate(c) for c in sidecar["claims"]]
+        except Exception:
+            pass
+    
+    limitations = sidecar.get("limitations") or parsed.get("limitations") or []
+    if not isinstance(limitations, list):
+        limitations = []
+    
+    open_questions = sidecar.get("open_questions") or []
+    if not isinstance(open_questions, list):
+        open_questions = []
+    
+    report = Report(
+        title=sidecar.get("title") or parsed.get("title") or user_goal(state.get("query") or ""),
+        executive_summary=sidecar.get("executive_summary") or parsed.get("executive_summary") or "",
+        at_a_glance=sidecar.get("at_a_glance") or parsed.get("at_a_glance") or [],
+        body_markdown=markdown,
+        decision_rule=sidecar.get("decision_rule") or parsed.get("decision_rule") or "",
+        limitations=[str(x) for x in limitations if str(x).strip()],
+        open_questions=[str(x) for x in open_questions if str(x).strip()],
+        claims=claims,
+        citations=[CitationRef.model_validate(c) for c in citations],
+        metrics={
+            **metrics,
+            "synthesis_status": "quality_regenerated",
+            "writer": "markdown",
+            "write_mode": f"{write_mode}_quality_regen",
+            "word_count": word_count(markdown),
+        },
+    )
+    
+    if llm.last_tokens:
+        budget.used_tokens += llm.last_tokens
+        report.metrics["tokens"] = budget.used_tokens
+        report.metrics["usd_est"] = round(budget.used_tokens / 1_000_000 * 0.40, 4)
+    
+    # Bind ledger lists first (same order as the main report path), then
+    # integrity. Integrity may strip off-topic inline cites; binding first
+    # ensures References use **[n]** markers and a second bind inside
+    # integrity can rebuild clean lists after a strip.
+    report.body_markdown = bind_markdown_to_ledger(report.body_markdown or "", citations)
+    integrity = _apply_integrity(report, citations, critic, retrieved, query=state.get("query") or "")
+    report.body_markdown = integrity["body_markdown"]
+    report.decision_rule = integrity["decision_rule"]
+    report.at_a_glance = integrity["at_a_glance"]
+    report.limitations = integrity["limitations"]
+    report.metrics = {**report.metrics, **integrity["metrics_patch"]}
+    # Phase B: constraint audit (fail-soft) on quality-regenerate path too.
+    try:
+        from app.domain.constraint_audit import apply_constraint_audit
+
+        _brief = state.get("brief") or {}
+        audited = apply_constraint_audit(
+            report.body_markdown or "",
+            query=state.get("query") or "",
+            brief=_brief if isinstance(_brief, dict) else {},
+            state=state if isinstance(state, dict) else {},
+            citations=citations,
+            evidence=retrieved,
+        )
+        if audited.get("had_contract") and not audited.get("skipped"):
+            report.body_markdown = audited.get("body_markdown") or report.body_markdown
+            report.metrics["constraint_audit"] = {
+                "flags": audited.get("flags") or [],
+                "gaps": audited.get("gaps") or [],
+                "missing_mandatory": audited.get("missing_mandatory") or [],
+                "hard_fail": bool(audited.get("hard_fail")),
+                "should_block_publish": bool(audited.get("should_block_publish")),
+            }
+    except Exception as _audit_exc:
+        report.metrics["constraint_audit"] = {"skipped": True, "error": type(_audit_exc).__name__}
+    # Phase C: number/claim provenance polish (fail-soft) after constraint_audit.
+    try:
+        from app.domain.number_provenance import apply_number_provenance_polish
+
+        _prov = apply_number_provenance_polish(
+            report.body_markdown or "",
+            citations=citations,
+            evidence=retrieved,
+        )
+        if not _prov.get("skipped"):
+            report.body_markdown = _prov.get("body_markdown") or report.body_markdown
+            report.metrics["number_provenance"] = {
+                "flags": _prov.get("flags") or [],
+                "rewrite_count": len(_prov.get("rewrites") or []),
+            }
+            if _prov.get("flags"):
+                lim = list(report.limitations or [])
+                lim.append(
+                    "Some author-attributed numbers were relabeled as estimates or "
+                    "calculations because they were not grounded in a 1-2 sentence "
+                    "source span."
+                )
+                # Dedupe while preserving order
+                seen = set()
+                report.limitations = [x for x in lim if not (x in seen or seen.add(x))]
+    except Exception as _prov_exc:
+        report.metrics["number_provenance"] = {
+            "skipped": True,
+            "error": type(_prov_exc).__name__,
+        }
+    report.body_markdown = annotate_inline_citation_tiers(report.body_markdown or "", citations)
+    report.decision_rule = annotate_inline_citation_tiers(report.decision_rule or "", citations)
+    
+    event("report_quality_regenerated", word_count=word_count(markdown))
+    
+    # Return to normal memo_gate flow (status=draft so it goes to memo_gate, not back to quality loop)
+    return {
+        "report": dump(report),
+        "claims": [dump(c) for c in report.claims],
+        "budget": dump(budget),
+        "llm_mode": llm.mode,
+        "status": "draft",  # Clear revising_quality status
+        "quality_gate_issues": [],  # Clear issues after regeneration
+        "traces": [
+            {
+                "node": "report",
+                "action": "quality_regenerate",
+                "issues_fixed": len(issues),
+                "word_count": word_count(markdown),
+                "used_tokens_delta": llm.last_tokens or 0,
+            }
+        ],
+    }

@@ -4,6 +4,7 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
+from app.conf.thresholds import CoverageThresholds
 from app.domain.decompose import derive_slots, rewrite_gap_query
 from app.domain.research_intent import (
     PRIMARY_CODE_HOSTS,
@@ -11,6 +12,7 @@ from app.domain.research_intent import (
     contradiction_signals,
     host_of,
     is_secondary_host,
+    named_systems,
     user_goal,
 )
 from app.domain.schema import AgentName, SubQuery
@@ -130,7 +132,10 @@ def _blob(ev: dict) -> str:
 
 
 def _anchors(query: str) -> list[str]:
-    return distinctive_terms(user_goal(query), limit=10)
+    """Distinctive terms for anchor scoring, using goal_with_named_subjects
+    to recover entities from Constraints/Must cover lines."""
+    from app.domain.textutil import goal_with_named_subjects
+    return distinctive_terms(goal_with_named_subjects(query), limit=10)
 
 
 def _anchor_hits(blob: str, anchors: list[str]) -> int:
@@ -216,9 +221,37 @@ def evidence_type_of(ev: dict, query: str = "") -> str:
     return "reference"
 
 
-def must_answer_for(query: str) -> list[dict[str, Any]]:
-    """Must-answer dimensions for any question, derived from the question itself."""
-    return derive_slots(query)
+def must_answer_for(
+    query: str,
+    brief: dict | None = None,
+    contract: dict | None = None,
+) -> list[dict[str, Any]]:
+    """Must-answer dimensions derived from ResearchContract when applicable.
+
+    For LoRA/QLoRA/FT tradeoff queries, prefer contract-aligned slots (accuracy,
+    VRAM, cost, OOD, quantization) over generic/paper-concept templates that
+    inject preference/clinical poison dimensions.
+    """
+    brief = brief if isinstance(brief, dict) else {}
+    try:
+        from app.domain.research_contract import (
+            filter_poison_must_answer_slots,
+            must_answer_from_contract,
+        )
+
+        raw_contract = contract or brief.get("research_contract")
+        contract_slots = must_answer_from_contract(query, raw_contract, brief=brief)
+        if contract_slots:
+            return contract_slots
+    except Exception:
+        pass
+    slots = derive_slots(query)
+    try:
+        from app.domain.research_contract import filter_poison_must_answer_slots
+
+        return filter_poison_must_answer_slots(slots, query)
+    except Exception:
+        return slots
 
 
 def slot_label(slot_id: str, slots: list[dict] | None = None) -> str:
@@ -261,6 +294,10 @@ def score_must_answer(query: str, evidence: list[dict], slots: list[dict] | None
         best = hits[0]
         ev_type = evidence_type_of(best, query)
         is_primary = ev_type in {"primary_paper", "official_repo", "official_docs"}
+        
+        # Count distinct works for this slot to prevent monoculture
+        distinct_works = len({work_identity(h.get("url", ""), h.get("title", "")) for h in hits})
+        
         strong = (
             best.get("_aspect", 0) >= 1
             and (
@@ -268,7 +305,9 @@ def score_must_answer(query: str, evidence: list[dict], slots: list[dict] | None
                 or (is_primary and best.get("_topic", 0) >= 1)
             )
             and not is_secondary_host(best.get("url") or "")
+            and distinct_works >= 2  # Require ≥2 distinct works for covered status
         )
+        # One work → at most weak, prevents SWE-Bench monoculture
         slot["status"] = "covered" if strong else "weak"
         slot["evidence_ids"] = [h.get("id") for h in hits[:3] if h.get("id")]
         slot["evidence_type"] = evidence_type_of(best, query)
@@ -290,7 +329,14 @@ def score_must_answer(query: str, evidence: list[dict], slots: list[dict] | None
         if evidence_type_of(e, query) in {"primary_paper", "official_repo", "official_docs"}
         and not e.get("off_topic")
     )
-    hosts = {host_of(e.get("url") or "") for e in tagged if e.get("url")}
+    # Calculate work diversity (distinct canonical works, not just hosts)
+    work_ids = [work_identity(e.get("url", ""), e.get("title", "")) for e in tagged if e.get("url")]
+    unique_works = len(set(work_ids))
+    # Also track work concentration for monoculture detection
+    from collections import Counter
+    work_counter = Counter(work_ids) if work_ids else Counter()
+    top_work_share = max(work_counter.values()) / max(1, len(work_ids)) if work_ids else 0.0
+    
     quality = _research_quality(
         slots=slots,
         covered=covered,
@@ -303,8 +349,11 @@ def score_must_answer(query: str, evidence: list[dict], slots: list[dict] | None
         official_impls=len(official_impls),
         primary_n=primary_n,
         unique_n=len(tagged),
-        unique_hosts=len({h for h in hosts if h}),
+        unique_works=unique_works,
+        top_work_share=top_work_share,
         critical_gaps=critical_gaps,
+        query=query,
+        evidence=usable,
     )
 
     return {
@@ -326,7 +375,7 @@ def score_must_answer(query: str, evidence: list[dict], slots: list[dict] | None
         "has_implementation": bool(official_impls),
         "official_impl_count": len(official_impls),
         "unique_sources": len(tagged),
-        "unique_hosts": len({h for h in hosts if h}),
+        "unique_works": unique_works,
         "primary_sources": primary_n,
         "depth_score": quality,
         "roles_present": sorted({e.get("source_role") for e in tagged if e.get("source_role")}),
@@ -354,15 +403,30 @@ def _research_quality(
     official_impls: int,
     primary_n: int,
     unique_n: int,
-    unique_hosts: int,
+    unique_works: int,
+    top_work_share: float,
     critical_gaps: list,
+    query: str = "",
+    evidence: list[dict] | None = None,
 ) -> dict[str, Any]:
     must_pct = int(round(100 * covered / max(1, total)))
     crit_effective = crit_covered + 0.5 * crit_weak
     crit_pct = int(round(100 * crit_effective / max(1, crit_total)))
     primary_pct = int(round(100 * min(1.0, primary_n / max(3, total // 2))))
     cross_pct = int(round(100 * min(1.0, covered / 4)))
-    diversity_pct = int(round(100 * min(1.0, unique_hosts / 4)))
+    # Changed from unique_hosts to unique_works (canonical work identities)
+    # This prevents 8 arXiv papers (1 host) from scoring as diverse
+    diversity_pct = int(round(100 * min(1.0, unique_works / 4)))
+
+    # Does this question actually need a numbers table? Skip the penalty for
+    # architecture/why-questions where a thin Quantitative findings section
+    # is expected, not a red flag.
+    from app.domain.adversarial import extract_quantitative_rows, numeric_rank_weight
+
+    wants_numbers = numeric_rank_weight(query) >= 1.0
+    quant_rows = len(extract_quantitative_rows(evidence or [])) if wants_numbers else 0
+    # 3 grounded rows = full credit, mirrors the primary_n<3 sparsity check below.
+    quant_pct = 100 if not wants_numbers else int(round(100 * min(1.0, quant_rows / 3)))
 
     wants_impl = _wants_implementation(slots)
     impl_slots = [
@@ -384,16 +448,82 @@ def _research_quality(
             0.35 * must_pct
             + 0.30 * crit_pct
             + 0.15 * primary_pct
-            + 0.10 * cross_pct
-            + 0.10 * fifth_pct
+            + 0.05 * cross_pct
+            + 0.05 * fifth_pct
+            + 0.10 * quant_pct
         )
     )
+
+    # Apply penalties for known limitations
     if any(s.get("status") == "weak" for s in slots if s.get("critical")):
         overall = min(overall, 80)
     if any(s.get("status") == "open" for s in slots if s.get("critical")):
         overall = min(overall, 65)
+    
+    # Issue #6 fix: Adjust floor based on evidence quantity
+    # Old: Always capped at 55 when primary_n == 0
+    # New: Lower floor when evidence is also extremely sparse
+    total_evidence = len(evidence or [])
     if primary_n == 0:
-        overall = min(overall, 55)
+        if total_evidence < 3:
+            overall = min(overall, 35)  # Extremely sparse + no primary = very low confidence
+        elif total_evidence < 5:
+            overall = min(overall, 45)  # Very sparse + no primary = low confidence
+        else:
+            overall = min(overall, 55)  # Original floor
+    
+    # A numeric-heavy question with a near-empty measured table should not
+    # read as fully confident even when coverage/primary-source checks pass.
+    if wants_numbers and quant_rows < 2:
+        overall = min(overall, 70)
+    
+    # ADDITIONAL: Reduce confidence when gaps/unknowns are present
+    # These penalties prevent 100/100 when report lists uncertainties
+    gaps_penalty = 0
+    
+    # Penalty for open gaps (even non-critical ones indicate incomplete coverage)
+    if open_n > 0:
+        gaps_penalty += min(10, open_n * 3)  # 3 points per open gap, max 10
+    
+    # Penalty for weak evidence (indicates uncertainty)
+    if weak > 0:
+        gaps_penalty += min(5, weak * 2)  # 2 points per weak slot, max 5
+    
+    # Penalty for low primary source count (measurement gap indicator)
+    if primary_n > 0 and primary_n < 3:
+        gaps_penalty += 5  # Sparse primary sources = likely measurement gaps
+    
+    # Issue #6 fix: Penalty for very sparse total evidence
+    # When evidence is extremely thin, confidence should clearly reflect this
+    total_evidence = len(evidence or [])
+    if total_evidence > 0:
+        if total_evidence < 3:
+            # Extremely sparse: < 3 items total
+            gaps_penalty += 25  # Major penalty - confidence should be very low
+        elif total_evidence < 5:
+            # Very sparse: 3-4 items
+            gaps_penalty += 15  # Significant penalty
+        elif total_evidence < 8:
+            # Sparse: 5-7 items
+            gaps_penalty += 8  # Moderate penalty
+    
+    # Apply penalties (no floor - allow score to drop to shallow if warranted)
+    if gaps_penalty > 0:
+        overall = max(overall - gaps_penalty, 0)
+    
+    # Coverage cap: must-answer < 50% should never read as "standard"
+    # Prevents 33% coverage from showing 62/100 · standard
+    # Issue #6 enhancement: More aggressive cap for very low coverage
+    if must_pct < 50:
+        overall = min(overall, 45)  # Force into "shallow" band
+    elif must_pct < 60:
+        overall = min(overall, 52)  # Still shallow, but closer to threshold
+    
+    # Work-concentration cap: one work dominating citations is a monoculture
+    # Example: 8 papers, 6 from arxiv:2512.17419 → top_work_share = 0.75
+    # Cap prevents SWE-Bench monoculture from scoring as diverse/confident
+    if top_work_share > 0.35:
+        overall = min(overall, 70)
 
     label = "deep" if overall >= 85 and not critical_gaps else "standard" if overall >= 55 else "shallow"
     if critical_gaps:
@@ -413,6 +543,13 @@ def _research_quality(
         "implementation_pct": fifth_pct if fifth_label == "implementation_evidence" else None,
         "source_diversity_pct": diversity_pct,
         "cross_validation_pct": cross_pct,
+        "quantitative_evidence_pct": quant_pct if wants_numbers else None,
+        # Nested {pct: ...} shape — report_integrity.confidence_breakdown reads these,
+        # not the flat _pct siblings above (kept for other/older callers).
+        "primary_sources": {"pct": primary_pct},
+        "cross_validation": {"pct": cross_pct},
+        "implementation": {"pct": fifth_pct} if fifth_label == "implementation_evidence" else {},
+        "quantitative_evidence": {"pct": quant_pct} if wants_numbers else {},
         "unique_sources": unique_n,
         "breakdown": {
             "must_answer_coverage": must_pct,
@@ -420,6 +557,7 @@ def _research_quality(
             "primary_source_support": primary_pct,
             "cross_source_validation": cross_pct,
             fifth_label: fifth_pct,
+            **({"quantitative_evidence_support": quant_pct} if wants_numbers else {}),
         },
     }
 
@@ -428,6 +566,15 @@ def critic_should_pass(query: str, coverage: dict[str, Any], evidence: list[dict
     reasons: list[str] = []
     if not evidence:
         return False, ["No evidence collected."]
+    
+    # Entity gate: each named subject must have dedicated evidence
+    expected_entities = named_systems(query)
+    if expected_entities:
+        found_entities = entities_with_evidence(query, evidence, limit=99)
+        missing = [e for e in expected_entities if e not in found_entities]
+        if missing:
+            reasons.append(f"Named subjects with no dedicated evidence: {', '.join(missing)}")
+    
     for gap in coverage.get("critical_gaps") or []:
         status = gap.get("status") or "open"
         reasons.append(f"Critical dimension {status}: {gap.get('label') or gap.get('id')}")
@@ -436,8 +583,10 @@ def critic_should_pass(query: str, coverage: dict[str, Any], evidence: list[dict
     must_pct = (coverage.get("depth_score") or {}).get("must_answer", {}).get("pct")
     if must_pct is None:
         must_pct = int(round(100 * float(coverage.get("ratio") or 0)))
-    if must_pct < 60:
-        reasons.append(f"Must-answer coverage {must_pct}% (<60%).")
+    # FIXED: Align with memo_quality.py threshold to prevent dead zone
+    # where critic passes but memo_quality refuses regeneration
+    if must_pct < CoverageThresholds.MUST_COVERAGE_GOOD:
+        reasons.append(f"Must-answer coverage {must_pct}% (<{CoverageThresholds.MUST_COVERAGE_GOOD}%).")
     slots = coverage.get("slots") or []
     if _wants_implementation(slots) and not coverage.get("has_implementation"):
         impl_open = [
@@ -457,22 +606,78 @@ def followups_for_gaps(
     *,
     use_llm: bool = False,
 ) -> list[SubQuery]:
+    """Generate targeted followup queries for coverage gaps.
+    
+    Enhanced to create specific queries using:
+    - Dimension patterns for context
+    - Entity names for targeted search
+    - Domain-specific routing (arxiv/github/benchmark)
+    """
     ordered: list[dict] = list(coverage.get("critical_gaps") or [])
     known = {g.get("id") for g in ordered}
     for slot in coverage.get("slots") or []:
         if slot.get("status") in {"open", "weak"} and slot.get("id") not in known:
             ordered.append(slot)
             known.add(slot.get("id"))
+    
     out: list[SubQuery] = []
+    
+    # Extract entities for targeted queries
+    from app.domain.textutil import entity_candidates
+    entities = entity_candidates(user_goal(query), limit=8)
+    
     for gap in ordered[:limit]:
-        question, agent = rewrite_gap_query(query, gap, use_llm=use_llm)
+        gap_id = str(gap.get("id") or "").lower()
+        gap_label = gap.get("label") or ""
+        patterns = [p for p in (gap.get("patterns") or []) if p]
+        
+        # Enhance gap with patterns for more specific queries
+        gap_with_patterns = dict(gap)
+        if patterns and not gap.get("followup"):
+            # Add top patterns to gap text for rewrite_gap_query
+            pattern_text = " ".join(patterns[:3])
+            gap_with_patterns["followup"] = f"{gap_label}: {pattern_text}"
+        
+        # Route to appropriate agent based on gap type
+        if "implement" in gap_id or "code" in gap_id or "source" in gap_id:
+            # Implementation gap: prefer search for GitHub/code
+            gap_with_patterns["agent_hint"] = "search_implementation"
+        elif "benchmark" in gap_id or "evaluat" in gap_id or "metric" in gap_id:
+            # Evaluation gap: prefer scholar for academic papers
+            gap_with_patterns["agent_hint"] = "scholar_benchmark"
+        elif "theor" in gap_id or "concept" in gap_id or "mechanism" in gap_id:
+            # Theory gap: strongly prefer scholar
+            gap_with_patterns["agent_hint"] = "scholar_theory"
+        
+        question, agent = rewrite_gap_query(query, gap_with_patterns, use_llm=use_llm)
+        
+        # Override agent based on hint if provided
+        hint = gap_with_patterns.get("agent_hint", "")
+        if hint.startswith("scholar"):
+            agent = AgentName.SCHOLAR
+        elif hint.startswith("search") and "implementation" in hint:
+            agent = AgentName.SEARCH
+        
+        # Enhance question with arxiv/github prefix for better targeting
+        if agent == AgentName.SCHOLAR and entities:
+            # Add arxiv hint for theory/concept queries
+            if not question.lower().startswith("arxiv"):
+                entity_str = " ".join(entities[:2])
+                question = f"arxiv papers: {entity_str} {question}".strip()[:200]
+        elif agent == AgentName.SEARCH and "implementation" in hint:
+            # Add github hint for implementation queries
+            if not question.lower().startswith("github"):
+                entity_str = " ".join(entities[:2])
+                question = f"github source: {entity_str}".strip()[:200]
+        
         out.append(
             SubQuery(
                 agent=agent,
-                question=question[:200],
-                rationale=f"Fill must-answer gap: {gap.get('label') or gap.get('id')}",
+                question=question,
+                rationale=f"Fill must-answer gap: {gap_label}",
             )
         )
+    
     return out
 
 
@@ -539,50 +744,114 @@ def build_evidence_dossier(
     evidence: list[dict],
     coverage: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Evidence grouped by must-answer dimension, ordered as the question implies."""
+    """Evidence grouped by must-answer dimension, ordered as the question implies.
+    
+    Each dimension gets evidence reranked by dimension-specific relevance,
+    not just the global top-k pool.
+    """
+    from app.retrieval.passage import select_best_excerpts_per_dimension
+    
     slots = (coverage or {}).get("slots") or must_answer_for(query)
+    # Pre-cite scope filter when a ResearchContract is attached to coverage/brief.
+    contract = (coverage or {}).get("research_contract")
+    pool = list(evidence or [])
+    if contract or query:
+        try:
+            from app.domain.research_contract import filter_evidence_for_contract
+            filtered = filter_evidence_for_contract(pool, query, contract)
+            if filtered:
+                pool = filtered
+        except Exception:
+            pool = list(evidence or [])
+    evidence = pool
     by_id = {e.get("id"): e for e in evidence if e.get("id")}
     anchors = _anchors(query)
     dossier: list[dict[str, Any]] = []
     for slot in slots:
         items: list[dict] = []
         seen: set[str] = set()
+        
+        # First, get pre-assigned evidence IDs from coverage
         for eid in slot.get("evidence_ids") or []:
             ev = by_id.get(eid)
             if ev and eid not in seen:
                 items.append(ev)
                 seen.add(eid)
-        if not items:
+        
+        # If we don't have enough, rerank entire pool by dimension-specific patterns
+        if len(items) < 3:
             patterns = [p for p in (slot.get("patterns") or []) if p]
             topic_terms = [t for t in (slot.get("topic_terms") or anchors) if t]
+            dim_label = slot.get("label") or ""
+            
+            # Build dimension query for embedding similarity
+            dim_query = f"{dim_label}. {'. '.join(patterns[:3])}" if patterns else dim_label
+            
+            # Score all evidence by relevance to THIS dimension
+            dim_scored: list[tuple[float, dict]] = []
             for ev in evidence:
                 eid = ev.get("id") or ""
                 if eid in seen:
                     continue
                 blob = _blob(ev)
-                if any(re.search(p, blob, re.I) for p in patterns) and _anchor_hits(blob, topic_terms) >= 1:
+                
+                # Dimension-specific scoring: patterns + topic terms + embeddings
+                aspect_hits = sum(1 for p in patterns if re.search(p, blob, re.I))
+                topic_hits = _anchor_hits(blob, topic_terms)
+                
+                # Add embedding similarity if available (0-1 scale)
+                embedding_score = 0.0
+                if dim_query and blob:
+                    try:
+                        from app.retrieval.embed import semantic_similarity
+                        embedding_score = semantic_similarity(dim_query, blob)
+                    except Exception:
+                        pass
+                
+                # Require at least some relevance to this dimension
+                # Lower threshold if we have strong embedding similarity
+                if aspect_hits == 0 and topic_hits < 2 and embedding_score < 0.4:
+                    continue
+                
+                # Combined score: pattern hits (weighted high) + topic hits + embedding similarity
+                # Embedding similarity on 0-1 scale, so multiply by 3 to make it comparable to aspect hits
+                score = aspect_hits * 3 + topic_hits + (embedding_score * 3)
+                dim_scored.append((score, ev))
+            
+            # Take top items for this dimension
+            # Topic/dimension relevance first; credibility secondary (tier display unchanged).
+            dim_scored.sort(
+                key=lambda x: (x[0], float(x[1].get("credibility") or 0)),
+                reverse=True,
+            )
+            for _, ev in dim_scored[:3 - len(items)]:
+                eid = ev.get("id") or ""
+                if eid and eid not in seen:
                     items.append(ev)
-                    if eid:
-                        seen.add(eid)
-                    if len(items) >= 2:
-                        break
+                    seen.add(eid)
+        
         dossier.append(
             {
                 "id": slot.get("id"),
                 "label": slot.get("label") or slot_label(slot.get("id") or ""),
                 "critical": bool(slot.get("critical")),
                 "status": slot.get("status") or ("covered" if items else "open"),
-                "items": items[:3],
+                "items": items[:3],  # Max 3 per dimension
             }
         )
-    return dossier
+    
+    # Now apply passage-level selection within each dimension's evidence
+    dossier_with_passages = select_best_excerpts_per_dimension(dossier, evidence)
+    return dossier_with_passages
 
 
 def entities_with_evidence(query: str, evidence: list[dict], limit: int = 4) -> list[str]:
     """Named subjects from the question that the evidence actually discusses.
 
-    Terms that appear in nearly every source are treated as background vocabulary
-    rather than distinguishing subjects, so no per-domain list is needed.
+    Returns named entities that have dedicated evidence. Does NOT filter out
+    entities appearing in most sources - that filter was correct for generic
+    topics but wrong for entity gates (a comparison query legitimately needs
+    every named subject to have evidence).
     """
     from app.domain.research_intent import named_systems
 
@@ -600,11 +869,9 @@ def entities_with_evidence(query: str, evidence: list[dict], limit: int = 4) -> 
         )
         if df == 0:
             continue
-        # A name every source mentions is the shared topic, not a subject being compared.
-        if n >= 3 and df == n:
-            continue
-        if n >= 5 and df >= 0.8 * n:
-            continue
+        # OLD LOGIC (removed): filtered entities appearing in most sources
+        # This was correct for generic topics but WRONG for entity gates
+        # A comparison query legitimately needs all named subjects
         scored.append((df, name))
     scored.sort(key=lambda x: x[0], reverse=True)
     return [name for _, name in scored[:limit]]

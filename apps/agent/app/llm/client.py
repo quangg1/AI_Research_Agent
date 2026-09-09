@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -27,7 +28,12 @@ from app.observability.logging import logger
 JSON_RE = re.compile(r"\{[\s\S]*\}|\[[\s\S]*\]")
 _GENERATE_TIMEOUT = httpx.Timeout(180.0, connect=15.0)
 _GEMINI_ENV = ("GOOGLE_API_KEY", "GEMINI_API_KEY")
+_RETRYABLE_BACKOFF_SECONDS = 20
 _bound: ContextVar[LLMClient | None] = ContextVar("kiln_llm_client", default=None)
+# Set by app.llm.roles.use_role_model so _log_call_ok can tag which graph
+# node/purpose (briefing, planner, critic, report, rerank...) issued a call —
+# purely for observability, no behavioral effect if left unset.
+current_role: ContextVar[str] = ContextVar("kiln_llm_role", default="")
 
 KeySource = Literal["platform", "byok"]
 
@@ -212,6 +218,30 @@ class LLMClient:
             sorted(i + 1 for i in self._dead),
         )
 
+    def _key_fingerprint(self) -> str:
+        """Last 6 chars of the active key — enough to tell keys apart across
+        a container restart (slot index resets, this doesn't), never enough
+        to reconstruct the secret."""
+        key = self._api_key or ""
+        return key[-6:] if len(key) >= 6 else ("***" if key else "")
+
+    def _log_call_ok(self, *, prompt_tokens: int, output_tokens: int, token_source: str) -> None:
+        from app.observability.logging import event
+
+        event(
+            "llm_call_ok",
+            provider=self.provider or self.mode,
+            slot=self._slot_index + 1,
+            slots_total=len(self._slots),
+            key_fingerprint=self._key_fingerprint(),
+            model=self.model,
+            role=current_role.get(""),
+            prompt_tokens=prompt_tokens,
+            output_tokens=output_tokens,
+            total_tokens=prompt_tokens + output_tokens if prompt_tokens or output_tokens else self.last_tokens,
+            token_source=token_source,
+        )
+
     def _slot_failed(self, *, credits: bool, reason: str = "") -> SlotFailed:
         return SlotFailed(self.provider or self.mode, self.source, credits=credits, reason=reason)
 
@@ -290,6 +320,8 @@ class LLMClient:
         self.last_error = None
         self.last_call_ok = False
         saw_credits = False
+        saw_only_retryable = True
+        backoff_passes_left = 1
         tried: set[int] = set()
         # Skip keys that already failed permanently earlier in this run.
         while self._slot_index in self._dead or not self.available:
@@ -309,21 +341,44 @@ class LLMClient:
                 return ""
             except SlotFailed as exc:
                 saw_credits = saw_credits or exc.credits
+                saw_only_retryable = saw_only_retryable and exc.reason == "retryable"
+                # empty_response is excluded: Gemini occasionally returns empty text as a
+                # one-off content/formatting hiccup unrelated to the key itself — permanently
+                # benching a healthy key (with untouched RPM/RPD headroom) over a single blip
+                # is exactly the "one key never fully utilized" failure mode.
                 permanent = exc.credits or exc.reason in {
                     "dead_key",
-                    "empty_response",
                     "generate_failed",
                     "credits",
                 }
                 logger.warning(
-                    "llm_slot_failed provider=%s credits=%s reason=%s slot=%s/%s",
+                    "llm_slot_failed provider=%s credits=%s reason=%s slot=%s/%s key=...%s role=%s",
                     exc.provider,
                     exc.credits,
                     exc.reason or "slot_failed",
                     self._slot_index + 1,
                     len(self._slots),
+                    self._key_fingerprint(),
+                    current_role.get("") or "-",
                 )
                 if self._failover(tried, permanent=permanent):
+                    continue
+                # Every slot in the pool failed, but none of them ever said
+                # "credits exhausted" or "dead key" — only transient 429/503
+                # (RPM throttle or momentary model overload). Failing over
+                # doesn't help there (the whole pool can share one rate-limit
+                # bucket, e.g. keys minted under the same Google Cloud
+                # project), so give the pool one backoff-and-retry pass
+                # before surfacing a false "out of credits" prompt.
+                if saw_only_retryable and backoff_passes_left > 0 and self._slots:
+                    backoff_passes_left -= 1
+                    logger.warning(
+                        "llm_all_slots_retryable_backoff wait=%ss slots=%s",
+                        _RETRYABLE_BACKOFF_SECONDS,
+                        len(self._slots),
+                    )
+                    time.sleep(_RETRYABLE_BACKOFF_SECONDS)
+                    tried.clear()
                     continue
                 if self._slots:
                     self._raise_slots_exhausted(exc, saw_credits=saw_credits)
@@ -428,10 +483,17 @@ class LLMClient:
             if usage:
                 prompt_t = int(getattr(usage, "prompt_token_count", 0) or 0)
                 out_t = int(getattr(usage, "candidates_token_count", 0) or 0)
-                self.last_tokens = prompt_t + out_t or self.last_tokens + _estimate_tokens(text)
+                total_t = prompt_t + out_t
+                if not total_t:
+                    total_t = self.last_tokens + _estimate_tokens(text)
+                self.last_tokens = total_t
+                token_source = "usage_metadata"
             else:
+                prompt_t = out_t = 0
                 self.last_tokens += _estimate_tokens(text)
+                token_source = "estimated"
             self.last_call_ok = True
+            self._log_call_ok(prompt_tokens=prompt_t, output_tokens=out_t, token_source=token_source)
             return text
         except (CreditsExhaustedError, SlotFailed):
             raise
@@ -532,8 +594,10 @@ class LLMClient:
             out_t = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
             if prompt_t or out_t:
                 self.last_tokens = prompt_t + out_t
+                self._log_call_ok(prompt_tokens=prompt_t, output_tokens=out_t, token_source="usage")
             else:
                 self.last_tokens += _estimate_tokens(text)
+                self._log_call_ok(prompt_tokens=0, output_tokens=0, token_source="estimated")
             return text
         except (CreditsExhaustedError, SlotFailed):
             raise
@@ -581,8 +645,10 @@ class LLMClient:
             out_t = int(usage.get("completion_tokens") or 0)
             if prompt_t or out_t:
                 self.last_tokens = prompt_t + out_t
+                self._log_call_ok(prompt_tokens=prompt_t, output_tokens=out_t, token_source="usage")
             else:
                 self.last_tokens += _estimate_tokens(text)
+                self._log_call_ok(prompt_tokens=0, output_tokens=0, token_source="estimated")
             return text
         except (CreditsExhaustedError, SlotFailed):
             raise

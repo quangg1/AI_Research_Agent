@@ -77,10 +77,22 @@ def _blob(body: str) -> str:
 
 
 def is_credits_error(status: int | None, body: str) -> bool:
-    """True only for billing/quota exhaustion — not RPM rate limits."""
+    """True only for confirmed billing/wallet exhaustion — never a plain rate limit.
+
+    Verified against a live Gemini account whose free-tier per-minute throttle
+    fired at 1/5 RPM and 9/20 RPD (nowhere near the daily cap): the 429 body
+    still read "You exceeded your current quota..." with status
+    RESOURCE_EXHAUSTED — the exact same wording real daily quota exhaustion
+    uses. That text is not a reliable signal on a 429, so only an explicit
+    provider-specific "wallet is empty" marker (OpenAI/xAI's insufficient_quota
+    / insufficient_credits) counts there; everything else routes to
+    is_retryable_slot_error (still True for 429) without killing the key.
+    """
     if status == 402:
         return True
     blob = _blob(body)
+    if status == 429:
+        return "insufficient_quota" in blob or "insufficient_credits" in blob
     # OpenAI/xAI: rate_limit_exceeded is RPM/TPM, not empty wallet.
     if "rate_limit_exceeded" in blob or "rate limit reached" in blob:
         return False

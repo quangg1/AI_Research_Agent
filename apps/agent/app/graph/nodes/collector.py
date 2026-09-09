@@ -53,8 +53,15 @@ def _latest_external_calls(traces: list[dict]) -> list[int]:
 
 
 def retrieve_node(state: ResearchState) -> dict:
+    """Per-dimension hybrid retrieval: each must-answer slot gets its own embed+lexical retrieve.
+    
+    Quality-first: retrieve k=3-5 per slot with slot-specific patterns/terms, not one global top-20.
+    """
     query = state["query"]
+    budget = budget_from(state)
     evidence = tag_evidence_roles(list(state.get("evidence") or []), query)
+
+    # Add Qdrant corpus pool
     extra = search_qdrant(query, k=QDRANT_TOP_K) or []
     seen = {e.get("id") for e in evidence}
     for hit in extra:
@@ -64,30 +71,130 @@ def retrieve_node(state: ResearchState) -> dict:
         if hit.get("id") not in seen:
             evidence.append(hit)
             seen.add(hit.get("id"))
+    
     evidence = tag_evidence_roles([e for e in evidence if is_citable_url(e.get("url") or "")], query)
     evidence = demote_secondary(evidence)
     on_topic = [e for e in evidence if not e.get("off_topic")]
     pool = on_topic if on_topic else evidence
-    ranked = (
-        hybrid_retrieve(
+    
+    # Per-dimension retrieval
+    critic = state.get("critic") or {}
+    coverage = critic.get("coverage") or {}
+    slots = coverage.get("slots") or []
+    
+    if not slots:
+        # Fallback to deriving slots from query if critic hasn't run yet
+        from app.domain.coverage import must_answer_for
+        slots = must_answer_for(query)
+    
+    if not pool:
+        return {
+            "retrieved": [],
+            "status": "retrieved",
+            "traces": [{"node": "retrieve", "n": 0, "off_topic_dropped": len(evidence)}],
+        }
+    
+    # Retrieve per dimension. Seed with what earlier iterations already found
+    # (filtered against the current on-topic pool) — a dimension marked
+    # "covered" is skipped below to save retrieval calls, but its evidence
+    # must stay in the working set, or the next coverage scoring pass sees
+    # it vanish and flips the slot back to "open", causing the depth/coverage
+    # score to oscillate iteration to iteration instead of climbing.
+    pool_ids = {e.get("id") for e in pool if e.get("id")}
+    prior_retrieved = [e for e in (state.get("retrieved") or []) if e.get("id") in pool_ids]
+    ranked_by_slot: list[dict] = list(prior_retrieved)
+    retrieved_ids: set[str] = {e.get("id") for e in ranked_by_slot if e.get("id")}
+    total_rerank_calls = 0
+
+    from app.domain.coverage import _anchors, _blob
+    anchors = _anchors(query)
+
+    for slot in slots:
+        slot_id = slot.get("id") or ""
+        slot_label = slot.get("label") or ""
+        status = slot.get("status") or "open"
+        
+        # Skip already-covered dimensions (critic marked as sufficient)
+        if status in {"covered", "sufficient"}:
+            continue
+        
+        # Build slot-specific query
+        patterns = [p for p in (slot.get("patterns") or []) if p]
+        topic_terms = [t for t in (slot.get("topic_terms") or anchors) if t]
+        
+        # Slot query: combine label + top patterns
+        slot_query_parts = [slot_label] + patterns[:2]
+        slot_query = " ".join(slot_query_parts).strip() or query
+        
+        # Hybrid retrieve for this dimension (embed + lexical)
+        # k=5 per slot (more than the 3 that dossier will use, to allow reranking)
+        slot_candidates = hybrid_retrieve(
+            slot_query,
+            pool,
+            k=min(5, len(pool)),
+            use_llm_reranker=False,  # Rerank per-slot below if enabled
+        )
+        
+        # Optional: LLM rerank within this slot's candidates (not global)
+        if llm.available and slot_candidates:
+            slot_candidates = hybrid_retrieve(
+                slot_query,
+                slot_candidates,
+                k=min(5, len(slot_candidates)),
+                use_llm_reranker=True,
+            )
+            if llm.last_tokens:
+                budget.used_tokens += llm.last_tokens
+            slot_rerank_calls = max(
+                (int(c.get("rerank_external_calls") or 0) for c in slot_candidates),
+                default=0
+            )
+            total_rerank_calls += slot_rerank_calls
+        
+        # Tag each with slot_id and add to union
+        for candidate in slot_candidates:
+            eid = candidate.get("id") or ""
+            if eid and eid not in retrieved_ids:
+                candidate["slot_id"] = slot_id
+                candidate["dimension_label"] = slot_label
+                ranked_by_slot.append(candidate)
+                retrieved_ids.add(eid)
+
+    # Nothing carried forward and nothing new this pass (no open dimensions,
+    # or hybrid_retrieve came up empty) — fall back to a global retrieve so
+    # the run isn't left with zero evidence.
+    if not ranked_by_slot:
+        ranked_by_slot = hybrid_retrieve(
             query,
             pool,
             k=min(RETRIEVE_TOP_K, max(8, len(pool))),
             use_llm_reranker=llm.available,
         )
-        if pool
-        else []
+        if llm.last_tokens:
+            budget.used_tokens += llm.last_tokens
+        total_rerank_calls = max(
+            (int(r.get("rerank_external_calls") or 0) for r in ranked_by_slot),
+            default=0
+        )
+    
+    event(
+        "retrieve_per_dimension",
+        n=len(ranked_by_slot),
+        slots=len([s for s in slots if s.get("status") not in {"covered", "sufficient"}]),
     )
-    rerank_calls = max((int(row.get("rerank_external_calls") or 0) for row in ranked), default=0)
+    
     return {
-        "retrieved": pythonize(ranked),
+        "retrieved": pythonize(ranked_by_slot),
         "status": "retrieved",
+        "budget": dump(budget),
         "traces": [
             {
                 "node": "retrieve",
-                "n": len(ranked),
+                "n": len(ranked_by_slot),
                 "off_topic_dropped": len(evidence) - len(pool),
-                "rerank_external_calls": rerank_calls,
+                "rerank_external_calls": total_rerank_calls,
+                "per_dimension": True,
+                "open_slots": len([s for s in slots if s.get("status") not in {"covered", "sufficient"}]),
             }
         ],
     }

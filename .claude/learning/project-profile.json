@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "profileType": "team-multi-agent",
+  "detectedFrom": {
+    "gitRemotes": [
+      "https://github.com/quangg1/AI_Research_Agent.git"
+    ],
+    "teamSize": "small",
+    "aiTools": [
+      "cursor",
+      "claude"
+    ],
+    "budgetPattern": "none",
+    "hasSharedClaudeSkills": false,
+    "isGitRepo": true,
+    "branchCount": 2,
+    "trackedFileCount": 277,
+    "repoSizeKb": 3,
+    "commitsLast30d": 45,
+    "commitsTotal": 45,
+    "projectAgeDays": 0,
+    "authorCount30d": 2,
+    "activityLevel": "high",
+    "hasAidlcWorkflow": false,
+    "hasPendingProfileInit": false,
+    "remoteReachable": true,
+    "remoteOriginUrl": "https://github.com/quangg1/AI_Research_Agent.git",
+    "remoteBranchCount": 2,
+    "remoteAuthors30d": 2,
+    "upstreamAhead": 0,
+    "upstreamBehind": 0,
+    "remoteProbeSource": "cache"
+  },
+  "enabledFeatures": {
+    "autoOptimizer": true
+  },
+  "costTracking": "full",
+  "confidence": 0.75,
+  "detectedAt": "2026-09-03T08:37:44.078Z",
+  "appliedAt": "2026-09-03T08:39:00.371Z",
+  "userPlan": "accept-detected",
+  "rationale": "Git analysis: 570 tracked files, 3 branches (2 local, 3 remote), 119 commits (119 last 30d), 2 authors (30d), high activity, ~45 KB git objects. Remote git (https://github.com/quangg1/AI_Research_Agent.git): 3 remote branches, 2 remote authors (30d), via cache, ahead 9 / behind 1 vs upstream. Collaborative or multi-branch product — full sync and attribution."
+}

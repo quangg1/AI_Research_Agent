@@ -1,0 +1,12 @@
+{
+  "kiln_latest.txt": {
+    "pages": 18,
+    "chars": 59854,
+    "words": 21464
+  },
+  "openai_synth.txt": {
+    "pages": 18,
+    "chars": 50569,
+    "words": 8195
+  }
+}

@@ -6,6 +6,7 @@ from app.domain.schema import AgentName, SubQuery
 from app.graph.serde import dump, pythonize
 from app.graph.state import ResearchState, budget_from
 from app.observability.logging import event
+# TEMPORARILY DISABLED: from app.maintenance.hitl_timeout import add_interrupt_metadata
 
 
 def plan_gate_node(state: ResearchState) -> dict:
@@ -23,6 +24,8 @@ def plan_gate_node(state: ResearchState) -> dict:
         }
 
     plan = state.get("plan") or {}
+    
+    # TEMPORARILY DISABLED HITL timeout tracking (causing runtime error)
     payload = pythonize(
         {
             "type": "plan_review",

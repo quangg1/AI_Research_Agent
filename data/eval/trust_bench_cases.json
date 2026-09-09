@@ -1,0 +1,244 @@
+[
+  {
+    "id": "cross_cell_misattribution_0878",
+    "category": "cross_cell_misattribution",
+    "checker": "semantic_number_grounded",
+    "expected_flagged": true,
+    "source_bug": "Real memo cited '0.878 (Sequential baseline)' from arXiv:2603.22651 Table III — 0.878 is genuinely in the source, so a plain substring check passes it, but the table lists 0.878 under Reflexive x Llama3, not Sequential x Claude (real Sequential x Claude value is 0.903).",
+    "input": {
+      "row": {
+        "line": "| Field-Level F1 Score | 0.878 (Sequential baseline) | 0.943 (Reflexive) / 0.929 (Hierarchical) | +0.065 F1 delta (Reflexive); Hierarchical retains 98.5% of Reflexive F1 | Financial Document Extraction (Claude 3.5 Sonnet) | [3] |",
+        "cells": [
+          "Field-Level F1 Score",
+          "0.878 (Sequential baseline)",
+          "0.943 (Reflexive) / 0.929 (Hierarchical)",
+          "+0.065 F1 delta (Reflexive); Hierarchical retains 98.5% of Reflexive F1",
+          "Financial Document Extraction (Claude 3.5 Sonnet)",
+          "[3]"
+        ],
+        "cite_n": 3,
+        "numbers": ["0.878", "0.943", "0.929"]
+      },
+      "source": "TABLE III: Primary benchmark results. Best value per metric column shown in bold. Architecture Metric GPT-4o Claude 3.5S Gemini 1.5P Llama3 70B Mixtral 8x22B Sequential (A) F1 0.897 0.903 0.881 0.834 0.812 Doc Acc 0.631 0.648 0.597 0.487 0.453 Lat (s) 34.2 38.7 29.1 22.4 19.8 Cost ($) 0.142 0.187 0.098 0.038 0.031 Parallel (B) F1 0.908 0.914 0.893 0.851 0.829 Doc Acc 0.659 0.672 0.623 0.521 0.488 Hierarchical (C) F1 0.921 0.929 0.907 0.869 0.843 Doc Acc 0.704 0.718 0.662 0.558 0.519 Reflexive (D) F1 0.936 0.943 0.919 0.878 0.851 Doc Acc 0.741 0.758 0.691 0.572 0.534"
+    }
+  },
+  {
+    "id": "cross_cell_correct_0943_reflexive",
+    "category": "cross_cell_misattribution",
+    "checker": "semantic_number_grounded",
+    "expected_flagged": false,
+    "source_bug": "Negative control for cross_cell_misattribution_0878 — 0.943 (Reflexive) is the genuine value for that row/architecture and must not be flagged just because it shares a table with a misattributed figure.",
+    "input": {
+      "row": {
+        "line": "0.943 (Reflexive)",
+        "cells": ["0.943 (Reflexive)"],
+        "cite_n": 3,
+        "numbers": ["0.943"]
+      },
+      "source": "TABLE III: Primary benchmark results. Best value per metric column shown in bold. Architecture Metric GPT-4o Claude 3.5S Gemini 1.5P Llama3 70B Mixtral 8x22B Sequential (A) F1 0.897 0.903 0.881 0.834 0.812 Doc Acc 0.631 0.648 0.597 0.487 0.453 Lat (s) 34.2 38.7 29.1 22.4 19.8 Cost ($) 0.142 0.187 0.098 0.038 0.031 Parallel (B) F1 0.908 0.914 0.893 0.851 0.829 Doc Acc 0.659 0.672 0.623 0.521 0.488 Hierarchical (C) F1 0.921 0.929 0.907 0.869 0.843 Doc Acc 0.704 0.718 0.662 0.558 0.519 Reflexive (D) F1 0.936 0.943 0.919 0.878 0.851 Doc Acc 0.741 0.758 0.691 0.572 0.534"
+    }
+  },
+  {
+    "id": "cross_cell_correct_0929_hierarchical",
+    "category": "cross_cell_misattribution",
+    "checker": "semantic_number_grounded",
+    "expected_flagged": false,
+    "source_bug": "Negative control for cross_cell_misattribution_0878 — 0.929 (Hierarchical) is the genuine value for that row/architecture.",
+    "input": {
+      "row": {
+        "line": "0.929 (Hierarchical)",
+        "cells": ["0.929 (Hierarchical)"],
+        "cite_n": 3,
+        "numbers": ["0.929"]
+      },
+      "source": "TABLE III: Primary benchmark results. Best value per metric column shown in bold. Architecture Metric GPT-4o Claude 3.5S Gemini 1.5P Llama3 70B Mixtral 8x22B Sequential (A) F1 0.897 0.903 0.881 0.834 0.812 Doc Acc 0.631 0.648 0.597 0.487 0.453 Lat (s) 34.2 38.7 29.1 22.4 19.8 Cost ($) 0.142 0.187 0.098 0.038 0.031 Parallel (B) F1 0.908 0.914 0.893 0.851 0.829 Doc Acc 0.659 0.672 0.623 0.521 0.488 Hierarchical (C) F1 0.921 0.929 0.907 0.869 0.843 Doc Acc 0.704 0.718 0.662 0.558 0.519 Reflexive (D) F1 0.936 0.943 0.919 0.878 0.851 Doc Acc 0.741 0.758 0.691 0.572 0.534"
+    }
+  },
+  {
+    "id": "relational_fabrication_single_vs_multi_agent",
+    "category": "relational_fabrication",
+    "checker": "semantic_number_grounded",
+    "expected_flagged": true,
+    "source_bug": "Real memo framed arXiv:2606.05670's '66.72% overall and 69.23% on Level 3' (two result granularities of ONE system) as '66.72% (single agent) vs 69.23% (multi-agent)' — a comparison invented to support the memo's own thesis. Both numbers are individually real in the source, so a plain substring check passes both.",
+    "input": {
+      "row": {
+        "line": "| Overall Task Pass@1 Accuracy (%) | 66.72% (Protocol-aligned single agent) | 69.23% (Multi-agent workflow) | +2.51 percentage points (within Wilson 95% CI noise bound) | GAIA Benchmark (Generalist AI Tasks) | [4] |",
+        "cells": [
+          "Overall Task Pass@1 Accuracy (%)",
+          "66.72% (Protocol-aligned single agent)",
+          "69.23% (Multi-agent workflow)",
+          "+2.51 percentage points (within Wilson 95% CI noise bound)",
+          "GAIA Benchmark (Generalist AI Tasks)",
+          "[4]"
+        ],
+        "cite_n": 4,
+        "numbers": ["66.72%", "69.23%"]
+      },
+      "source": "Under SI conditions, at most one of six tested MAS exceeds the matched single-agent anchor on benchmark-balanced average accuracy, while the remaining five trail by 2.56-11.29 points. On the PAE GAIA snapshot, a Claude-Code-style runtime workflow reaches 66.72% overall and 69.23% on Level 3, more than 20 points above the strongest non-Claude baseline."
+    }
+  },
+  {
+    "id": "council_mode_confabulated_row",
+    "category": "wrong_number",
+    "checker": "verify_quantitative_row",
+    "expected_flagged": true,
+    "source_bug": "A memo row cited 38.60%/12.20% figures to the Council-mode source, but the source's real numbers for those conditions are 10.8%/7.0% — the cited numbers simply don't appear in the source at all.",
+    "input": {
+      "row": {
+        "line": "| Council Mode | 38.60% HR (Single) | 12.20% HR (Council) | -26.40pp | Council [8 peer] |",
+        "cells": ["Council Mode", "38.60% HR (Single)", "12.20% HR (Council)", "-26.40pp", "Council [8 peer]"],
+        "cite_n": 8,
+        "numbers": ["38.60%", "12.20%", "-26.40pp"]
+      },
+      "citations": [{"n": 8, "url": "https://arxiv.org/abs/2604.02923", "title": "Council Mode"}],
+      "evidence": [
+        {
+          "url": "https://arxiv.org/abs/2604.02923",
+          "full_text": "HaluEval hallucination rate results on our benchmark suite. Single Model (No Web) achieves 10.8% HR. RAG Baseline 8.5%. Council (No Web) 7.0%. Council + Web 4.5%. Relative reduction of 41.7% compared to single model baseline."
+        }
+      ]
+    }
+  },
+  {
+    "id": "council_mode_correct_row",
+    "category": "wrong_number",
+    "checker": "verify_quantitative_row",
+    "expected_flagged": false,
+    "source_bug": "Negative control for council_mode_confabulated_row — 10.8%/7.0% are the real, correctly-cited figures from the same source.",
+    "input": {
+      "row": {
+        "line": "| Council (No Web) | 10.8% | 7.0% | -3.8pp | Council [8 peer] |",
+        "cells": ["Council (No Web)", "10.8%", "7.0%", "-3.8pp", "Council [8 peer]"],
+        "cite_n": 8,
+        "numbers": ["10.8%", "7.0%"]
+      },
+      "citations": [{"n": 8, "url": "https://arxiv.org/abs/2604.02923"}],
+      "evidence": [
+        {
+          "url": "https://arxiv.org/abs/2604.02923",
+          "full_text": "HaluEval hallucination rate results on our benchmark suite. Single Model (No Web) achieves 10.8% HR. RAG Baseline 8.5%. Council (No Web) 7.0%. Council + Web 4.5%. Relative reduction of 41.7% compared to single model baseline."
+        }
+      ]
+    }
+  },
+  {
+    "id": "entity_langgraph_miscited",
+    "category": "entity_miscitation",
+    "checker": "entity_citation_stripped",
+    "expected_flagged": true,
+    "source_bug": "Real memo described LangGraph's state-graph/checkpointer API with a citation attached, but grepping the actual retrieved evidence showed the cited source (a generic multi-agent survey) never mentions LangGraph at all — the writer filled the description in from its own training data.",
+    "input": {
+      "query": "Compare OpenAI Agents, LangGraph, and AutoGen for multi-agent orchestration.",
+      "body_markdown": "## Differences between the named options\n\n- **LangGraph**: LangGraph structures agent workflows as explicit state graphs with checkpointers for persistence [1].\n- **AutoGen**: AutoGen provides RoundRobinGroupChat for conversational multi-agent coordination [2].\n",
+      "citations": [
+        {"n": 1, "url": "https://arxiv.org/abs/1", "title": "Multi-agent survey"},
+        {"n": 2, "url": "https://arxiv.org/abs/2", "title": "AutoGen: Enabling Next-Gen LLM Applications"}
+      ],
+      "evidence": [
+        {"url": "https://arxiv.org/abs/1", "full_text": "This survey reviews multi-agent LLM systems, communication protocols, and coordination patterns broadly."},
+        {"url": "https://arxiv.org/abs/2", "full_text": "AutoGen is a framework enabling multi-agent conversation via RoundRobinGroupChat and other group chat patterns."}
+      ],
+      "line_marker": "LangGraph",
+      "citation_marker": "[1]"
+    }
+  },
+  {
+    "id": "entity_autogen_correctly_cited",
+    "category": "entity_miscitation",
+    "checker": "entity_citation_stripped",
+    "expected_flagged": false,
+    "source_bug": "Negative control for entity_langgraph_miscited — the AutoGen line's cited source genuinely discusses RoundRobinGroupChat, so its citation must survive.",
+    "input": {
+      "query": "Compare OpenAI Agents, LangGraph, and AutoGen for multi-agent orchestration.",
+      "body_markdown": "## Differences between the named options\n\n- **LangGraph**: LangGraph structures agent workflows as explicit state graphs with checkpointers for persistence [1].\n- **AutoGen**: AutoGen provides RoundRobinGroupChat for conversational multi-agent coordination [2].\n",
+      "citations": [
+        {"n": 1, "url": "https://arxiv.org/abs/1", "title": "Multi-agent survey"},
+        {"n": 2, "url": "https://arxiv.org/abs/2", "title": "AutoGen: Enabling Next-Gen LLM Applications"}
+      ],
+      "evidence": [
+        {"url": "https://arxiv.org/abs/1", "full_text": "This survey reviews multi-agent LLM systems, communication protocols, and coordination patterns broadly."},
+        {"url": "https://arxiv.org/abs/2", "full_text": "AutoGen is a framework enabling multi-agent conversation via RoundRobinGroupChat and other group chat patterns."}
+      ],
+      "line_marker": "RoundRobinGroupChat",
+      "citation_marker": "[2]"
+    }
+  },
+  {
+    "id": "decision_rule_76pct_misattributed",
+    "category": "decision_rule_misattribution",
+    "checker": "decision_rule_number_stripped",
+    "expected_flagged": true,
+    "source_bug": "Real memo cited '76% lower-environment incident rate [9 specialist]' in the Decision rule, but source 9's text never mentions that figure at all — the number actually came from an uncited vendor blog. number_in_source alone can't catch this because 76% happens to appear somewhere unrelated.",
+    "input": {
+      "decision_rule": "- Implement differential privacy to mitigate the baseline 76% lower-environment incident rate [9 specialist].\n- Retain real seed data across recursive generations [8 specialist].",
+      "citations": [
+        {"n": 8, "url": "https://arxiv.org/abs/1", "title": "Model collapse paper"},
+        {"n": 9, "url": "https://arxiv.org/abs/2", "title": "Best practices paper"}
+      ],
+      "evidence": [
+        {"url": "https://arxiv.org/abs/1", "full_text": "Accumulating real seed data across recursive generations prevents collapse."},
+        {"url": "https://arxiv.org/abs/2", "full_text": "Synthetic data can be generated at scale for training and testing AI models."}
+      ],
+      "marker": "76%"
+    }
+  },
+  {
+    "id": "decision_rule_seed_data_correct",
+    "category": "decision_rule_misattribution",
+    "checker": "decision_rule_number_stripped",
+    "expected_flagged": false,
+    "source_bug": "Negative control for decision_rule_76pct_misattributed — the 'retain real seed data' bullet is genuinely supported by its cited source [8] and must survive.",
+    "input": {
+      "decision_rule": "- Implement differential privacy to mitigate the baseline 76% lower-environment incident rate [9 specialist].\n- Retain real seed data across recursive generations [8 specialist].",
+      "citations": [
+        {"n": 8, "url": "https://arxiv.org/abs/1", "title": "Model collapse paper"},
+        {"n": 9, "url": "https://arxiv.org/abs/2", "title": "Best practices paper"}
+      ],
+      "evidence": [
+        {"url": "https://arxiv.org/abs/1", "full_text": "Accumulating real seed data across recursive generations prevents collapse."},
+        {"url": "https://arxiv.org/abs/2", "full_text": "Synthetic data can be generated at scale for training and testing AI models."}
+      ],
+      "marker": "Retain real seed data"
+    }
+  },
+  {
+    "id": "reference_padding_uncited_dropped",
+    "category": "reference_padding",
+    "checker": "reference_dropped_if_uncited",
+    "expected_flagged": true,
+    "source_bug": "build_ledger ranks up to k=12 candidate sources, but the writer doesn't necessarily cite all of them — a real memo had 4/12 references never appear as [n] anywhere in the body, padding the reference list with sources the memo never actually draws on.",
+    "input": {
+      "markdown": "## Findings\nCore claim here [1].\n",
+      "citations": [
+        {"n": 1, "evidence_id": "a", "title": "Used paper", "url": "https://arxiv.org/abs/2401.00001", "quote": "x", "tier": "peer_reviewed", "host": "arxiv.org"},
+        {"n": 2, "evidence_id": "b", "title": "Never cited paper", "url": "https://arxiv.org/abs/2401.00002", "quote": "x", "tier": "peer_reviewed", "host": "arxiv.org"}
+      ],
+      "marker": "2401.00002"
+    }
+  },
+  {
+    "id": "reference_padding_cited_kept",
+    "category": "reference_padding",
+    "checker": "reference_dropped_if_uncited",
+    "expected_flagged": false,
+    "source_bug": "Negative control for reference_padding_uncited_dropped — a source that IS cited in the body ([1]) must stay in the reference list.",
+    "input": {
+      "markdown": "## Findings\nCore claim here [1].\n",
+      "citations": [
+        {"n": 1, "evidence_id": "a", "title": "Used paper", "url": "https://arxiv.org/abs/2401.00001", "quote": "x", "tier": "peer_reviewed", "host": "arxiv.org"},
+        {"n": 2, "evidence_id": "b", "title": "Never cited paper", "url": "https://arxiv.org/abs/2401.00002", "quote": "x", "tier": "peer_reviewed", "host": "arxiv.org"}
+      ],
+      "marker": "2401.00001"
+    }
+  },
+  {
+    "id": "template_placeholder_question_mark_title",
+    "category": "false_positive_guard",
+    "checker": "template_placeholder_not_flagged",
+    "expected_flagged": false,
+    "source_bug": "The old placeholder regex r'\\[?\\]' (optional bracket) also matched '?]' from any real reference title ending in '?' right before a markdown link's closing bracket, e.g. '...Which Multi-AI Agent Framework is Best?](url)'. On a real run this forced 2 full LLM report-regeneration cycles chasing an issue a rewrite could never fix, since the title comes from the deterministic References list, not writer prose.",
+    "input": {
+      "memo": "## References\n\n6. [Magentic-One, AutoGen, LangGraph, CrewAI, or OpenAI Swarm: Which Multi-AI Agent Framework is Best?](https://example.com/post) -- `https://example.com/post`\n"
+    }
+  }
+]

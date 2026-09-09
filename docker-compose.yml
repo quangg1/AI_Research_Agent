@@ -5,6 +5,9 @@ services:
       POSTGRES_DB: kiln
       POSTGRES_USER: kiln
       POSTGRES_PASSWORD: kiln_dev_password
+      # Treat backslashes as literal characters to prevent Unicode escape errors
+      POSTGRES_INITDB_ARGS: "-c standard_conforming_strings=on"
+    command: postgres -c standard_conforming_strings=on
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -44,6 +47,9 @@ services:
       QDRANT_URL: http://qdrant:6333
       AGENT_SHARED_KEY: ${AGENT_SHARED_KEY:-}
       LLM_BYOK_REQUIRED: ${LLM_BYOK_REQUIRED:-false}
+      # Scholar API keys
+      S2_API_KEY: ${S2_API_KEY:-}
+      SEMANTIC_SCHOLAR_API_KEY: ${SEMANTIC_SCHOLAR_API_KEY:-}
     volumes:
       - ./data/corpus:/app/data/corpus
       - kiln_memory:/app/data/memory

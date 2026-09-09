@@ -4,7 +4,7 @@ import asyncio
 
 from app.domain.coverage import must_answer_for
 from app.domain.adversarial import falsification_queries
-from app.domain.decompose import subquestions_for
+from app.domain.decompose import derive_slots, subquestions_for
 from app.domain.knowledge import lookup, partial_evidence, seed_evidence
 from app.domain.routing_policy import heuristic_plan, is_learning_query, out_of_scope
 from app.domain.research_depth import apply_forced_depth, configure_budget_pools, effective_depth, showcase_reserve_calls
@@ -15,10 +15,15 @@ from app.domain.schema import AgentName, Budget, Plan, QueryType, SubQuery
 from app.graph.serde import dump
 from app.graph.state import ResearchState, budget_from
 from app.llm.client import llm
+from app.llm.roles import use_role_model
 from app.observability.logging import event
 from app.retrieval.chunk import load_corpus
 from app.retrieval.hybrid import corpus_is_relevant
 from app.retrieval.store import corpus_available, get_store_documents
+
+# NEW (Issue #5): Template-driven planning fallback
+# Set to True to use templates when LLM planning fails or for deterministic planning
+USE_TEMPLATE_FALLBACK = True
 
 
 async def planner_node(state: ResearchState) -> dict:
@@ -100,18 +105,91 @@ def _planner_sync(state: ResearchState) -> dict:
     has_corpus = corpus_available(org_id)
     learning = is_learning_query(query)
     mechanism = is_mechanism_query(query)
-    store_docs = get_store_documents(org_id)
+    # Only fetch corpus docs when the org actually has a corpus — otherwise the
+    # result is discarded by the short-circuit below (and the DB round-trip is
+    # redundant with corpus_available's own query).
     corpus_relevant = bool(has_corpus) and corpus_is_relevant(
-        user_goal(query), store_docs or load_corpus()
+        user_goal(query), get_store_documents(org_id) or load_corpus()
     )
     live_first = learning or mechanism or not corpus_relevant
-    plan = _llm_plan(query, budget, followups, has_corpus, live_first, mechanism) or heuristic_plan(
-        query,
-        budget.remaining_calls,
-        followups,
-        has_corpus=has_corpus,
-        live_first=live_first,
-    )
+    
+    # Try LLM-based planning first
+    plan = _llm_plan(query, budget, followups, has_corpus, live_first, mechanism)
+    
+    # NEW (Issue #5): Template-based fallback when LLM fails or unavailable
+    if USE_TEMPLATE_FALLBACK and plan is None:
+        try:
+            from app.maintenance.planner_templates import generate_plan, validate_plan_completeness, plan_to_dimensions
+            
+            # Generate plan from template
+            template_plan_dict = generate_plan(query)
+            is_complete, validation_reason = validate_plan_completeness(template_plan_dict)
+            
+            if is_complete:
+                # Convert template plan to Plan schema
+                # Map template_type to QueryType
+                template_to_query_type = {
+                    "comparison": QueryType.COMPARISON,
+                    "implementation": QueryType.FACTUAL,
+                    "survey": QueryType.OPEN_RESEARCH,
+                    "theory": QueryType.FACTUAL,
+                    "benchmark": QueryType.COMPARISON,
+                    "default": QueryType.FACTUAL,
+                }
+                
+                # Build sub_queries from template
+                sub_queries = []
+                for i, question in enumerate(template_plan_dict["must_answer"], 1):
+                    sub_queries.append(SubQuery(
+                        agent=AgentName.SEARCH,
+                        question=question,
+                        rationale=f"Must-answer dimension {i} (template)"
+                    ))
+                
+                # Add should_answer questions
+                for i, question in enumerate(template_plan_dict["should_answer"], 1):
+                    if len(sub_queries) >= budget.remaining_calls:
+                        break
+                    sub_queries.append(SubQuery(
+                        agent=AgentName.SEARCH,
+                        question=question,
+                        rationale=f"Should-answer dimension {i} (template)"
+                    ))
+                
+                # Select agents based on query type
+                agents_to_run = [AgentName.SEARCH]
+                if budget.remaining_calls > 1 and not template_plan_dict.get("template_type") == "implementation":
+                    agents_to_run.append(AgentName.SCHOLAR)
+                
+                # Create Plan object
+                plan = Plan(
+                    query_type=template_to_query_type.get(template_plan_dict.get("template_type", "default"), QueryType.FACTUAL),
+                    goal=user_goal(query),
+                    agents_to_run=agents_to_run[:budget.remaining_calls],
+                    sub_queries=sub_queries[:budget.remaining_calls],
+                    assumptions=[],
+                    stop_conditions=[]
+                )
+                
+                event("planner_template_fallback", 
+                      template_type=template_plan_dict.get("template_type"),
+                      n_questions=len(sub_queries))
+            else:
+                event("planner_template_incomplete", reason=validation_reason)
+                plan = None
+        except Exception as exc:
+            event("planner_template_error", error=str(exc)[:200])
+            plan = None
+    
+    # Final fallback to heuristic plan if both LLM and template fail
+    if plan is None:
+        plan = heuristic_plan(
+            query,
+            budget.remaining_calls,
+            followups,
+            has_corpus=has_corpus,
+            live_first=live_first,
+        )
     if llm.last_tokens:
         budget.used_tokens += llm.last_tokens
     if live_first:
@@ -205,21 +283,31 @@ def _knowledge_hit(state: ResearchState, budget: Budget, followups: list[SubQuer
 
 
 def _followups_from_prior(record: dict, followups: list[SubQuery]) -> list[SubQuery]:
-    """Target the dimensions the stored answer never nailed down."""
+    """Target the dimensions the stored answer never nailed down.
+
+    Stored slots keep only id/label/status/critical (see `_slim_slots`) — the
+    short, LLM-crafted search query each slot was built with isn't persisted.
+    Re-deriving slots for the same goal text hits `derive_slots`' cache (it
+    was already computed once for this exact goal) and gets that query back
+    for free, instead of falling back to `goal + label` mashed together into
+    one long, unnatural string that search/scholar treat as a poor query.
+    """
     if followups:
         return followups
-    out: list[SubQuery] = []
     goal = record.get("goal") or ""
+    fresh_by_id = {s["id"]: s.get("followup") for s in derive_slots(goal)} if goal else {}
+    out: list[SubQuery] = []
     for slot in record.get("slots") or []:
         if slot.get("status") == "covered":
             continue
         label = slot.get("label") or slot.get("id")
         if not label:
             continue
+        question = fresh_by_id.get(slot.get("id")) or f"{goal} {label}"
         out.append(
             SubQuery(
                 agent=AgentName.SEARCH,
-                question=f"{goal} {label}"[:200],
+                question=question[:200],
                 rationale=f"Prior memo left this open: {label}",
             )
         )
@@ -264,26 +352,27 @@ def _llm_plan(
         {"id": s.get("id"), "label": s.get("label"), "critical": s.get("critical")}
         for s in must_answer_for(query)
     ]
-    payload = llm.generate_json(
-        prompt=(
-            f"User question (goal):\n{goal}\n\n"
-            f"Full brief blob (metadata only):\n{query}\n\n"
-            f"Must-answer dimensions (each needs a dedicated sub_query):\n{must_answer}\n\n"
-            f"Follow-up questions from critic: {[dump(f) for f in followups]}\n"
-            f"Remaining tool calls: {budget.remaining_calls}. Remaining tokens: {budget.remaining_tokens}.\n"
-            f"{corpus_line}\n"
-            "Classify as factual | comparison | open_research.\n"
-            "Pick only the agents needed from search, scholar, docs.\n"
-            "Emit multiple sub_queries that each chase a different claim — not copies of the same string.\n"
-            "Every critical must-answer dimension above must have at least one sub_query targeting it.\n"
-            "At least one sub_query must seek counter-evidence or a result that would falsify the convenient thesis.\n"
-            "At least one sub_query must seek a measured number (benchmark, N, success rate, delta).\n"
-            "Stay inside applied AI / LLM systems: serving, RAG, agents, eval, multi-LoRA kernels.\n"
-            "JSON keys: query_type, goal, agents_to_run, assumptions, stop_conditions, "
-            "sub_queries (list of {agent, question, rationale})."
-        ),
-        system="You are the planner for Kiln, an LLM-systems research agent. Prefer claim-driven subquestions.",
-    )
+    with use_role_model(llm, "planner"):
+        payload = llm.generate_json(
+            prompt=(
+                f"User question (goal):\n{goal}\n\n"
+                f"Full brief blob (metadata only):\n{query}\n\n"
+                f"Must-answer dimensions (each needs a dedicated sub_query):\n{must_answer}\n\n"
+                f"Follow-up questions from critic: {[dump(f) for f in followups]}\n"
+                f"Remaining tool calls: {budget.remaining_calls}. Remaining tokens: {budget.remaining_tokens}.\n"
+                f"{corpus_line}\n"
+                "Classify as factual | comparison | open_research.\n"
+                "Pick only the agents needed from search, scholar, docs.\n"
+                "Emit multiple sub_queries that each chase a different claim — not copies of the same string.\n"
+                "Every critical must-answer dimension above must have at least one sub_query targeting it.\n"
+                "At least one sub_query must seek counter-evidence or a result that would falsify the convenient thesis.\n"
+                "At least one sub_query must seek a measured number (benchmark, N, success rate, delta).\n"
+                "Stay inside applied AI / LLM systems: serving, RAG, agents, eval, multi-LoRA kernels.\n"
+                "JSON keys: query_type, goal, agents_to_run, assumptions, stop_conditions, "
+                "sub_queries (list of {agent, question, rationale})."
+            ),
+            system="You are the planner for Kiln, an LLM-systems research agent. Prefer claim-driven subquestions.",
+        )
     if not isinstance(payload, dict):
         return None
     try:

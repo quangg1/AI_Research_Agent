@@ -24,6 +24,7 @@ __all__ = [
     "contradiction_signals",
     "coverage_gaps",
     "decision_rule_for",
+    "flip_condition_for",
     "decompose_subquestions",
     "demote_secondary",
     "host_of",
@@ -116,8 +117,13 @@ def is_comparison_query(query: str) -> bool:
 
 
 def named_systems(query: str) -> list[str]:
-    """Specific named subjects in the question, detected without any domain list."""
-    return entity_candidates(user_goal(query), limit=8)
+    """Specific named subjects in the question, detected without any domain list.
+    
+    Uses goal_with_named_subjects to recover entities from Constraints/Must cover
+    that briefing paraphrasing may have removed from the goal line.
+    """
+    from app.domain.textutil import goal_with_named_subjects
+    return entity_candidates(goal_with_named_subjects(query), limit=8)
 
 
 def host_of(url: str) -> str:
@@ -214,6 +220,29 @@ def decompose_subquestions(query: str, remaining_calls: int = 8) -> list[SubQuer
     return subquestions_for(query, remaining_calls=remaining_calls)
 
 
+
+
+def flip_condition_for(query: str, critic: dict | None = None) -> str:
+    """User-facing REVISIT IF line — conditions only, never Act-on/Verify bullets."""
+    goal = user_goal(query) or (query or "").strip()
+    coverage = ((critic or {}).get("coverage") or {})
+    open_slots = [
+        str(s.get("label") or s.get("id") or "").strip()
+        for s in (coverage.get("slots") or [])
+        if s.get("status") == "open"
+    ]
+    open_slots = [s for s in open_slots if s and len(s.split()) >= 2][:2]
+    if open_slots:
+        joined = "; ".join(open_slots)
+        return (
+            f"Revisit if: measured evidence closes “{joined}”, or a primary source "
+            f"undercuts the lead recommendation for “{goal[:100]}”."
+        )
+    return (
+        f"Revisit if: new measured evidence undercuts the lead recommendation for "
+        f"“{goal[:120]}”, or your latency/cost envelope forbids the gated path."
+    )
+
 def decision_rule_for(query: str, ledger: list, critic: dict) -> str:
     """An actionable rule built from what the evidence actually established."""
     goal = user_goal(query)
@@ -232,11 +261,34 @@ def decision_rule_for(query: str, ledger: list, critic: dict) -> str:
         "",
     ]
     empirical_bullets = False
+    def _is_slot_label_leak(label: str) -> bool:
+        low = (label or "").lower().strip()
+        if not low:
+            return True
+        # Coverage-slot metadata / poison domains — never emit as decision thresholds.
+        if re.search(
+            r"preference|class[-_ ]?rebalanc|self[-_ ]?supervised|clinical|abstention|"
+            r"direct answer to the question|implementation or source-level|"
+            r"differences between the named|constraints.? limitations|"
+            r"constraints_and_limitations",
+            low,
+        ):
+            return True
+        # Bare hyphenated slot ids with no decision language.
+        bare = re.sub(r"\[[^\]]*\]", "", low).strip(" -—:")
+        if re.fullmatch(r"[a-z0-9]+(?:[-_][a-z0-9]+){0,4}", bare) and not re.search(
+            r"\b(prefer|use|choose|when|if|avoid|require|gb|%|threshold)\b", bare
+        ):
+            return True
+        return False
+
     if supported:
         lines.append("**Act on these — the sources support them directly:**")
         lines.append("")
         for s in supported[:6]:
-            label = s.get("label") or s.get("id")
+            label = str(s.get("label") or s.get("id") or "")
+            if _is_slot_label_leak(label):
+                continue
             cite = s.get("support") or s.get("citation") or ""
             suffix = f" — see {cite}." if cite else f" — from the {n_src} cited sources."
             lines.append(f"- {label}{suffix}")
@@ -259,7 +311,9 @@ def decision_rule_for(query: str, ledger: list, critic: dict) -> str:
         lines.append("**Verify before acting — evidence is indirect or single-sourced:**")
         lines.append("")
         for s in partial[:6]:
-            label = s.get("label") or s.get("id")
+            label = str(s.get("label") or s.get("id") or "")
+            if _is_slot_label_leak(label):
+                continue
             lines.append(
                 f"- Verify: {label} — weak/single-sourced; confirm with one independent primary source."
             )
@@ -280,6 +334,8 @@ def decision_rule_for(query: str, ledger: list, critic: dict) -> str:
         f"Applied to “{goal[:140]}”: empirical bullets are decision input; verify/do-not-assume "
         f"are open. This rests on {n_src} cited sources."
     )
+    lines.append("")
+    lines.append(flip_condition_for(query, critic))
     return "\n".join(lines)
 
 
@@ -323,23 +379,46 @@ def coverage_gaps(query: str, must_cover: list[str], evidence: list[dict]) -> li
     return gaps[:6]
 
 
+def _shares_no_distinctive_term(ev: dict, anchors: set[str]) -> bool:
+    blob = f"{ev.get('title', '')} {ev.get('snippet', '')} {ev.get('quote', '')}".lower()
+    return not any(term in blob for term in anchors)
+
+
 def topic_leakage_reasons(query: str, evidence: list[dict]) -> list[str]:
     """Flag when the retrieved set drifted away from what was asked."""
     goal = user_goal(query)
     anchors = set(distinctive_terms(goal, limit=10))
     if not anchors or not evidence:
         return []
-    off = 0
-    for ev in evidence:
-        blob = f"{ev.get('title', '')} {ev.get('snippet', '')} {ev.get('quote', '')}".lower()
-        if not any(term in blob for term in anchors):
-            off += 1
+    off = sum(1 for ev in evidence if _shares_no_distinctive_term(ev, anchors))
     if off and off / len(evidence) >= 0.4:
         return [
             f"{off} of {len(evidence)} sources share no distinctive term with the question — "
             "the evidence set drifted off topic."
         ]
     return []
+
+
+# Large enough to sink below any realistic authority_score + numeric_evidence_score
+# combination (roughly -3.5..+16) so an off-topic source is essentially never the
+# one chosen for extraction/citation, without being hard-dropped from the working
+# set — critic can still fall back to it if the on-topic evidence runs out.
+TOPIC_RELEVANCE_PENALTY = -10.0
+
+
+def topic_relevance_penalty(ev: dict, query: str) -> float:
+    """Rank penalty for a source sharing no distinctive term with the question.
+
+    Per-source counterpart to topic_leakage_reasons, which only warns in
+    aggregate (>=40% of the set) and never removes or demotes anything —
+    that let sources like an unrelated soccer-workload or green-banking paper
+    survive all the way into a synthetic-data-for-LLMs memo's References.
+    """
+    goal = user_goal(query)
+    anchors = set(distinctive_terms(goal, limit=10))
+    if not anchors:
+        return 0.0
+    return TOPIC_RELEVANCE_PENALTY if _shares_no_distinctive_term(ev, anchors) else 0.0
 
 
 def contradiction_signals(query: str, evidence: list[dict]) -> list[str]:

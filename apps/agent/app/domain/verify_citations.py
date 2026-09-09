@@ -15,7 +15,13 @@ from app.domain.adversarial import (
 )
 from app.domain.citations import host_of, quote_in_source
 from app.domain.locator import locate_quote
-from app.domain.metric_grounding import assess_causal_delta
+from app.domain.metric_grounding import (
+    assess_causal_delta,
+    assess_claim_span_grounding,
+    assess_scope_overgeneralization,
+    assess_subject_scale_scope,
+    assess_subject_topic_scope,
+)
 from app.domain.schema import Claim
 from app.observability.logging import event
 
@@ -50,7 +56,15 @@ def _as_claim(claim: Claim | dict) -> dict:
 
 
 def _source_text(ev: dict) -> str:
-    return (ev.get("full_text") or ev.get("quote") or ev.get("snippet") or ev.get("title") or "")
+    return (
+        ev.get("full_text")
+        or ev.get("text")
+        or ev.get("content")
+        or ev.get("quote")
+        or ev.get("snippet")
+        or ev.get("title")
+        or ""
+    )
 
 
 def _apply(claim: Claim | dict, patch: dict) -> None:
@@ -69,6 +83,7 @@ def verify_against_sources(
     *,
     refetch: bool = True,
     fetch_fn: Callable[[str], str] | None = None,
+    query: str = "",
 ) -> dict[str, Any]:
     """Attach locator + verification_status to each claim. Optionally refetch URLs."""
     by_url = {(e.get("url") or "").rstrip("/").lower(): e for e in evidence if e.get("url")}
@@ -105,6 +120,19 @@ def verify_against_sources(
         missing_nums = numbers - source_numbers if numbers else set()
         kind = normalize_kind(data.get("kind") or "", has_quote=bool(data.get("quote")))
         causal = assess_causal_delta(data.get("text") or "", text)
+        scope = assess_scope_overgeneralization(data.get("text") or "", text)
+        scale_scope = assess_subject_scale_scope(
+            data.get("text") or "", text, query=query or ""
+        )
+        topic_scope = assess_subject_topic_scope(
+            data.get("text") or "", text, query=query or ""
+        )
+        span_gate = assess_claim_span_grounding(
+            data.get("text") or "",
+            text,
+            quote=str(data.get("quote") or ""),
+            kind=str(kind or ""),
+        )
         provenance = data.get("provenance") or infer_provenance(data.get("text") or "", text)
         if not url:
             status, note = "source_missing", "Claim has no source URL."
@@ -112,6 +140,18 @@ def verify_against_sources(
             status, note = "source_missing", "Source could not be retrieved."
         elif causal and causal.get("status") in {"wrong_causal", "wrong_number", "source_missing"}:
             status, note = str(causal["status"]), str(causal.get("note") or "Causal comparison not supported by source.")
+        elif scope and scope.get("status") == "scope_bleed":
+            status, note = "wrong_causal", str(scope.get("note") or "Scope overgeneralization.")
+        elif scale_scope and scale_scope.get("status") == "scale_mismatch":
+            status, note = "wrong_causal", str(
+                scale_scope.get("note") or "Model-scale attribution not supported by source."
+            )
+        elif topic_scope and topic_scope.get("status") == "topic_mismatch":
+            status, note = "unsupported", str(
+                topic_scope.get("note") or "Source is off-scope for the asked subject."
+            )
+        elif span_gate and span_gate.get("status") == "ungrounded":
+            status, note = "unsupported", str(span_gate.get("note") or "Claim lacks a grounded 1-2 sentence source span.")
         elif kind in {"inferred", "speculative", "recommendation"} and not locator.found:
             status, note = "inferred", "Marked as inference; not treated as a paper finding."
         elif not locator.found:
@@ -122,6 +162,8 @@ def verify_against_sources(
             status, note = "verified", "Quote (or high-overlap span) found in the source."
             if causal and causal.get("status") == "ok":
                 note = "Quote found; causal delta has supporting comparison cues in source windows."
+            elif span_gate and span_gate.get("status") == "ok":
+                note = "Claim grounded in a 1-2 sentence source span."
 
         patch = {
             "kind": kind,
@@ -130,7 +172,7 @@ def verify_against_sources(
             "verification_note": note,
             "provenance": provenance,
             "quality_band": data.get("quality_band")
-            or quality_band_for(url, str(data.get("tier") or ev.get("tier") or "")),
+            or quality_band_for(url, str(data.get("tier") or ev.get("tier") or ""), str(ev.get("title") or data.get("title") or "")),
             "url": url or data.get("url") or "",
         }
         if locator.found and not data.get("quote"):
@@ -154,7 +196,7 @@ def verify_against_sources(
                 "title": ev.get("title") or data.get("url") or url,
                 "host": host_of(url) or urlparse(url).hostname or "",
                 "tier": ev.get("tier") or data.get("tier") or "",
-                "quality_band": quality_band_for(url, str(ev.get("tier") or data.get("tier") or "")),
+                "quality_band": quality_band_for(url, str(ev.get("tier") or data.get("tier") or ""), str(ev.get("title") or "")),
                 "published": ev.get("published") or data.get("published") or "",
                 "content": text[:40_000],
             }

@@ -1,0 +1,1474 @@
+Dữ liệu tổng hợp và tác nhân sinh dữ liệu cho AI
+chuyên biệt: vượt qua khan hiếm dữ liệu mà
+không khuếch đại sai lệch
+Tóm tắt điều hành
+Kết luận trung tâm: dữ liệu tổng hợp (synthetic data) có thể giải quyết một phần rất lớn bài toán thiếu
+dữ liệu chất lượng cao trong các miền AI chuyên biệt, nhưng giá trị của nó không đến từ việc “tạo thêm
+thật nhiều mẫu”. Giá trị đến từ việc tạo đúng phần của không gian dữ liệu mà dữ liệu thật đang
+thiếu, kiểm chứng chất lượng trước khi huấn luyện, trộn với một neo dữ liệu thật, và chỉ chấp
+nhận cải thiện khi nó xuất hiện trên tập kiểm thử thật chưa từng được dùng để sinh dữ liệu. Các
+nghiên cứu từ Self-Instruct, phi-1, huấn luyện đối kháng bằng ảnh sinh, luật Đức, mã hóa y khoa và
+phân loại đa ngôn ngữ cho thấy dữ liệu tổng hợp có thể mang lại cải thiện rất lớn khi quá trình sinh
+được grounded, có bộ lọc hoặc bộ kiểm chứng, và nhắm đúng mục tiêu miền. Ngược lại, cùng một
+nghiên cứu về luật Đức cho thấy cách sinh QA đơn giản có thể làm điểm số giảm 7,6 điểm phần trăm
+trong khi một pipeline có phân tầng độ khó và lọc chất lượng đem lại mức tăng đến 39,6 điểm trên
+cùng loại bài toán. 
+Bằng chứng cũng bác bỏ quan niệm rằng dữ liệu tổng hợp là một “nguồn dữ liệu vô hạn miễn phí”. Self-
+Instruct đạt mức tăng tuyệt đối 33 điểm trên Super-NaturalInstructions nhờ tự sinh rồi lọc instruction;
+phi-1 đạt 50,6% HumanEval dù chỉ có 1,3 tỷ tham số bằng cách kết hợp 6 tỷ token web đã tuyển chọn
+với 1 tỷ token “textbook/exercise” tổng hợp; và Gowal et al. cho thấy dữ liệu ảnh sinh bằng DDPM có thể
+tăng mạnh adversarial robustness, đạt 66,10% robust accuracy trên CIFAR-10 với 100 triệu mẫu sinh
+trong một thiết lập của nghiên cứu. 
+Tuy nhiên, dữ liệu tổng hợp có một rủi ro cấu trúc đặc biệt: lỗi của mô hình có thể trở thành “sự
+thật” của thế hệ dữ liệu kế tiếp. Nature 2024 cho thấy huấn luyện đệ quy trên dữ liệu do mô hình
+trước tạo ra có thể gây model collapse, trước hết làm mất các vùng đuôi của phân phối rồi tích lũy sai số
+qua các thế hệ. Các nghiên cứu tiếp theo cho thấy kết luận này cần được hiểu có điều kiện: thay thế dần
+dữ liệu thật bằng dữ liệu tổng hợp là nguy hiểm, trong khi duy trì dữ liệu thật trong hỗn hợp hoặc tích
+lũy dữ liệu thật và tổng hợp có thể giữ hệ thống ổn định hơn. 
+Một rủi ro thậm chí có thể xuất hiện trước khi accuracy/perplexity báo động là fairness collapse.
+Wyllie et al. cho thấy model-induced distribution shift qua nhiều thế hệ có thể đồng thời làm giảm hiệu
+năng, fairness và đại diện của nhóm thiểu số ngay cả khi dữ liệu ban đầu không thiên lệch; một preprint
+tháng 8/2026 trên Bias in Bios báo cáo suy giảm fairness xuất hiện trước sự suy giảm đáng kể của các
+metric ngôn ngữ chuẩn. 
+Vì vậy, đơn vị đánh giá đúng không phải là “synthetic dataset có trông giống dữ liệu thật không?”, mà là
+một chuỗi bằng chứng gồm:
+fidelity → coverage → utility trên real held-out → robustness/OOD → fairness → privacy → ổn
+định qua nhiều vòng tái huấn luyện.
+1
+2
+3
+4
+1
+
+Similarity đơn thuần không đủ cho cả utility lẫn privacy. Van Breugel et al. cho thấy việc coi dữ liệu tổng
+hợp “như dữ liệu thật” có thể khiến mô hình downstream không tổng quát tốt lên dữ liệu thật; trong
+bảo mật, Ganev & De Cristofaro cho thấy các heuristic privacy dựa trên độ giống có thể vượt qua kiểm
+tra trong khi vẫn rò rỉ dữ liệu, với một kiểu tấn công tái dựng được 78–100% các outlier của tập huấn
+luyện trong thí nghiệm của họ. 
+Khuyến nghị thực hành: trong các miền chuyên biệt, nên coi dữ liệu tổng hợp như một tầng can
+thiệp được kiểm soát chứ không phải một tập thay thế cho dữ liệu thật. Kiến trúc ưu tiên là: dữ liệu
+thật chất lượng cao → phân tích coverage → agent sinh có điều kiện → verifier/critic/chuyên gia → kiểm
+tra distribution/privacy/bias → trộn synthetic–real có provenance → huấn luyện → đánh giá trên real ID/
+OOD bất biến → triển khai có monitoring → chỉ sinh thêm vào những khoảng trống đã đo được. Cách
+tiếp cận này phù hợp với cả bằng chứng về lợi ích của lọc/grounding và các kết quả về tránh model
+collapse. 
+Nền tảng khái niệm và các cơ chế giải quyết khan hiếm dữ liệu
+Dữ liệu tổng hợp là dữ liệu được tạo nhân tạo để mô phỏng hoặc tái tạo những thuộc tính, cấu trúc
+hoặc quan hệ thống kê cần thiết của một miền thay vì được ghi nhận trực tiếp từ từng sự kiện/đối
+tượng trong thế giới thật. NVIDIA mô tả synthetic data generation theo hướng tạo dữ liệu nhân tạo
+phản ánh đặc trưng và cấu trúc cần thiết của dữ liệu thật, đặc biệt hữu ích khi dữ liệu thật không đủ,
+đắt tiền hoặc khó thu thập. 
+Điều quan trọng là phân biệt ba khái niệm thường bị trộn lẫn:
+Synthetic sample là một mẫu mới, chẳng hạn một hồ sơ tabular , ảnh CT, đoạn hội thoại hoặc cảnh
+robot giả lập. Synthetic label là nhãn được tạo tự động cho dữ liệu thật hoặc dữ liệu sinh. Synthetic
+task/data curriculum rộng hơn: agent chủ động quyết định cần sinh bài toán nào, ở độ khó nào và cho
+phân nhóm nào. Self-Instruct là ví dụ sớm của hướng thứ ba: mô hình không chỉ viết câu mới mà sinh
+instruction, input và output, sau đó loại bỏ mẫu không hợp lệ hoặc quá giống trước khi fine-tune. 
+Tác nhân sinh dữ liệu (data-generation agent), theo cách dùng vận hành trong báo cáo này, là một hệ
+thống có thể thực hiện một hay nhiều bước: xác định khoảng trống dữ liệu → lập kế hoạch mẫu cần
+sinh → gọi LLM/simulator/generative model → chấm điểm hoặc phản biện → sửa/lọc mẫu → quyết định
+có đưa mẫu vào training pool hay không. Vì vậy, một “agent” có thể chỉ là teacher LLM đơn lẻ, nhưng
+dạng đáng tin cậy hơn thường là một workflow gồm generator , critic/verifier , policy về coverage và
+provenance. Distilabel, chẳng hạn, tổ chức các pipeline sinh dữ liệu/AI-feedback dưới dạng đồ thị các
+bước và task; pipeline luật Đức 2026 tương tự ở cấp nghiên cứu khi tách rõ khâu sinh theo độ khó và
+khâu reviewer LLM. 
+Domain adaptation là điều chỉnh mô hình từ phân phối nguồn sang một miền đích có khác biệt về từ
+vựng, ngữ cảnh, cảm biến, tác vụ hoặc thống kê dữ liệu. Nó khác với domain generalization:
+generalization thường yêu cầu hoạt động trên miền chưa quan sát khi train. Do đó, synthetic domain
+adaptation có thể sử dụng một lượng nhỏ dữ liệu/corpus miền đích làm “định nghĩa miền”, còn
+synthetic domain generalization nên kiểm tra trên những miền thật hoàn toàn không tham gia quá
+trình chọn generator hay hyperparameter . WILDS minh họa tầm quan trọng của phân biệt này qua 10
+bộ dữ liệu có shift tự nhiên như bệnh viện khác nhau, camera trap khác nhau, hoặc khác thời gian/vị trí
+địa lý. 
+Distribution shift là hiện tượng phân phối dữ liệu mà mô hình gặp sau triển khai khác phân phối huấn
+luyện. Shift có thể nằm ở , , quan hệ , tỷ trọng các nhóm, chất lượng cảm biến,
+5
+6
+7
+8
+9
+10
+P(X) P(Y) P(Y∣X)
+2
+
+ngôn ngữ, thời gian hoặc cách người dùng phản ứng với hệ thống. WILDS cho thấy standard training
+thường có hiệu năng OOD thấp hơn đáng kể so với ID, còn OODRobustBench cho thấy robustness đối
+kháng cũng chịu vấn đề generalization nghiêm trọng dưới distribution shift. 
+Feedback loop xuất hiện khi đầu ra của mô hình làm thay đổi dữ liệu tương lai mà chính nó hoặc thế hệ
+kế tiếp sẽ học. Trường hợp rõ nhất là: model  sinh dữ liệu , rồi  trở thành training data của 
+. Wyllie et al. gọi lớp hiện tượng rộng hơn này là model-induced distribution shifts: lỗi, thiên lệch và
+bất công của mô hình có thể được ghi trở lại hệ sinh thái dữ liệu như thể chúng là ground truth. 
+Model collapse là trường hợp đặc biệt của feedback loop ở mô hình sinh: qua các thế hệ học đệ quy,
+các vùng ít xác suất của phân phối thật dễ bị mất trước, sau đó sai số của các thế hệ trước được nhân
+lên. Nature 2024 quan sát hiện tượng trên nhiều họ mô hình và nhấn mạnh vai trò của việc giữ quyền
+tiếp cận dữ liệu thật. 
+Cơ chế mà dữ liệu tổng hợp có thể giải quyết scarcity
+Augmentation có mục tiêu. Nếu tập thật nhỏ nhưng đáng tin cậy, synthetic data có thể mở rộng
+quanh decision boundary, tạo biến thể ngữ nghĩa hoặc tăng số mẫu cho class thiếu. Điều kiện quan
+trọng là mục tiêu phải là coverage, không phải chỉ kích thước dataset. Kết quả của Van Breugel et al.
+đặc biệt đáng chú ý: lợi ích lớn của mô hình ensemble generator của họ xuất hiện ở minority classes và
+low-density regions, chính là nơi uncertainty của generator cao nhất. 
+Domain transfer/domain adaptation. Agent có thể lấy tài liệu miền đích—luật, quy trình y khoa,
+manual thiết bị, code API—và chuyển chúng thành QA, instruction, negative examples hoặc task có độ
+khó tăng dần. Trong nghiên cứu luật Đức, việc tạo QA dựa trên văn bản pháp luật, phân tầng độ khó và
+lọc grounding đã cải thiện mạnh hơn nhiều so với một prompt sinh instruction đơn giản. 
+Rare-event synthesis. Trong các miền mà sự kiện hiếm nhưng rủi ro cao—ví dụ lỗi thiết bị công
+nghiệp, tình huống giao thông nguy hiểm, bệnh hiếm—simulation hoặc conditional generation có thể
+cố ý tăng mật độ dữ liệu ở tail. Đây cũng là nơi nguy hiểm nhất: nếu generator không thực sự mô hình
+hóa tail mà chỉ nội suy từ “trường hợp điển hình”, augmentation có thể tạo ảo giác coverage trong khi
+làm mất đúng những mode hiếm cần bảo vệ. Kết quả về model collapse và các low-density region cho
+thấy tail coverage phải được đo riêng, không suy ra từ metric trung bình. 
+Privacy-preserving generation. Synthetic data có thể giảm nhu cầu phát hành trực tiếp hồ sơ thật và,
+trong những pipeline được thiết kế thích hợp, cho phép học pattern tác vụ mà không đưa PHI/PII
+nguyên gốc vào corpus downstream. Ví dụ, nghiên cứu mã hóa y khoa 2026 tạo corpus tổng hợp bám
+theo chính sách và template lâm sàng để fine-tune mô hình mà không cần phơi bày hồ sơ bệnh nhân
+trực tiếp.  Tuy nhiên, “synthetic” không đồng nghĩa với “anonymous”: generative model có thể
+ghi nhớ training records. Ganev & De Cristofaro cho thấy similarity-based privacy checks có thể bỏ lọt
+membership, attribute và reconstruction attacks; đối với yêu cầu bảo mật chặt, cần cơ chế end-to-end
+như Differential Privacy cùng privacy auditing, thay vì chỉ kiểm tra khoảng cách tới nearest real record. 
+Simulation-to-real. Với robotics, autonomous systems và computer vision, simulator cho phép sinh
+gần như vô hạn cấu hình có nhãn chính xác. Domain randomization biến đổi ánh sáng, texture, pose,
+camera hoặc dynamics để buộc mô hình học feature bền vững thay vì feature tình cờ của simulator .
+Tobin et al. đưa ra ý tưởng rằng nếu miền mô phỏng đủ đa dạng, thế giới thật có thể trở thành “một
+biến thể nữa” đối với mô hình; NVIDIA Isaac Sim/Replicator hiện cung cấp cơ chế randomization cho
+pose, lighting, texture và camera trong pipeline synthetic perception. 
+11
+M
+t S
+t S
+t
+M 
+t+1
+12
+13
+14
+1
+15
+16
+17
+18
+3
+
+Nhưng sim-to-real không biến mất chỉ vì renderer đẹp. Simulator có thể sai physics, sensor noise hoặc
+causal structure; do đó vẫn cần calibration từ một tập real target nhỏ và đánh giá trên hardware/real
+sensor hoàn toàn độc lập. Các nghiên cứu sim-to-real sớm đã chỉ rõ policy thành công trong simulator
+có thể không chuyển sang vật lý thật do modeling error . 
+Kiến trúc tác nhân, pipeline và hệ sinh thái công cụ
+Có năm họ kiến trúc đặc biệt hữu ích cho dữ liệu chuyên biệt. Chúng không loại trừ nhau: một pipeline
+mạnh thường kết hợp LLM với rules/verifier , hoặc simulator với diffusion model và human review.
+Họ kiến trúc /
+công cụ đại
+diện
+Modalities Khả năng
+mở rộng Fidelity Khả năng
+điều khiển
+Chi phí
+tương đối
+Use case điển
+hình
+Mức trưởng
+thành
+Agent dựa
+trên LLM —
+Self-Instruct-
+style pipelines;
+Distilabel;
+teacher–critic–
+verifier
+Text, code,
+QA,
+instruction;
+một phần
+structured
+data
+Cao sau
+khi
+pipeline
+ổn định
+Trung bình
+→ cao nếu
+grounded/
+verified; dễ
+hallucinate
+nếu sinh tự
+do
+Cao:
+prompt,
+schema,
+difficulty,
+persona,
+constraints
+Trung
+bình–cao
+do
+inference
++
+verification
+Domain QA,
+instruction
+tuning,
+multilingual/
+low-resource,
+code, negative
+examples
+Cao nhưng
+đang thay đổi
+nhanh.
+Distilabel hỗ
+trợ pipeline
+DAG cho
+synthetic data
+và AI feedback.
+Simulator-
+based agents
+— NVIDIA Isaac
+Sim/Replicator
+RGB, depth,
+segmentation,
+3D, sensor
+streams,
+trajectories
+Rất cao
+nếu
+simulation
+được tự
+động hóa
+Cao với
+những yếu
+tố simulator
+mô hình
+đúng; còn
+sim-to-real
+gap
+Rất cao:
+camera,
+lighting,
+pose,
+physics,
+scenario
+Chi phí
+thiết lập
+cao;
+marginal
+generation
+thấp hơn
+thu thập
+thật ở
+nhiều kịch
+bản
+Robotics,
+autonomous
+perception,
+industrial
+vision, safety/
+rare events
+Cao trong
+robotics/
+vision.
+Replicator hỗ
+trợ systematic
+domain
+randomization.
+GAN — CTGAN;
+Synthcity; SDV
+synthesizers
+Đặc biệt
+mạnh ở
+tabular; cũng
+dùng cho
+image/time-
+series
+Cao sau
+training
+Trung bình–
+cao tùy
+data; có rủi
+ro thiếu
+mode
+Trung bình–
+cao với
+conditional
+GAN
+Trung bình
+Tabular
+augmentation,
+testing,
+imbalanced
+classes, data
+sharing
+Cao ở tabular .
+CTGAN được
+thiết kế cho
+mixed
+discrete/
+continuous
+tabular data;
+Synthcity cung
+cấp nhiều
+plugin
+generative/
+privacy. 
+19
+20
+21
+22
+4
+
+Họ kiến trúc /
+công cụ đại
+diện
+Modalities Khả năng
+mở rộng Fidelity Khả năng
+điều khiển
+Chi phí
+tương đối
+Use case điển
+hình
+Mức trưởng
+thành
+Diffusion
+models —
+DDPM-style
+generators;
+NVIDIA MAISI
+cho ảnh y khoa
+3D
+Image, 3D
+volumes; mở
+rộng sang
+audio/video
+Trung
+bình do
+sampling
+tốn
+compute
+Rất cao
+trong nhiều
+bài toán ảnh
+Cao khi
+conditional/
+geometry-
+aware
+Cao
+Medical
+imaging,
+visual rare
+cases,
+perception
+augmentation,
+robust
+training
+Cao cho
+image; trung
+bình–cao cho
+miền
+regulated.
+MAISI tập
+trung
+synthetic 3D
+CT và
+segmentation;
+DDPM
+synthetic data
+đã cho
+robustness
+gain trong
+nghiên cứu
+CIFAR. 
+Programmatic/
+rule-based
+generators —
+templates,
+grammar/DSL,
+executable
+constraints,
+test-case
+generators
+Structured
+records,
+events, code,
+logs, protocol
+messages
+Rất cao
+Thấp–cao
+tùy mức đầy
+đủ của
+domain
+model
+Rất cao và
+audit được
+Runtime
+thấp; chi
+phí chuyên
+gia/
+domain
+modeling
+có thể cao
+Edge cases,
+compliance
+rules,
+software
+testing, logic/
+math, protocol
+simulation
+Rất cao về kỹ
+thuật; fidelity
+phụ thuộc chất
+lượng
+specification
+Hybrid tabular
+platforms —
+MOSTLY AI
+SDK/Platform;
+SDV +
+SDMetrics
+Tabular ,
+sequential và
+một số text/
+linked tables
+tùy hệ
+Cao
+Đo được
+qua
+statistical/
+downstream
+metrics; phụ
+thuộc
+dataset
+Cao với
+constraints/
+conditioning
+OSS/local
+đến
+enterprise
+Test data,
+augmentation,
+privacy-
+sensitive
+analytics
+Cao. MOSTLY
+AI cung cấp
+SDK có chế độ
+local/client và
+nền tảng
+enterprise;
+SDV hỗ trợ
+single-table,
+multi-table và
+sequential
+synthesis, còn
+SDMetrics
+đánh giá chất
+lượng/privacy. 
+Các nhãn “fidelity/chi phí/trưởng thành” là đánh giá tương đối theo đặc tính kiến trúc, không phải bảng giá
+hay benchmark thống nhất giữa vendor.
+23
+24
+5
+
+Ở phía open/source-available, các lựa chọn đại diện gồm Distilabel cho workflow LLM, Synthcity cho
+nhiều mô hình tabular generative, SDV/CTGAN/SDMetrics cho tổng hợp và đánh giá dữ liệu có cấu trúc,
+và MOSTLY AI Synthetic Data SDK cho workflow local.  Ở phía commercial/enterprise, MOSTLY AI
+Platform và NVIDIA Isaac Sim/Replicator là các ví dụ rõ ràng cho structured data và simulation; hệ sinh
+thái NVIDIA cũng có MAISI cho synthetic 3D medical imaging. Gretel hiện cũng quảng bá các workflow
+synthetic/private data, bao gồm NeMo Safe Synthesizer trên trang sản phẩm hiện tại. 
+Với LLM, kiến trúc nên tiến từ “generator” thành hội đồng agent: một planner xác định vùng thiếu
+coverage; một hoặc nhiều generator tạo candidate; critic tìm lỗi; verifier kiểm chứng bằng nguồn chuẩn,
+code execution hoặc rules; filter loại duplicate/low-quality; curator cân bằng nhóm; và provenance
+recorder ghi generator , version, prompt, nguồn grounding và score. Kết quả Self-Instruct và nghiên cứu
+luật Đức đều ủng hộ luận điểm rằng bước lọc không phải phần phụ: chất lượng selection có thể quyết
+định dấu của hiệu ứng downstream. 
+Pipeline được khuyến nghị là:
+Điểm thiết kế quan trọng nhất của sơ đồ là real-test và real-OOD được tách trước khi xây generator.
+Không nên dùng chúng để prompt engineer , chọn synthetic ratio hoặc chọn checkpoint; nếu không,
+“held-out” chỉ tồn tại trên danh nghĩa. Cách nghiên cứu luật Đức split theo source passage, bảo đảm các
+passage đánh giá không xuất hiện ở tập sinh để fine-tune, là một mẫu thiết kế tốt hơn split ngẫu nhiên
+từng QA pair . 
+25
+26
+27
+Không
+Có
+Không
+Có
+Dữ
+liệu
+thật
++
+tài
+liệu
+miền
++
+tri
+thức
+chuyên
+gia
+Tách
+bất
+biến:
+real-train
+/
+calibration
+/
+real-test
+/
+real-OOD
+Phân
+tích
+coverage,
+tail,
+subgroup,
+lỗi
+và
+khoảng
+trống
+Orchestrator
+sinh
+dữ
+liệu
+LLM
+agent
+Simulator
+GAN
+/
+Diffusion
+Rules
+/
+Templates
+/
+DSL
+Critic
++
+verifier
++
+constraints
+Dedupe
++
+provenance
++
+privacy
+audit
++
+bias/coverage
+screen
+Đạt
+quality
+gates?
+Mixer:
+dữ
+liệu
+thật
++
+synthetic
+theo
+tỷ
+lệ/curriculum
+Huấn
+luyện
+mô
+hình
+đích
+Đánh
+giá
+trên
+REAL
+held-out
+Generalization
+ID/OOD
+Robustness
+/
+stress
+Fairness
+/
+tail
+groups
+Calibration
+/
+privacy
+Recursive-loop
+test
+Vượt
+baseline
+thật\nvà
+đạt
+mọi
+guardrail?
+Shadow
+/
+canary
+deployment
+Monitoring
+drift,
+subgroup,
+tail,
+incidents
+Thu
+thập
+thêm
+dữ
+liệu
+THẬT
+có
+mục
+tiêu
+28
+6
+
+Đánh giá generalization, robustness, bias, alignment và lỗi tự
+khuếch đại
+Một pipeline synthetic data chỉ nên được tuyên bố là “tốt hơn” sau khi vượt qua nhiều lớp test độc lập.
+Fidelity cao không đồng nghĩa utility cao; utility ID cao không đồng nghĩa OOD robustness; average
+accuracy cao không loại trừ subgroup harm; và similarity cao không bảo đảm privacy. Các kết quả thực
+nghiệm hiện có minh họa rõ các khoảng cách này. 
+Khung metric khuyến nghị
+Câu hỏi Metric/protocol chính Statistical test /
+uncertainty
+Tiêu chuẩn nên
+dùng để quyết định
+Synthetic có giúp
+generalization
+thật không?
+Accuracy/F1/AUROC/MAE/
+task-specific metric trên 
+held-out real; TSTR (Train
+Synthetic, Test Real);
+R+S→Real; ID/OOD gap
+Paired/stratified
+bootstrap CI;
+McNemar cho paired
+classification;
+permutation test khi
+thích hợp
+ với CI,
+đồng thời không
+giảm OOD/worst-
+group
+Phân phối có lệch
+không?
+Marginal frequencies/
+quantiles; correlation/
+dependence; MMD; C2ST;
+FID cho ảnh
+MMD permutation
+test; C2ST held-out
+significance;
+correction cho nhiều
+feature/subgroup
+Không chỉ yêu cầu
+global similarity;
+phải kiểm tra
+conditional/
+subgroup/tail
+Robustness có
+tăng không?
+Natural OOD, corruption/
+noise, adversarial
+perturbation, sensor/
+domain shift, worst-case
+slice
+Bootstrap qua
+examples và qua
+domains; nhiều
+random seeds
+Không được suy
+robust OOD từ
+clean-ID accuracy
+Bias/fairness có
+tăng không?
+TPR/FPR theo group, equal-
+opportunity gap, equalized-
+odds gap, calibration-by-
+group, worst-group
+performance,
+representation rate
+Bootstrap/proportion
+tests; formal
+equalized-odds test
+khi phù hợp
+Không nhóm bảo
+vệ nào suy giảm
+vượt pre-defined
+tolerance
+Có model
+collapse/
+feedback loop
+không?
+Metric qua generation 
+; tail coverage;
+entropy/diversity; real-test
+loss; subgroup
+representation; MMD/C2ST
+tới real anchor
+Regression/slope CI
+qua generations;
+repeated-seed
+comparison giữa
+policies
+Không có
+deterioration có hệ
+thống; synthetic
+fraction phải được
+stress-test
+Có rò rỉ privacy
+không?
+DP  nếu yêu cầu
+formal guarantee;
+membership/attribute
+inference; reconstruction;
+nearest-neighbor chỉ là
+metric phụ
+Attack success CI,
+privacy accounting
+Không tuyên bố
+privacy chỉ từ
+“không giống
+record thật”
+29
+Δ=M −R+S
+M >R 0
+g =
+0...K
+(ϵ,δ)
+7
+
+Distributional alignment. Maximum Mean Discrepancy (MMD) là kernel two-sample statistic nhằm
+kiểm tra liệu hai mẫu có đến từ hai phân phối khác nhau; Gretton et al. cung cấp cả các test dựa trên
+MMD và cách xấp xỉ tính toán nhanh hơn.  Một cách bổ sung là Classifier Two-Sample Test (C2ST):
+huấn luyện classifier phân biệt “real” và “synthetic” trên dữ liệu chưa dùng để fit classifier; khả năng
+phân biệt cao cho thấy tồn tại shift có thể khai thác.  Với ảnh, FID là một metric feature-space phổ
+biến để so sánh phân phối ảnh sinh và thật, được giới thiệu cùng TTUR. 
+Không metric alignment nào trong số đó nên là acceptance criterion duy nhất. Một synthetic
+distribution có thể khớp tốt trung bình nhưng làm biến mất tail, hoặc ngược lại cố ý khác phân phối thật
+vì mục tiêu là oversample rare event. Vì vậy nên báo cáo alignment toàn cục + alignment có điều kiện
++ downstream real-world utility. Điều này phù hợp với quan sát của Van Breugel et al. rằng naïve
+synthetic use có thể không generalize sang real data dù dữ liệu đã được sinh để bắt chước phân phối. 
+Generalization. Thiết kế tối thiểu phải có bốn baseline: real-only , synthetic-only , hybrid , và
+nếu có thể real-only với kích thước/compute tương đương . Như vậy có thể tách “lợi ích vì có
+nhiều token/mẫu hơn” khỏi “lợi ích vì synthetic examples chứa thông tin hữu ích”. WILDS là benchmark
+phù hợp cho real-world distribution shifts; khi robustness đối kháng là vấn đề, OODRobustBench cung
+cấp 23 dataset-wise shifts, 6 threat-wise shifts và đã được dùng để đánh giá 706 robust models qua 60,7
+nghìn adversarial evaluations. 
+Calibration. Synthetic augmentation có thể tăng accuracy nhưng làm confidence sai lệch, nhất là nếu
+generator tạo ví dụ quá “sạch”. Nên báo cáo reliability curve, Brier/NLL và calibration error trên dữ liệu
+thật, không calibration set tổng hợp. Temperature scaling là một baseline post-hoc mạnh và đơn giản;
+Guo et al. thấy nó hiệu quả trên nhiều dataset/architecture trong nghiên cứu calibration của họ. 
+Fairness. Với binary classification, equalized odds yêu cầu TPR và FPR cân bằng theo protected group,
+trong khi equal opportunity tập trung vào TPR cho outcome tích cực.  Ngoài việc báo cáo gap, có thể
+dùng formal hypothesis testing: Romano, Bates & Candès xây dựng kiểm định nhằm phát hiện vi phạm
+equalized odds, nhấn mạnh rằng fairness nên được kiểm tra thống kê chứ không chỉ nhìn chênh lệch
+point estimate. 
+Trong synthetic data, fairness nên được đo ở ba tầng: phân phối synthetic có tái tạo tỷ lệ/thuộc tính của
+subgroup không; model train trên nó có performance gap không; và gap đó thay đổi thế nào sau nhiều
+generation. Tầng thứ ba đặc biệt quan trọng vì Wyllie et al. quan sát mất representation và fairness qua
+model-induced distribution shifts, còn nghiên cứu Fairness Collapse 2026 cho thấy bias có thể xấu đi
+trước khi metric LM chuẩn phản ứng rõ. 
+Privacy. Kiểm tra DCR/nearest-neighbor hay duplicate rate hữu ích cho memorization screening nhưng
+không đủ để chứng minh anonymity. Nghiên cứu của Ganev & De Cristofaro tạo các synthetic datasets
+vượt qua similarity-based checks nhưng vẫn cho phép membership/attribute inference, và ReconSyn tái
+dựng 78–100% các training outlier trong thí nghiệm; họ lập luận rằng privacy nghiêm ngặt cần được
+thiết kế end-to-end, chẳng hạn với DP , chứ không ghép một generative model với các heuristic không
+được privatize. 
+Protocol chuyên biệt để phát hiện self-reinforcing errors
+Thay vì chỉ huấn luyện một lần, nên chạy một recursive synthetic stress test:
+30
+31
+32
+14
+R S R+S
+R 
+matched
+11
+33
+34
+35
+4
+17
+M →0 S →0 M →1 S →1 M →2 ⋯→M 
+K
+8
+
+và so sánh ít nhất ba chính sách dữ liệu: replacement — thế hệ mới chủ yếu học dữ liệu do thế hệ trước
+sinh; accumulation/anchored — giữ dữ liệu thật và bổ sung synthetic; capped hybrid — dữ liệu thật
+luôn chiếm một tỷ lệ tối thiểu và synthetic fraction bị giới hạn.
+Nature 2024 và Seddik et al. cho thấy pure recursive synthetic training dẫn tới collapse/loss of tails;
+ngược lại, Gerstgrasser et al. và Kazdan et al. cung cấp bằng chứng rằng khi dữ liệu thật tiếp tục được
+tích lũy/giữ trong pool, collapse không phải tất yếu, dù cách quản lý tỷ lệ và kích thước tập vẫn ảnh
+hưởng test loss. 
+Ở mỗi generation nên giữ nguyên một real sentinel set và theo dõi: real task loss; OOD loss; tỷ lệ rare
+categories; quantiles/tail statistics; diversity/entropy; C2ST/MMD so với real anchor; subgroup TPR/FPR;
+calibration; và fraction của lỗi từ thế hệ  được lặp lại ở . Nếu metric trung bình ổn định nhưng tail
+representation hoặc fairness có slope xấu liên tục, đó phải được coi là failure, bởi nghiên cứu hiện tại
+cho thấy những loại suy giảm này có thể đi trước global collapse. 
+Ablation study nên được thiết kế thế nào
+Một thí nghiệm tốt không chỉ so “có synthetic” với “không synthetic”. Nên giữ optimizer , model
+architecture, compute và số bước huấn luyện cố định rồi chạy một ma trận như:
+và bên trong mỗi tỷ lệ so raw generation vs filtering; single generator vs generator ensemble;
+verifier on/off; grounding on/off; random augmentation vs coverage-targeted augmentation;
+human review on/off. Đây là cách trực tiếp xác định liệu improvement đến từ volume, teacher quality,
+filtering hay việc nhắm đúng vùng dữ liệu.
+Đối với agent, cần thêm ablation về teacher/student asymmetry: dùng cùng một generator nhưng
+student khác kích thước; và cùng student nhưng generator khác. Kết quả EACL 2026—11 ngôn ngữ, 4
+bài toán phân loại—cho thấy ngay cả lượng synthetic data nhỏ cũng có thể giúp model nhỏ vượt model
+generator , nhất là ở ngôn ngữ ít tài nguyên, cho thấy “teacher phải là model deploy tốt nhất” không
+phải điều kiện bắt buộc. 
+Tất cả kết quả nên có nhiều random seeds, confidence interval và effect size. Với nhiều task/subgroup,
+cần correction cho multiple comparisons; nếu sử dụng LLM-as-judge, nên có human audit trên sample
+được stratify theo difficulty/group và báo cáo agreement, vì judge và generator có thể chia sẻ cùng lỗi
+hoặc preference.
+Bằng chứng thực nghiệm: khi dữ liệu tổng hợp giúp và khi nó
+gây hại
+Bảng dưới tập trung vào các nghiên cứu gốc thay vì survey/vendor benchmark. Một số công trình 2026
+vẫn là preprint, nên bằng chứng của chúng có giá trị định hướng nhưng chưa có trọng lượng như kết
+quả peer-reviewed.
+36
+g−1 g
+37
+R, S, R+10%S, R+25%S, R+50%S, R+75%S
+38
+9
+
+Nghiên cứu Miền / thiết kế Kết quả chính Diễn giải và giới hạn
+Self-Instruct
+— Wang et al.
+LLM instruction
+tuning; mô hình
+tự sinh
+instruction/input/
+output rồi lọc
+Vanilla GPT-3 tăng 33 điểm
+tuyệt đối trên Super-
+NaturalInstructions; human
+evaluation còn cách
+InstructGPT-001 khoảng 5 điểm.
+Bằng chứng mạnh
+rằng teacher-
+generated data +
+filtering có thể thay
+một phần annotation
+thủ công. Không phải
+recursive pretraining;
+không chứng minh
+synthetic data vô hạn
+vẫn an toàn.
+phi-1 /
+“Textbooks
+Are All You
+Need”
+Coding LLM 1,3B;
+6B curated web
+tokens + 1B
+GPT-3.5-
+generated
+textbook/exercise
+tokens
+50,6% HumanEval, 55,5%
+MBPP, sau 4 ngày trên 8 A100;
+phi-1-small 350M đạt 45%
+HumanEval. 
+Chứng minh chất
+lượng/curriculum có
+thể bù đáng kể quy
+mô. Nhưng không
+phải clean ablation
+synthetic-vs-real vì dữ
+liệu train là hỗn hợp
+curated-real +
+synthetic.
+Gowal et al.,
+NeurIPS 2021
+Diffusion-
+generated
+images cho
+adversarial
+training
+Với 100M DDPM samples,
+robust accuracy CIFAR-10 đạt 
+66,10% ở thiết lập  8/255,
+tăng 8,96 điểm so với trạng thái
+tốt nhất không dùng external
+data được báo cáo trong nghiên
+cứu; gains cũng xuất hiện trên
+CIFAR-100, SVHN và
+TinyImageNet. 
+Bằng chứng trực tiếp
+rằng synthetic không
+chỉ tăng clean accuracy
+mà có thể tăng
+robustness. Phụ thuộc
+fidelity/diversity của
+generator và cách gán
+nhãn cho ảnh sinh;
+compute lớn.
+Synthetic
+Data, Real
+Errors — Van
+Breugel et al.,
+ICML 2023
+Generative
+synthetic data
+cho downstream
+ML
+Naïve use “synthetic như real”
+không generalize tốt; Deep
+Generative Ensemble cải thiện
+training, evaluation và
+uncertainty, với lợi ích lớn nhất
+ở minority classes/low-density
+regions. 
+Cho thấy cần mô hình
+hóa uncertainty của
+generator; một
+synthetic record không
+nên mặc nhiên có
+cùng độ tin cậy với real
+record.
+Domain
+Adaptation for
+German Law,
+2026 preprint
+LLaMA 3.1 8B và
+Gemma 3 12B;
+synthetic legal
+QA; test passages
+được giữ ngoài
+train
+Difficulty-graded + filtering:
+LLaMA LegalMC4 QA 
+43,0→55,4, BGB QA 39,2→59,2;
+Gemma BGB QA 36,8→76,4.
+Ngược lại, simple instruction QA
+làm LLaMA LegalMC4 QA 
+43,0→35,4. 
+Một trong những minh
+họa rõ nhất rằng 
+generation recipe
+quyết định synthetic
+data giúp hay hại.
+Open QA dùng GPT-4.1
+judge; vẫn là preprint
+và miền pháp luật Đức.
+8
+39
+l 
+∞
+40
+14
+1
+10
+
+Nghiên cứu Miền / thiết kế Kết quả chính Diễn giải và giới hạn
+Cùng nghiên
+cứu luật Đức
+— general
+capability
+Kiểm tra
+catastrophic
+forgetting/
+general skill
+LLaMA MMLU 68,1→67,1 với
+difficulty-graded adaptation;
+Gemma 71,6→71,0, trong khi
+một số ARC scores của Gemma
+tăng. 
+Cho thấy specialization
+có thể đạt gain miền
+lớn mà general
+benchmark chỉ giảm
+nhẹ, nhưng vẫn cần
+kiểm tra rộng hơn
+trước production.
+Synthetic
+clinical data
+for medical
+coding, 2026
+preprint
+Llama 3 70B;
+policy/template-
+grounded
+synthetic clinical
+corpus
+Exact-code F1 từ 0,18 zero-shot
+lên >0,70 sau fine-tuning; Frailty
+F1 0,873 và Advanced Illness
+0,863 trong báo cáo. 
+Hấp dẫn cho privacy-
+constrained healthcare
+vì dữ liệu được thiết kế
+theo policy thay vì phát
+hành EHR thật. Chưa
+chứng minh formal
+privacy chỉ bằng kết
+quả task; cần external
+clinical validation.
+Better as
+Generators
+Than
+Classifiers,
+EACL 2026
+11 ngôn ngữ, 4
+classification
+tasks; LLM lớn
+sinh data cho
+model nhỏ
+Ngay cả lượng synthetic nhỏ
+cũng cho phép smaller models
+vượt large generator , nổi bật ở
+ngôn ngữ ít tài nguyên. 
+Liên quan trực tiếp tới
+các bối cảnh low-
+resource như tiếng
+Việt. Bằng chứng là
+classification/
+multilingual, không tự
+động chuyển sang
+miền high-stakes
+chuyên môn.
+Domino, 2026
+preprint
+Học minimal
+sufficient
+representation
+của miền rồi sinh
+data; coding
+Fine-tuning trên data do
+Domino sinh cải thiện Pass@1 
+tới 4,63% trên các coding
+benchmark được nghiên cứu. 
+Gợi ý agent có thể học
+“định nghĩa miền” từ
+examples thay vì
+expert prompt thủ
+công. Vẫn là preprint
+và evidence chủ yếu ở
+coding/instruction
+tasks.
+Nature model
+collapse —
+Shumailov et
+al. 2024
+Recursive
+generative
+training
+Khi generated outputs làm ô
+nhiễm dữ liệu của thế hệ sau,
+mô hình mất thông tin về phân
+phối gốc, đặc biệt các tails, rồi
+sai số tích lũy. 
+Không có nghĩa “mọi
+synthetic data đều gây
+collapse”; kết quả áp
+dụng đặc biệt cho
+recursive
+contamination/
+replacement.
+41
+42
+38
+43
+13
+11
+
+Nghiên cứu Miền / thiết kế Kết quả chính Diễn giải và giới hạn
+Seddik et al.;
+Gerstgrasser
+et al.; Kazdan
+et al.
+Phân tích các
+chính sách
+recursive training
+Seddik: synthetic-only recursion
+không tránh được collapse
+trong mô hình phân tích của họ,
+còn mixture real+synthetic có
+ngưỡng synthetic tối đa;
+Gerstgrasser/Kazdan: giữ hoặc
+tích lũy real data với
+synthetic có thể tránh
+divergent collapse/stabilize
+training trong các setting
+nghiên cứu. 
+Thông điệp chính là
+provenance và mixing
+policy quan trọng
+ngang chất lượng
+generator; các ngưỡng
+không nên được
+chuyển nguyên xi giữa
+domain/model.
+Fairness
+Feedback
+Loops;
+Fairness
+Collapse
+Synthetic
+feedback qua
+nhiều
+generations
+Wyllie et al. quan sát giảm
+performance, fairness và
+representation nhóm thiểu số
+ngay từ dữ liệu ban đầu
+unbiased; preprint 2026 trên
+Bias in Bios báo cáo fairness
+degradation đi trước
+degradation rõ ở standard LM
+metrics. 
+Average performance
+không đủ làm warning
+signal. Cần
+longitudinal subgroup
+metrics qua nhiều
+vòng tái huấn luyện.
+Các kết quả này dẫn đến ba kết luận tương đối nhất quán.
+Thứ nhất, synthetic data giúp nhiều nhất khi nó bổ sung “thông tin tác vụ” chứ không chỉ entropy
+bề mặt. Synthetic textbook phi-1, legal QA grounded theo điều luật và medical coding data dựa trên
+coding policy đều có cấu trúc kiến thức/tác vụ rõ. 
+Thứ hai, quality control có thể quan trọng hơn số lượng. Việc standard instruction generation làm
+giảm hiệu năng LLaMA trong nghiên cứu luật trong khi difficulty grading + reviewer đem lại double-
+digit gains là quasi-ablation rất thuyết phục cho luận điểm này; Self-Instruct cũng lọc invalid/similar
+samples trước fine-tuning. 
+Thứ ba, lợi ích một vòng không bảo đảm ổn định nhiều vòng. Một synthetic corpus có thể cải thiện 
+ nhưng nếu model  tiếp tục sinh ground truth cho , sai số và bias có thể bị khuếch đại. Bởi vậy
+cần phân biệt rõ one-shot augmentation, iterative refresh có real anchor và self-consuming recursion; bằng
+chứng về collapse chủ yếu cảnh báo trường hợp thứ ba, không phủ định hai trường hợp đầu. 
+Chiến lược giảm bias, distribution shift và feedback loop
+Giữ một “real-data anchor” bất biến. Đây là mitigation có bằng chứng mạnh nhất. Đừng để synthetic
+data thay thế dần toàn bộ dữ liệu thật. Duy trì provenance và một lượng real data đại diện trong
+training pool; quan trọng hơn, giữ real calibration/test/OOD sets hoàn toàn không tham gia
+generation. Các nghiên cứu về recursive learning cho thấy accumulation hoặc real–synthetic mixing
+thay đổi căn bản tính ổn định so với synthetic replacement. 
+Không dùng một synthetic ratio cố định theo “best practice” chung. Tỷ lệ tối ưu phụ thuộc model,
+domain, generator và mức rarity. Seddik et al. cho thấy về lý thuyết tồn tại vùng synthetic fraction dưới
+44
+4
+45
+46
+M
+1 M
+1 M
+2
+47
+48
+12
+
+đó collapse có thể tránh trong setting của họ, nhưng ngưỡng đó không phải hằng số phổ quát. Cách an
+toàn là sweep tỷ lệ và chọn bằng real validation + recursive stress testing. 
+Targeted generation thay vì blanket generation. Ưu tiên các vùng được đo là thiếu: low-density slice,
+class thiểu số, language variant, hardware state, mức difficulty, corner case. Không tăng synthetic
+volume ở vùng vốn đã dày chỉ vì generation rẻ. Quan sát của DGE rằng low-density/minority regions là
+nơi generator uncertainty lớn nhất đồng thời cho thấy cần cả augmentation lẫn uncertainty-aware
+weighting ở những vùng này. 
+Grounding + verifier. Với luật/y tế/finance/science, generator nên lấy content từ nguồn chuẩn và đầu
+ra phải có provenance đến đoạn nguồn. Lỗi logic có thể kiểm bằng symbolic rules; code bằng compile/
+unit tests; toán bằng solver; structured records bằng schema/range/causal constraints. Pipeline luật
+Đức cho thấy LLM reviewer loại một lượng lớn candidate và cách difficulty-graded/filtering đem lại lợi
+ích rõ hơn generation đơn giản. 
+Multi-generator hoặc ensemble thay vì độc canh một teacher. Khi tất cả synthetic samples đến từ
+một model, lỗi đặc trưng của model đó có thể trở thành inductive bias của student. DGE là bằng chứng
+thực nghiệm rằng mô hình hóa uncertainty qua nhiều generator/parameter hypotheses có thể cải thiện
+downstream results so với cách naïve.  Một pipeline thực tế có thể dùng hai generator khác họ hoặc
+generator–critic khác provider/model family, rồi ưu tiên mẫu có agreement cao và audit disagreement.
+Human-in-the-loop nên tập trung vào vùng rủi ro cao, không phải review ngẫu nhiên toàn bộ
+corpus. Stratify review theo low-density, protected groups, high-uncertainty, safety-critical outputs, rare
+event và generator disagreement. Điều này sử dụng thời gian chuyên gia như một “active data
+acquisition budget” thay vì một bước QA đồng đều.
+Domain randomization có calibration. Trong sim-to-real, randomization nên phủ nuisance variables
+nhưng vẫn tôn trọng causal/physical constraints. Isaac Sim/Replicator cung cấp các biến pose, lighting,
+texture, camera; nghiên cứu domain randomization cho thấy variation có thể giúp real transfer , nhưng
+simulation modeling error vẫn là nguồn reality gap. 
+Calibration phải dùng real data. Nếu synthetic corpus quá sạch hoặc teacher quá tự tin, model
+student có thể học xác suất không phản ánh real-world noise. Temperature scaling hoặc calibration
+khác nên được fit trên real calibration split và đánh giá riêng theo subgroup/OOD. 
+Privacy phải được coi là threat-model problem. Trước tiên xác định attacker thấy được gì: synthetic
+samples, generator API, metric API, model weights hay query interface. Khi yêu cầu formal guarantee,
+dùng DP với privacy accounting end-to-end; sau đó vẫn chạy membership/attribute/reconstruction
+auditing. Không suy ra privacy từ “không có exact duplicate”, vì các attack đã cho thấy similarity filters
+có thể bị qua mặt. 
+Ghi provenance ở cấp mẫu. Tối thiểu nên lưu real/synthetic, generator ID/version, prompt/
+template version, seed nếu có, nguồn grounding, verifier scores, thời điểm sinh, policy/filter version và
+generation lineage. Điều này cho phép loại bỏ có chọn lọc một generator bị phát hiện lỗi, ước lượng tỷ
+lệ contamination, và thực hiện weighting theo nguồn; các nghiên cứu mới về recursive learning cũng
+lưu ý rằng chiến lược kiểm soát phụ thuộc vào khả năng phân biệt nguồn real và synthetic. 
+Không tự động biến production output thành training truth. Feedback từ production cần đi qua
+quarantine, deduplication, provenance và real/human verification. Đây là khác biệt giữa “continuous
+learning” và “continuous self-confirmation”.
+49
+14
+50
+14
+51
+33
+17
+52
+13
+
+Hướng dẫn triển khai và checklist cho miền chuyên biệt
+Một chương trình synthetic-data tốt nên bắt đầu bằng định nghĩa khoảng trống chứ không bắt đầu
+bằng lựa chọn generator . Ví dụ: “thiếu 500 case lỗi cảm biến ở nhiệt độ cao”, “thiếu QA pháp lý yêu cầu
+kết hợp hai điều khoản”, “model sai gấp ba ở nhóm ngôn ngữ X”, hoặc “rare class chỉ có 35 real
+examples”. Nếu không định nghĩa được vùng thiếu bằng metric, rất khó chứng minh generation đã giải
+quyết scarcity thay vì chỉ nhân bản phân phối phổ biến.
+Checklist trước khi sinh dữ liệu
+[ ] Xác định rõ target task, target population/domain và loại shift quan trọng; định nghĩa trước
+primary metric, OOD metric, worst-group metric và failure threshold.
+[ ] Tách real held-out test, real OOD và calibration sets trước khi prompt engineering/generator
+tuning; khi một source document sinh nhiều mẫu, split theo source/entity/time chứ không chỉ
+random row. Thiết kế passage-level holdout trong nghiên cứu luật Đức là một ví dụ tốt. 
+[ ] Audit dữ liệu thật cho class balance, subgroup coverage, tail, missingness, duplicates, label
+noise và provenance; dùng kết quả này để lập “coverage target” cho generator .
+Checklist trong lúc sinh
+[ ] Chọn generator theo loại scarcity: LLM cho semantic/task gaps; simulator cho causal physical
+scenarios; GAN/tabular model cho joint-distribution augmentation; diffusion cho visual fidelity;
+rules/DSL cho edge case cần kiểm soát chính xác.
+[ ] Tạo candidate pool lớn hơn dataset cuối, sau đó lọc bằng schema, grounding, verifier ,
+dedupe, uncertainty và human review có mục tiêu; các kết quả Self-Instruct và legal QA đều cho
+thấy generation-plus-filtering tốt hơn coi mọi output là training truth. 
+[ ] Lưu provenance ở cấp record và tránh một generator duy nhất cho toàn bộ critical corpus khi
+có khả năng đa dạng hóa nguồn.
+Checklist trước huấn luyện
+[ ] Đo marginals/conditionals và MMD/C2ST giữa synthetic với real; nhưng không loại mẫu chỉ vì
+synthetic cố ý khác global distribution để tăng rare-event coverage. MMD là formal two-sample
+framework; utility cuối vẫn phải xác định trên real data. 
+[ ] Chạy duplicate/memorization/privacy attack audit nếu nguồn thật nhạy cảm; similarity-based
+privacy checks không đủ làm privacy guarantee. 
+[ ] Chuẩn bị ablation real-only, synthetic-only và nhiều tỷ lệ hybrid với compute/model/
+hyperparameters càng giống nhau càng tốt.
+Checklist đánh giá
+[ ] Chỉ gọi là “improvement” khi  vượt  trên held-out real, confidence interval phù hợp,
+đồng thời không vi phạm guardrail OOD, robustness, calibration, privacy hay fairness.
+[ ] Báo cáo subgroup/tail metrics, không chỉ micro-average. Đặc biệt theo dõi fairness riêng vì
+bias có thể suy giảm trước global language-model metric. 
+[ ] Chạy recursive test nhiều thế hệ nếu production có khả năng đưa model-generated content
+trở lại training pipeline; so replacement với anchored/accumulation policies. 
+• 
+• 
+28
+• 
+• 
+• 
+27
+• 
+• 
+53
+• 
+17
+• 
+• R+S R
+• 
+54
+• 
+55
+14
+
+Checklist triển khai
+[ ] Bắt đầu bằng shadow hoặc canary deployment; log lỗi theo domain slice và provenance của
+training data.
+[ ] Theo dõi drift bằng real incoming data, C2ST/MMD hoặc feature-distribution monitors,
+calibration drift, subgroup performance, tail incidence và error recurrence.
+[ ] Khi phát hiện gap, ưu tiên thu thập một lượng real data mới có thông tin cao, rồi dùng nó
+để hiệu chỉnh thế hệ synthetic kế tiếp—không chỉ phản hồi bằng cách sinh thêm từ cùng model.
+Có thể áp dụng một acceptance rule dạng:
+trong đó các ngưỡng  được quyết định trước theo rủi ro nghiệp vụ, không chỉnh sau khi nhìn kết quả.
+Triết lý này tránh tình trạng một gain trung bình nhỏ che giấu một harm lớn ở subgroup hoặc OOD
+condition.
+Trong miền high-stakes như y tế hay pháp luật, nên đặt yêu cầu cao hơn: expert-reviewed real test set,
+external-site/temporal validation, provenance đến nguồn chuẩn, đánh giá factuality riêng với fluency, và
+quy trình escalation cho model uncertainty. Kết quả mã hóa y khoa và luật Đức cho thấy synthetic
+specialization rất triển vọng, nhưng cả hai ví dụ 2026 vẫn không thay thế nhu cầu validation trong môi
+trường thật mà mô hình sẽ phục vụ. 
+Khoảng trống nghiên cứu và các thí nghiệm nên ưu tiên
+Khoảng trống lớn nhất là thiếu một lý thuyết thực dụng về “synthetic data budget”. Chúng ta biết
+synthetic-only recursive replacement có thể collapse và mixture với real data có thể ổn định hơn, nhưng
+chưa có một tỷ lệ tối ưu phổ quát cho từng model/domain. Seddik et al. đưa ra ngưỡng trong mô hình
+thống kê của họ; các công trình accumulation lại cho thấy policy retention cũng quan trọng. Điều còn
+thiếu là cách ước lượng trước khi train lượng synthetic tối ưu dựa trên generator quality, effective
+sample size, divergence và real-data coverage. 
+Thí nghiệm đề xuất: với cùng real anchor , sweep synthetic ratios từ 0 đến 90%, đồng thời đo C2ST/
+MMD, generator uncertainty và downstream OOD loss. Fit một response surface
+để kiểm tra liệu có thể dự đoán vùng “helpful”, “neutral” và “harmful” trước full-scale training hay không.
+Khoảng trống thứ hai là tail fidelity. Global FID/MMD hoặc classifier accuracy có thể che giấu việc mất
+các mode hiếm—đúng cơ chế xuất hiện sớm của model collapse. 
+Thí nghiệm đề xuất: tạo benchmark có biết trước ground-truth tail, với các event probability giảm từ 
+ đến . So GAN, diffusion, simulator và LLM-agent generation theo recall of support, conditional
+calibration và downstream rare-event recall, thay vì chỉ global similarity. Trong miền thật, dùng expert-
+defined rare slices và báo cáo worst-slice confidence intervals.
+Khoảng trống thứ ba là causal fidelity. Một synthetic dataset có thể khớp correlations nhưng vi phạm
+causal mechanism. Đây là vấn đề đặc biệt nguy hiểm trong medicine, finance, robotics và policy: model
+học một correlation “đẹp” do generator tưởng tượng thay vì quan hệ có thật.
+• 
+• 
+• 
+Deploy=(Δ >real 0)∧(Δ ≥OOD −τ )∧o (Δ ≥worst-group −τ )∧g (Δ ≤calibration τ )∧c (privacy pass)∧(recursive stability pass)
+τ
+56
+44
+Utility=f(r , D(P ,P ), U , coverage)synthetic R S G
+57
+10−1 10−5
+15
+
+Thí nghiệm đề xuất: xây các synthetic generators ở ba mức: distribution-matching only; constraint-
+aware; causal/simulator grounded. Giữ marginals gần tương đương và kiểm tra transfer sang các
+interventions/OOD regimes mà chỉ causal model dự đoán đúng. Sim-to-real domain randomization
+cung cấp một mẫu tự nhiên cho loại đánh giá này. 
+Khoảng trống thứ tư là interaction giữa fairness và model collapse. Bằng chứng mới cho thấy
+social bias có thể suy giảm trước standard LM metrics, nên “collapse detector” dựa trên perplexity hay
+diversity toàn cục là chưa đủ. 
+Thí nghiệm đề xuất: chạy 10–20 generations với protected-group prevalence được kiểm soát; so pure
+replacement, fixed-real-anchor , accumulating-real, rebalanced synthetic và uncertainty-weighted
+synthetic. Theo dõi cùng lúc perplexity, utility, representation, TPR/FPR, calibration và stereotype
+association. Một kết quả quan trọng cần tìm là fairness early-warning metric có dự báo được harm
+trước khi accuracy giảm hay không.
+Khoảng trống thứ năm là dependence giữa generator và evaluator. Nếu cùng một họ LLM sinh dữ
+liệu, lọc dữ liệu và chấm model student, correlated errors có thể tạo ra benchmark inflation. Nghiên cứu
+luật Đức dùng LLM-as-judge cho open QA nhưng cũng bổ sung exact-accuracy MCQ; đây là bước tốt,
+song vẫn cho thấy nhu cầu evaluator diversity và human audit. 
+Thí nghiệm đề xuất: factorial study với generator A/B, verifier A/B, judge A/B và human gold sample.
+Đo mức synthetic gain thay đổi thế nào khi evaluator cùng family hoặc khác family với generator . Nếu
+gain giảm đáng kể khi chuyển sang independent human/executable evaluator , phần chênh lệch đó là
+một ước lượng hữu ích của evaluation coupling bias.
+Khoảng trống thứ sáu là privacy–utility–tail trade-off. Tail samples thường chính là records dễ nhận
+diện nhất; trong khi synthetic augmentation muốn bảo tồn rare patterns, privacy lại muốn giảm khả
+năng tái dựng cá nhân. ReconSyn cho thấy outliers là vùng đặc biệt dễ bị reconstruction trong những
+synthetic-data privacy mechanisms dựa vào similarity heuristics. 
+Thí nghiệm đề xuất: với nhiều mức DP budget, đo đồng thời rare-group utility, membership/
+reconstruction success, C2ST/MMD và downstream TSTR. Thay vì báo cáo một “privacy score”, dựng 
+Pareto frontier privacy–utility–tail coverage cho từng miền.
+Khoảng trống thứ bảy, đặc biệt liên quan Việt Nam, là synthetic data cho ngôn ngữ ít tài nguyên
+kết hợp chuyên môn sâu. EACL 2026 cho thấy LLM-as-generator có lợi đáng kể trong phân loại đa
+ngôn ngữ và đặc biệt ở low-resource languages, nhưng điều đó chưa trả lời liệu cùng hiệu ứng có giữ
+được ở tiếng Việt chuyên ngành y, luật, kỹ thuật hoặc tài chính, nơi terminology và factual grounding
+khó hơn. 
+Một benchmark có giá trị cao cho tiếng Việt sẽ là: cùng một tập tài liệu chuyên ngành được chuyên gia
+xác nhận, xây real test theo source/time holdout; so annotation thuần người, LLM synthetic, retrieval-
+grounded synthetic, generator–critic synthetic và hybrid real–synthetic; đánh giá trên tiếng Việt chuẩn,
+biến thể cách diễn đạt, tài liệu noisy/OCR, câu hỏi có distractor và temporal OOD. Thiết kế passage-level
+contamination control của nghiên cứu luật Đức là một mô hình phù hợp để bắt đầu. 
+Nhìn tổng thể, bằng chứng hiện tại không ủng hộ hai cực đoan “synthetic data sẽ giải quyết khủng
+hoảng dữ liệu” hoặc “synthetic data tất yếu gây model collapse”. Bằng chứng phù hợp hơn với một kết
+luận có điều kiện: synthetic data hoạt động tốt khi nó là một cơ chế thu nhận thông tin có mục
+tiêu, có grounding/verification, có dữ liệu thật làm neo và được đánh giá trên môi trường thật
+58
+54
+28
+17
+38
+28
+16
+
+độc lập; nó trở nên nguy hiểm khi số lượng thay thế chất lượng, khi provenance bị mất, hoặc khi
+output của mô hình quay trở lại thành ground truth mà không qua kiểm chứng. Các nghiên cứu
+tích cực về Self-Instruct, phi-1, robustness, luật, y khoa và đa ngôn ngữ cùng các nghiên cứu tiêu cực về
+real-error , model collapse, fairness collapse và privacy leakage đều hội tụ khá rõ vào nguyên tắc này. 
+https://arxiv.org/html/2601.14160v1
+https://arxiv.org/html/2601.14160v1
+https://arxiv.org/abs/2212.10560
+https://arxiv.org/abs/2212.10560
+https://www.nature.com/articles/s41586-024-07566-y
+https://www.nature.com/articles/s41586-024-07566-y
+https://arxiv.org/abs/2403.07857
+https://arxiv.org/abs/2403.07857
+https://proceedings.mlr .press/v202/van-breugel23a.html
+https://proceedings.mlr .press/v202/van-breugel23a.html
+https://docs.nvidia.com/learning/physical-ai/getting-started-with-isaac-sim/latest/synthetic-data-
+generation-for-perception-model-training-in-isaac-sim/02-what-is-synthetic-data-generation.html
+https://docs.nvidia.com/learning/physical-ai/getting-started-with-isaac-sim/latest/synthetic-data-generation-for-perception-
+model-training-in-isaac-sim/02-what-is-synthetic-data-generation.html
+https://argilla-io.github.io/distilabel/1.5.3/sections/getting_started/quickstart/
+https://argilla-io.github.io/distilabel/1.5.3/sections/getting_started/quickstart/
+https://proceedings.mlr .press/v139/koh21a.html
+https://proceedings.mlr .press/v139/koh21a.html
+https://arxiv.org/html/2603.23515v1
+https://arxiv.org/html/2603.23515v1
+https://arxiv.org/html/2312.05114v2
+https://arxiv.org/html/2312.05114v2
+https://arxiv.org/abs/1703.06907
+https://arxiv.org/abs/1703.06907
+https://arxiv.org/abs/1710.06537
+https://arxiv.org/abs/1710.06537
+https://docs.nvidia.com/learning/physical-ai/getting-started-with-isaac-sim/latest/synthetic-data-
+generation-for-perception-model-training-in-isaac-sim/04-generating-a-synthetic-dataset-using-a-
+replicator .html
+https://docs.nvidia.com/learning/physical-ai/getting-started-with-isaac-sim/latest/synthetic-data-generation-for-perception-
+model-training-in-isaac-sim/04-generating-a-synthetic-dataset-using-a-replicator .html
+https://proceedings.neurips.cc/paper/2019/hash/254ed7d2de3b23ab10936522dd547b78-
+Abstract.html
+https://proceedings.neurips.cc/paper/2019/hash/254ed7d2de3b23ab10936522dd547b78-Abstract.html
+https://docs.nvidia.com/learning/physical-ai/getting-started-with-isaac-for-healthcare/latest/
+training-healthcare-robots-from-scratch/02-data-loading/03-maisi-synthetic-medical-data.html
+https://docs.nvidia.com/learning/physical-ai/getting-started-with-isaac-for-healthcare/latest/training-healthcare-robots-
+from-scratch/02-data-loading/03-maisi-synthetic-medical-data.html
+59
+1 6 28 41 46 50
+2 8 27 59
+3 13 15 36 37 47 55 57
+4 12
+5 14 29
+7
+9 20 25
+10 11
+16 42 56
+17
+18 58
+19
+21
+22
+23
+17
+
+https://mostly.ai/synthetic-data-sdk
+https://mostly.ai/synthetic-data-sdk
+https://mostly.ai/
+https://mostly.ai/
+https://jmlr .org/papers/v13/gretton12a.html
+https://jmlr .org/papers/v13/gretton12a.html
+https://arxiv.org/abs/1610.06545
+https://arxiv.org/abs/1610.06545
+https://proceedings.neurips.cc/paper/2017/hash/8a1d694707eb0fefe65871369074926d-
+Abstract.html
+https://proceedings.neurips.cc/paper/2017/hash/8a1d694707eb0fefe65871369074926d-Abstract.html
+https://proceedings.mlr .press/v70/guo17a.html
+https://proceedings.mlr .press/v70/guo17a.html
+https://proceedings.neurips.cc/paper_files/paper/2016/file/6a9659feb1216f14f7384ba499518b38-
+Paper .pdf
+https://proceedings.neurips.cc/paper_files/paper/2016/file/6a9659feb1216f14f7384ba499518b38-Paper .pdf
+https://proceedings.neurips.cc/paper/2020/file/03593ce517feac573fdaafa6dcedef61-Paper .pdf
+https://proceedings.neurips.cc/paper/2020/file/03593ce517feac573fdaafa6dcedef61-Paper .pdf
+https://aclanthology.org/2026.findings-eacl.148/
+https://aclanthology.org/2026.findings-eacl.148/
+https://arxiv.org/abs/2306.11644
+https://arxiv.org/abs/2306.11644
+https://proceedings.neurips.cc/paper/2021/file/21ca6d0cf2f25c4dbb35d8dc0b679c3f-Paper .pdf
+https://proceedings.neurips.cc/paper/2021/file/21ca6d0cf2f25c4dbb35d8dc0b679c3f-Paper .pdf
+https://arxiv.org/html/2605.30039v2
+https://arxiv.org/html/2605.30039v2
+https://arxiv.org/abs/2404.05090
+https://arxiv.org/abs/2404.05090
+https://openreview.net/forum?id=5B2K4LRgmz
+https://openreview.net/forum?id=5B2K4LRgmz
+https://docs.nvidia.com/learning/physical-ai/getting-started-with-isaac-sim/latest/synthetic-data-
+generation-for-perception-model-training-in-isaac-sim/03-domain-randomization-with-replicator .html
+https://docs.nvidia.com/learning/physical-ai/getting-started-with-isaac-sim/latest/synthetic-data-generation-for-perception-
+model-training-in-isaac-sim/03-domain-randomization-with-replicator .html
+https://arxiv.org/html/2502.18049v5
+https://arxiv.org/html/2502.18049v5
+https://arxiv.org/abs/2608.04268
+https://arxiv.org/abs/2608.04268
+24
+26
+30 53
+31
+32
+33
+34
+35
+38
+39 45
+40
+43
+44 49
+48
+51
+52
+54
+18

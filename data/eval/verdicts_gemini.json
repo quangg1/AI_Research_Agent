@@ -1,0 +1,52 @@
+[
+  {
+    "id": 1,
+    "verdict": "NOT_SUPPORTED",
+    "reason": "The excerpt does not contain the 80% statistic or discuss statistical ties between SAS and MAS[cite: 1]."
+  },
+  {
+    "id": 2,
+    "verdict": "SUPPORTED",
+    "reason": "The provided table data explicitly shows SMTL-100 at 43.6 and SMTL-300 at 48.6, confirming the +5.0 increase as interaction steps scale[cite: 1]."
+  },
+  {
+    "id": 3,
+    "verdict": "CANNOT_VERIFY",
+    "reason": "The excerpt cuts off while discussing prior studies and is too short to verify the claim regarding structural superiority[cite: 1]."
+  },
+  {
+    "id": 4,
+    "verdict": "SUPPORTED",
+    "reason": "The excerpt directly states that switching from Gemini-1.5-Flash to Gemini-2.0-Flash increases 'Both Pass' ties while SAS and MAS Wins remain relatively unchanged[cite: 1]."
+  },
+  {
+    "id": 5,
+    "verdict": "SUPPORTED",
+    "reason": "The text confirms that agent routing provides tangible operational cost efficiency by unlocking new accuracy-efficiency tradeoffs[cite: 1]."
+  },
+  {
+    "id": 6,
+    "verdict": "SUPPORTED",
+    "reason": "The table data explicitly confirms that the SMTL-100 model achieves a score of 43.6[cite: 1]."
+  },
+  {
+    "id": 7,
+    "verdict": "NOT_SUPPORTED",
+    "reason": "The excerpt discusses token consumption but contains none of the specific monetary prices or percentage routing allocations mentioned in the claim[cite: 1]."
+  },
+  {
+    "id": 8,
+    "verdict": "SUPPORTED",
+    "reason": "The table confirms the baseline 43.6% for SMTL-100, 43.4% for Tongyi, and 41.2% for MiroThinker, fully supporting the calculated margins[cite: 1]."
+  },
+  {
+    "id": 9,
+    "verdict": "SUPPORTED",
+    "reason": "The text explicitly confirms that the model reaches 78.0% on XBench-DeepSearch[cite: 1]."
+  },
+  {
+    "id": 10,
+    "verdict": "NOT_SUPPORTED",
+    "reason": "The memo presents 88.1% and +12.0 percentage points as absolute fixed values, whereas the source states 'up to 88.1%' and a range of '1.1-12%', making the specific absolute numbers in the claim unsupported[cite: 1]."
+  }
+]

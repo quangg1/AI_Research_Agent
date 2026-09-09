@@ -13,7 +13,17 @@ import re
 WORD_TARGET = {"quick": 900, "standard": 2400, "deep": 5500}
 REPORT_MAX_TOKENS = {"quick": 6144, "standard": 12000, "deep": 24000}
 # Depth-aware note budgets (deep keeps more operational detail for the writer).
-NOTES_MAX_CHARS = {"quick": 20_000, "standard": 40_000, "deep": 64_000}
+# "deep" skips the LLM compress pass (SKIP_LLM_COMPRESS_DEPTHS below), so this
+# ceiling *is* what the writer sees. With merge_unique_evidence now keeping
+# enriched full_text instead of dropping it, quotes run closer to the
+# QUOTE_CHARS cap (2800/item) more often, so 8 dims x ~16 items could already
+# exceed the old 64k ceiling on its own — later (still-relevant) dimensions
+# were getting silently truncated off the end, not because there was too
+# little evidence but because there was too little room for it. The model
+# (gemini-3.6-flash) has a context window far above this either way, so
+# raising it costs more input tokens on the one already-budgeted writer call,
+# not an extra Gemini request.
+NOTES_MAX_CHARS = {"quick": 20_000, "standard": 40_000, "deep": 140_000}
 ITEMS_PER_DIMENSION = {"quick": 4, "standard": 10, "deep": 16}
 QUOTE_CHARS = {"quick": 700, "standard": 1400, "deep": 2800}
 COMPRESS_MAX_TOKENS = {"quick": 6144, "standard": 8192, "deep": 12288}
@@ -236,10 +246,21 @@ def writer_system() -> str:
         "in the notes, e.g. DeepSeek-R1 vs o1/o3) over abstract taxonomy. "
         "Named systems need operational description, not name-drops. Enumerated failure modes stay enumerated. "
         "Counter-evidence must engage the strongest contradicting source in substance. "
+        "CONCEPTUAL ACCURACY (critical): When describing technical mechanisms (e.g., 'RAG reduces hallucinations by...', "
+        "'SSR truncates vs reflection regenerates', 'attention attenuation causes lost-in-the-middle'), "
+        "verify the mechanism description against the cited source's exact wording [n]. "
+        "Do NOT conflate similar but distinct concepts (e.g., truncation ≠ reflection, "
+        "SSR ≠ general reranking, attention weights ≠ retrieval quality). "
+        "If a source describes mechanism X and you write about mechanism Y, that is a conceptual error. "
+        "WORKED EXAMPLE SOURCE VERIFICATION (critical): Before writing ## Worked example, "
+        "verify that ALL workflow steps come from the SAME source evaluation [n]. "
+        "If steps come from [5 repo] and [6 repo], these are SEPARATE systems — do NOT unify them. "
+        "Describe them separately in ## Detailed analysis instead, or clearly mark as Composite. "
         "Form claims bottom-up from extracted numbers first. "
         "'Verified' / quote-matched ≠ independently measured. "
         "Author estimates stay author_assumption, never High. "
-        "GitHub Awesome-lists are Band C. arXiv+OpenReview of the same paper = one work. "
+"Claim hard-gate: every factual claim (numeric or prose) must be supportable by 1-2 contiguous sentences in the cited source; do not invent mechanisms, before/after stories, or paraphrases absent from that span. "
+        "GitHub Awesome-lists are Band C. arXiv preprints are NOT peer-reviewed (label preprint, Band B). Predatory venues (e.g. IJSR) are Band C / unreliable — never Band A. arXiv+OpenReview of the same paper = one work. Keep numeric scope: do not promote a small-model/HAR/CPU measurement into a universal 70B LLM fact. "
         "Write 42% → 62% as +20 percentage points (relative +47.6%), never '+20% boost'. "
         "Folklore ('bigger models always win', 'RAG always needs a vector DB', "
         "'LLM-as-judge is ground truth') must not be recommended."
@@ -257,6 +278,7 @@ def writer_prompt(
     prior_note: str,
     dimension_list: str,
     method_block: str = "",
+    adaptive_guidance: str | None = None,
 ) -> str:
     depth = str((brief or {}).get("depth") or "standard")
     limit = notes_max_chars(depth)
@@ -284,7 +306,7 @@ def writer_prompt(
         f"Research findings (cleaned notes — ground-truth excerpts):\n{notes[:limit]}\n\n"
         f"Citation ledger (ONLY these [n] are legal):\n{ledger}\n\n"
         "Write a reader-facing deep-research memo that ANSWERS the question.\n"
-        f"Target length: at least {min_words} words of substantive prose. "
+        f"{adaptive_guidance or f'Target length: at least {min_words} words of substantive prose.'}\n"
         "Concise ≠ short: avoid repeating the same thesis, but DO use the full budget to surface "
         "every distinct fact, metric, and named study from the notes.\n"
         "Anti-redundancy (critical):\n"
@@ -301,6 +323,19 @@ def writer_prompt(
         "- Detailed analysis must be ANALYTICAL (conclusion → evidence → nuance). "
         "Each ### must add facts NOT already stated in Executive summary / Key findings. "
         "No Evidence/Counter-evidence/Inference stencil per subsection.\n"
+        "- Every ### heading is a noun phrase naming the dimension (e.g. '### Verification mechanisms'). "
+        "NEVER a sentence or transition phrase carried over from the prose before it "
+        "(FORBIDDEN: '### Then we address alignment', '### And discuss methodologies for X' — "
+        "write that sentence as body text under the PRIOR heading instead of promoting it to a new one).\n"
+        "Paper-specific subsection structure (CRITICAL for quality):\n"
+        "When a dimension references a specific paper [n], structure that ### subsection as:\n"
+        "  1. Technical definition: One sentence defining the method/framework from the paper.\n"
+        "  2. Measured findings: Specific metrics WITH conditions AND baselines.\n"
+        "     Example: 'Self-Instruct achieves +33 points on SuperNI with filtering [8] vs -7.6 without [1]'\n"
+        "     NOT: 'improves performance' or 'shows good results'\n"
+        "  3. Mechanism: 2-3 sentences on HOW/WHY it works.\n"
+        "  4. Operational constraints: When it applies, when it fails, trade-offs.\n"
+        "Always cite the specific paper: [8], [1], [Nature 2024], NOT just [1 peer].\n"
         "Method:\n"
         "- Extract numeric rows BEFORE leaning H1 or H2.\n"
         "- Path: answer → key findings → analysis → measured table → worked example → "
@@ -326,7 +361,12 @@ def writer_prompt(
         "Each ###: analytical prose with mechanism + implication + cited numbers; "
         "250–450 words per subsection when notes allow. "
         "Mine ALL relevant bullets from notes — do not stop after one source per dimension. "
-        "If Scalability is listed, keep it separate from Latency/Cost.)\n"
+        "If Scalability is listed, keep it separate from Latency/Cost. "
+        "COMPARISON QUESTIONS (when question asks 'how do different X, Y, Z affect...'): "
+        "Create a SEPARATE ### subsection for EACH comparison dimension (e.g., '### Retrieval strategies', "
+        "'### Embedding models', '### Reranking methods', '### Context-window configurations'). "
+        "Do NOT merge multiple comparison dimensions into one generic subsection like '### System components'. "
+        "Each dimension subsection must compare AT LEAST 2 specific approaches with evidence [n].)\n"
         "## Quantitative findings\n"
         "  Markdown table ONLY for measured outcome metrics found in notes:\n"
         "  Metric | Value | Benchmark | Condition | Baseline | Source [n]\n"
@@ -338,7 +378,14 @@ def writer_prompt(
         "## Worked example\n"
         "  (Required for deep / comparisons when notes name ≥2 systems: concrete token-flow or "
         "runtime walkthrough. Setup sizes like ISL/OSL belong here if needed. "
-        "If notes lack measured numbers, open with 'Illustrative only — no measured run in sources' "
+        "CRITICAL: Must be from ONE source [n] that evaluated the complete system end-to-end. "
+        "FORBIDDEN: Combining implementation details from multiple sources ([5 repo], [6 repo]) "
+        "into a unified workflow — if sources did not evaluate the SAME system together, "
+        "do NOT write a Worked example. Instead, describe each system separately under ## Detailed analysis. "
+        "Only if you absolutely must show a composite process (e.g., standard RAG pipeline assembled from "
+        "common building blocks), open with '> **Composite** — steps drawn from N separate systems "
+        "that were not evaluated together.' and cite each step separately [n]. "
+        "If notes lack measured numbers, open with '> **Illustrative only** — no measured run in sources' "
         "and do NOT invent token counts or % thresholds. Every factual claim needs [n].)\n"
         "## Comparison (only if applicable)\n"
         "## Contradictions & debates\n"

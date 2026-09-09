@@ -340,9 +340,33 @@ def _evidence_text(ev: dict) -> str:
     return " ".join(p for p in parts if p)
 
 
-def _relevant_sentences(ev: dict, patterns: list[str], topic_terms: list[str], limit: int = 2) -> list[str]:
-    """Sentences in a source that actually speak to this dimension."""
-    text = re.sub(r"\s+", " ", _evidence_text(ev))
+def _relevant_sentences(ev: dict, patterns: list[str], topic_terms: list[str], limit: int = 2, *, dimension_label: str = "") -> list[str]:
+    """Sentences in a source that actually speak to this dimension.
+    
+    If dimension_label is provided, will first select best passage for the dimension,
+    then extract relevant sentences from that passage.
+    """
+    # Use dimension-specific passage if available
+    if ev.get("selected_passage"):
+        text = ev["selected_passage"]
+    elif dimension_label:
+        # Select best passage for this dimension
+        from app.retrieval.passage import best_passage_for_claim
+        full_text = _evidence_text(ev)
+        if full_text:
+            best_passage = best_passage_for_claim(
+                full_text,
+                dimension_label,
+                patterns=patterns,
+                topic_terms=topic_terms,
+            )
+            text = best_passage if best_passage else full_text
+        else:
+            text = full_text
+    else:
+        text = _evidence_text(ev)
+    
+    text = re.sub(r"\s+", " ", text)
     if not text:
         return []
     sentences = [s.strip() for s in re.split(r"(?<=[.!?;])\s+", text) if len(s.strip()) > 40]
@@ -370,16 +394,20 @@ def _analysis_sections(query: str, dossier: list[dict], ledger: list[Citation], 
     """One evidence-grounded section per must-answer dimension."""
     anchors = distinctive_terms(user_goal(query), limit=10)
     by_id = {s.get("id"): s for s in slots}
+    
+    # Dossier already has per-dimension evidence with selected passages from coverage.py
     blocks: list[str] = []
     for dim in _dimensions(dossier):
         slot = by_id.get(dim.get("id")) or {}
         patterns = [p for p in (slot.get("patterns") or []) if p]
         topic_terms = [t for t in (slot.get("topic_terms") or anchors) if t]
+        dim_label = dim.get("label") or ""
+        
         lines: list[str] = []
         used_cites: list[str] = []
         for ev in dim.get("items") or []:
             cite = _cite_for_evidence(ev, ledger)
-            sentences = _relevant_sentences(ev, patterns, topic_terms)
+            sentences = _relevant_sentences(ev, patterns, topic_terms, dimension_label=dim_label)
             if not sentences:
                 continue
             used_cites.append(cite)
@@ -512,7 +540,10 @@ def _findings_narrative(
         cites = " ".join(
             dict.fromkeys(c for c in (_cite_for_evidence(ev, ledger) for ev in dim.get("items") or []) if c)
         )
-        blocks.append(f"**{dim.get('label')}** is carried by the collected sources. {cites}".strip())
+        # Don't emit empty filler - only add if we have real synthesis
+        label = dim.get('label') or ""
+        if label and cites:
+            blocks.append(f"**{label}** {cites}".strip())
     if partial:
         labels = "; ".join((d.get("label") or "")[:70] for d in partial[:3])
         blocks.append(
@@ -555,8 +586,23 @@ def _user_memo_markdown(
     analysis = _analysis_sections(query, dossier, ledger, slots)
     comparison = _comparison_table(query, evidence, dossier, ledger, slots)
     findings = _findings_narrative(query, ledger, dossier, claims, critic)
+    
+    # Check if this is a shallow/partial answer
+    depth = (critic.get("depth_score") or {}) if critic else {}
+    label = depth.get("label", "")
+    must_answer = depth.get("must_answer") or {}
+    covered = must_answer.get("covered", 0)
+    total = must_answer.get("total", 1)
+    
     gap_note = ""
-    if synthesis_status == "terminal_fallback" or critic.get("status") == "insufficient":
+    if label == "shallow" or (total > 0 and covered / total < 0.5):
+        # Partial answer banner for shallow memos
+        gap_note = (
+            f"\n> **Partial answer** — covers {covered}/{total} must-answer dimensions. "
+            "The analysis below reflects collected evidence; uncovered items are listed "
+            "under Limitations.\n"
+        )
+    elif synthesis_status == "terminal_fallback" or critic.get("status") == "insufficient":
         if _user_open_questions(critic, terminal_followups):
             gap_note = (
                 "\n> **Note:** Some dimensions could not be verified within the research budget. "
@@ -609,7 +655,34 @@ def _user_memo_markdown(
         "## References",
         format_reference_list(ledger),
     ]
-    return "\n\n".join(p.strip() for p in parts if (p or "").strip()) + "\n"
+    memo = "\n\n".join(p.strip() for p in parts if (p or "").strip()) + "\n"
+    
+    # Clean template/prompt leakage from headings
+    # Remove meta-instructions like "Then we address", "And discuss", etc.
+    template_leak_patterns = [
+        (r":\s*then we (address|discuss|examine|analyze)", ": ", re.I),
+        (r":\s*and (discuss|examine|analyze|address)", ": ", re.I),
+        (r":\s*we (will|now|then) (address|discuss)", ": ", re.I),
+        (r"\bthen (address|discuss|examine)", "", re.I),
+        (r"\band (discuss|examine)", "", re.I),
+    ]
+    
+    for pattern, replacement, flags in template_leak_patterns:
+        memo = re.sub(pattern, replacement, memo, flags=flags)
+    
+    # Soften overclaim language
+    from app.domain.overclaim import soften_overclaims
+    from app.observability.logging import logger
+    
+    softened_memo, changes = soften_overclaims(memo, aggressive=False)
+    
+    if changes:
+        logger.info(
+            f"overclaim_softened: {len(changes)} absolute terms softened",
+            extra={"changes": [{"from": c["original"], "to": c["replacement"]} for c in changes[:3]]}
+        )
+    
+    return softened_memo
 
 
 def _diagnostics_markdown(

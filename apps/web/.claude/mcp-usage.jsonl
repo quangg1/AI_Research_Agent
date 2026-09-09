@@ -1,0 +1,1 @@
+{"ts":"2026-09-03T14:00:24.057Z","tool":"bash:cd","server":"bash","cli":"cd","command":"cd /d/AI_Research_Agent/apps/web && (npm test -- --run 2>&1 || yarn test --run 2>&1 || npx vitest run 2>&1) | tail -60","sessionId":"91b984e0-c7e9-4a8a-9195-71671f6db3b7","exitCode":0,"stdoutBytes":255,"stderrBytes":0,"durationMs":0}

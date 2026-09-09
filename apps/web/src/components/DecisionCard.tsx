@@ -30,6 +30,7 @@ export function DecisionCard({
     must_answer_pct?: number;
     critical_pct?: number;
     primary_sources_pct?: number;
+    quantitative_evidence_pct?: number;
   } | null;
 
   return (
@@ -48,6 +49,9 @@ export function DecisionCard({
               Must-answer {breakdown.must_answer_pct ?? "—"}% · Primary sources{" "}
               {breakdown.primary_sources_pct ?? "—"}%
               {breakdown.critical_pct != null ? ` · Critical ${breakdown.critical_pct}%` : ""}
+              {breakdown.quantitative_evidence_pct != null
+                ? ` · Measured evidence ${breakdown.quantitative_evidence_pct}%`
+                : ""}
             </p>
           )}
         </div>
@@ -84,10 +88,16 @@ function extractRecommendation(rule: string): string {
 
 function extractFlip(rule: string): string {
   const cleaned = rule.replace(/```[\s\S]*?```/g, " ");
+  // Deliberate revisit/flip callouts ONLY. Never fall back to the first
+  // Engineering-heuristics / Act-on / Verify adapter bullet — those are
+  // decision guidance, not REVISIT IF conditions.
   const m =
-    /(?:flip|unless|except|reconsider|invalidate|revisit)[:\s]+([^\n]+)/i.exec(cleaned) ||
-    /###\s*Engineering heuristics[\s\S]*?\n[-*]\s+([^\n]+)/i.exec(cleaned);
-  const hit = (m?.[1] || "").replace(/\*\*/g, "").trim();
+    /(?:revisit if|flip condition|reconsider if|invalidat(?:e|ing) this)[:\s]+([^\n]+)/i.exec(
+      cleaned,
+    );
+  let hit = (m?.[1] || "").replace(/\*\*/g, "").replace(/\s*\[\d+[^\]]*\]\s*$/, "").trim();
+  // Reject Act-on / Verify / Do-not-assume leaks that somehow share a line.
+  if (/^(verify|act on|do not assume)\b/i.test(hit)) hit = "";
   if (!hit || looksLikeDiagram(hit)) return "";
   return firstSentences(hit, 2) || hit;
 }

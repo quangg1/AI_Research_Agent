@@ -1,3 +1,8 @@
+-- Set standard_conforming_strings to ON to treat backslashes as literal characters
+-- This prevents "unsupported Unicode escape sequence" errors when inserting strings with backslashes
+ALTER DATABASE kiln SET standard_conforming_strings = on;
+SET standard_conforming_strings = on;
+
 CREATE TABLE IF NOT EXISTS schema_migrations (
     id TEXT PRIMARY KEY,
     applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

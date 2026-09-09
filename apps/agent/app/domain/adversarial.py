@@ -45,7 +45,7 @@ QUALITY_BAND = {
     "intergovernmental": "S",
     "standard_body": "S",
     "peer_reviewed": "A",  # arXiv and similar: research-grade, not automatically venue-accepted
-    "specialist_research": "A",
+    "specialist_research": "B",  # preprint / tech report â€” not venue peer-reviewed
     "industry_association": "B",
     "news_analysis": "C",
     "vendor_or_consultancy": "C",
@@ -53,10 +53,10 @@ QUALITY_BAND = {
 }
 
 BAND_LABEL = {
-    "S": "S — primary docs / official benchmark / accepted venue",
-    "A": "A — research paper or reference implementation",
-    "B": "B — survey, institution note",
-    "C": "C — blog, vendor, secondary commentary",
+    "S": "S â€” primary docs / official benchmark / accepted venue",
+    "A": "A â€” research paper or reference implementation",
+    "B": "B â€” survey, institution note",
+    "C": "C â€” blog, vendor, secondary commentary",
 }
 
 YEAR_RE = re.compile(r"\b(20[12]\d)\b")
@@ -66,12 +66,138 @@ QUANT_RE = re.compile(
     r"\b(\d{1,3}(?:,\d{3})+|\d{2,6})\s+(tasks?|files?|models?|agents?|steps?|runs?|papers?|"
     r"artifacts?|studies?|parameters?|tokens?|nodes?|gpus?|epochs?)\b|"
     r"\b(n)\s*=\s*(\d+)\b|"
-    r"\b(\d+(?:\.\d+)?)\s*(ms|µs|us|s|sec|seconds?|minutes?|min)\b|"
+    r"\b(\d+(?:\.\d+)?)\s*(ms|Âµs|us|s|sec|seconds?|minutes?|min)\b|"
     r"\b(\d+(?:\.\d+)?)\s*((?:G|T|P)?FLOP(?:s|/s)?|TFLOPS?|GFLOPS?)\b|"
     r"\b(\d+(?:\.\d+)?)\s*(tokens?(?:/(?:s|sec|second))?|req(?:uests)?/s|tok/s|GB/s|GiB|GB|TB)\b|"
-    r"\b(\d+(?:\.\d+)?)\s*(?:×|x)\s*(?:faster|speedup|improvement|throughput)?\b",
+    r"\b(\d+(?:\.\d+)?)\s*(?:Ã—|x)\s*(?:faster|speedup|improvement|throughput)?\b",
     re.I,
 )
+
+# Heading-like line that starts a paper's Results/Findings/Evaluation section.
+# Full-text scrapes put abstract+intro first; the numbers we want to table live
+# past a naive head-of-document slice, so hunt for this section explicitly.
+_RESULTS_HEADING_RE = re.compile(
+    r"(?im)^[ \t]*(?:#{1,4}\s*)?(?:\d+[.)]\s*)?"
+    r"(?:results?|findings?|experiments?(?:\s+and\s+results?)?|evaluation(?:\s+results?)?|"
+    r"empirical\s+(?:results?|study)|quantitative\s+results?)\b\s*[:.]?\s*$"
+)
+
+
+def results_section_blob(full_text: str, *, max_len: int = 6000) -> str:
+    """Slice from the first Results/Findings/Evaluation heading onward.
+
+    Returns "" when no such heading is found so callers fall back to a
+    head-of-document slice instead of silently scanning the abstract.
+    """
+    text = full_text or ""
+    if not text.strip():
+        return ""
+    match = _RESULTS_HEADING_RE.search(text)
+    if not match:
+        return ""
+    return text[match.start() : match.start() + max_len]
+
+
+# Patterns for validating grounded quantitative claims
+BENCHMARK_RE = re.compile(
+    r"\b(on|in)\s+([A-Z][A-Za-z0-9-]+(?:\s+[A-Z][A-Za-z0-9-]+)?)\b",
+    re.I,
+)
+CONDITION_RE = re.compile(
+    r"\b(with|using|when|for|given|under|on|in)\s+([^,\.]{10,80})",
+    re.I,
+)
+BASELINE_RE = re.compile(
+    r"\b(vs\.?|versus|compared to|from|baseline)\s+(\d+(?:\.\d+)?%?)",
+    re.I,
+)
+METRIC_NAME_RE = re.compile(
+    r"\b(accuracy|precision|recall|F1|BLEU|ROUGE|perplexity|latency|throughput|"
+    r"speedup|improvement|gain|loss|error|FLOP(?:s)?|tokens?/s|req/s)\b",
+    re.I,
+)
+
+
+def validate_quantitative_claim(text: str, strict: bool = True) -> dict:
+    """Validate if a quantitative claim is properly grounded.
+    
+    Args:
+        text: Text containing the quantitative claim
+        strict: If True, requires metric + condition + (benchmark OR baseline)
+                If False, requires only metric + (condition OR benchmark)
+    
+    Returns:
+        dict with:
+        - is_valid: bool
+        - has_metric: bool
+        - has_benchmark: bool
+        - has_condition: bool
+        - has_baseline: bool
+        - confidence: "empirical" | "reported" | "weak"
+        - issues: list of missing elements
+    """
+    # Check for numeric value
+    has_number = bool(QUANT_RE.search(text))
+    
+    # Check for metric name
+    metric_match = METRIC_NAME_RE.search(text)
+    has_metric = bool(metric_match)
+    
+    # Check for benchmark/dataset
+    benchmark_match = BENCHMARK_RE.search(text)
+    has_benchmark = bool(benchmark_match)
+    
+    # Check for condition
+    condition_match = CONDITION_RE.search(text)
+    has_condition = bool(condition_match)
+    
+    # Check for baseline comparison
+    baseline_match = BASELINE_RE.search(text)
+    has_baseline = bool(baseline_match)
+    
+    # Determine validity
+    issues = []
+    
+    if not has_number:
+        issues.append("Missing numeric value")
+    
+    if not has_metric:
+        issues.append("Missing metric name (accuracy, latency, etc.)")
+    
+    if strict:
+        # Strict: requires metric + condition + (benchmark OR baseline)
+        if not has_condition:
+            issues.append("Missing condition (with X, using Y, when Z)")
+        if not (has_benchmark or has_baseline):
+            issues.append("Missing benchmark/dataset OR baseline comparison")
+        
+        is_valid = has_number and has_metric and has_condition and (has_benchmark or has_baseline)
+    else:
+        # Moderate: requires metric + (condition OR benchmark)
+        if not (has_condition or has_benchmark):
+            issues.append("Missing either condition OR benchmark")
+        
+        is_valid = has_number and has_metric and (has_condition or has_benchmark)
+    
+    # Determine confidence level
+    if has_baseline:
+        confidence = "empirical"  # Has comparison to baseline
+    elif has_benchmark and has_condition:
+        confidence = "reported"  # Well-specified finding
+    else:
+        confidence = "weak"  # Incomplete grounding
+    
+    return {
+        "is_valid": is_valid,
+        "has_metric": has_metric,
+        "has_benchmark": has_benchmark,
+        "has_condition": has_condition,
+        "has_baseline": has_baseline,
+        "confidence": confidence,
+        "issues": issues,
+    }
+
+
 # Back-compat alias used by older imports/tests.
 PCT_RE = QUANT_RE
 ABSOLUTE_RE = re.compile(
@@ -90,16 +216,48 @@ def quality_band(tier: str) -> str:
     return QUALITY_BAND.get((tier or "").strip().lower(), "C")
 
 
-def quality_band_for(url: str = "", tier: str = "") -> str:
-    """URL-aware band: awesome-lists and aggregators are never Band A."""
+PREDATORY_HOST_MARKERS = (
+    "ijsr.net",
+    "ijsr.org",
+    "ijsra.net",
+    "ijert.org",
+    "ijser.org",
+    "iaras.org",
+    "omicsonline.org",
+    "scirp.org",
+)
+PREDATORY_TITLE_MARKERS = (
+    "international journal of science and research",
+    "international journal of scientific research",
+    "international journal of engineering research",
+)
+
+
+def is_predatory_venue(url: str = "", title: str = "") -> bool:
+    u = (url or "").lower()
+    title_l = (title or "").lower()
+    if any(m in u for m in PREDATORY_HOST_MARKERS):
+        return True
+    if "doi.org/10.21275" in u:
+        return True
+    return any(m in title_l for m in PREDATORY_TITLE_MARKERS)
+
+
+def quality_band_for(url: str = "", tier: str = "", title: str = "") -> str:
+    """URL-aware band: preprints and predatory venues are never Band A peer-reviewed."""
     u = (url or "").lower()
     path = u.split("github.com")[-1] if "github.com" in u else u
+    if is_predatory_venue(u, title):
+        return "C"
     if "awesome" in path or "/awesome-" in path or path.rstrip("/").endswith("-list"):
         return "C"
     if "github.com" in u or "gitlab.com" in u:
         return "B"
+    if "arxiv.org" in u or "export.arxiv.org" in u:
+        return "B"
+    if "openreview.net" in u and "/forum" in u:
+        return "B"
     return quality_band(tier)
-
 
 ASSUMPTION_RE = re.compile(
     r"\b("
@@ -117,7 +275,7 @@ SECONDHAND_RE = re.compile(r"\b(according to|cited (?:in|by)|as reported by|seco
 
 
 def infer_provenance(claim_text: str, source_text: str = "") -> str:
-    """measured | author_assumption | secondhand | unknown — orthogonal to quote-match verify."""
+    """measured | author_assumption | secondhand | unknown â€” orthogonal to quote-match verify."""
     claim = claim_text or ""
     source = source_text or ""
     blob = f"{claim} {source}"
@@ -139,10 +297,13 @@ def normalize_kind(kind: str, *, has_quote: bool = False) -> str:
 
 def publication_status(ev: dict | str) -> str:
     if isinstance(ev, str):
-        url, tier = ev.lower(), ""
+        url, tier, title = ev.lower(), "", ""
     else:
         url = str((ev or {}).get("url") or "").lower()
         tier = str((ev or {}).get("tier") or "").lower()
+        title = str((ev or {}).get("title") or "")
+    if is_predatory_venue(url, title):
+        return "predatory_or_unreliable"
     if "arxiv.org" in url:
         return "preprint"
     if "github.com" in url and "awesome" in url:
@@ -223,12 +384,12 @@ def competing_hypotheses(query: str) -> list[str]:
     goal = user_goal(query) or (query or "").strip()
     if ADVERSARIAL_RE.search(goal):
         return [
-            f"H1 — Orchestration: the pattern in “{goal[:140]}” is mostly engineered control, evaluation setup, or harness design around a probabilistic model.",
-            f"H2 — Capability: frontier models already contribute general planning/adaptation, and the harness mainly amplifies that capability.",
+            f"H1 â€” Orchestration: the pattern in â€œ{goal[:140]}â€ is mostly engineered control, evaluation setup, or harness design around a probabilistic model.",
+            f"H2 â€” Capability: frontier models already contribute general planning/adaptation, and the harness mainly amplifies that capability.",
         ]
     return [
-        f"H1 — The conservative reading of “{goal[:140]}” is explained by system design, measurement setup, or surrounding infrastructure.",
-        f"H2 — The same question is explained primarily by model capability, with infrastructure as a secondary amplifier.",
+        f"H1 â€” The conservative reading of â€œ{goal[:140]}â€ is explained by system design, measurement setup, or surrounding infrastructure.",
+        f"H2 â€” The same question is explained primarily by model capability, with infrastructure as a secondary amplifier.",
     ]
 
 
@@ -238,7 +399,7 @@ def research_subquestions(query: str, hypotheses: list[str] | None = None) -> li
     h1 = hyps[0] if hyps else "H1"
     h2 = hyps[1] if len(hyps) > 1 else "H2"
     return [
-        f"What operational definition would make “{goal[:120]}” testable?",
+        f"What operational definition would make â€œ{goal[:120]}â€ testable?",
         f"What primary-source evidence would support {h1[:160]}",
         f"What primary-source evidence would support {h2[:160]}",
         "What quantitative results exist (benchmark, N, success rate, delta, cost, steps)?",
@@ -312,7 +473,7 @@ def falsification_queries(query: str, brief: dict | None = None) -> list[SubQuer
 BENCHMARK_RE = re.compile(
     r"\b("
     r"SWE-bench(?:\s+Verified)?|HumanEval|MBPP|GAIA|WebArena|BrowserGym|"
-    r"AgentBench|ToolBench|API-Bank|BFCL|τ-bench|tau-bench|"
+    r"AgentBench|ToolBench|API-Bank|BFCL|Ï„-bench|tau-bench|"
     r"LiveCodeBench|BigCodeBench|SciCode|GPQA|MMLU(?:-Pro)?|"
     r"AIME|MATH(?:-500)?|GSM8K|HotpotQA|TriviaQA|"
     r"ORAgentBench|MemGym|PAST-Bench|RAMP|LiveClawBench"
@@ -342,10 +503,18 @@ def numeric_evidence_score(ev: dict) -> float:
 
 
 def retrieval_rank_score(ev: dict, query: str = "") -> float:
+    """Relevance-first rank: topic relevance primary, authority/tier secondary."""
+    from app.domain.research_contract import topic_relevance_score
     from app.domain.research_intent import authority_score
 
     weight = numeric_rank_weight(query)
-    return authority_score(ev) + numeric_evidence_score(ev) * weight
+    # Amplify relevance so it dominates authority (~ -3.5..+16) and numeric boosts.
+    relevance = topic_relevance_score(ev, query)
+    return (
+        float(relevance) * 100.0
+        + authority_score(ev)
+        + numeric_evidence_score(ev) * weight
+    )
 
 
 def numeric_rank_weight(query: str = "") -> float:
@@ -378,9 +547,11 @@ def extract_quantitative_rows(evidence: list[dict], citations: list[dict] | None
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
     for ev in evidence or []:
+        full_text = ev.get("full_text") or ""
+        focused = results_section_blob(full_text)
         blob = (
             f"{ev.get('title', '')} {ev.get('snippet', '')} {ev.get('quote', '')} "
-            f"{(ev.get('full_text') or '')[:4500]}"
+            f"{focused or full_text[:4500]}"
         )
         url = (ev.get("url") or "").rstrip("/").lower()
         n = url_to_n.get(url, "?")
@@ -394,10 +565,20 @@ def extract_quantitative_rows(evidence: list[dict], citations: list[dict] | None
             window = blob[start:end]
             if _is_setup_parameter(token, window):
                 continue
+            
+            # SEMANTIC GATE: Require metric/unit AND experimental condition
+            if not _has_valid_metric_and_condition(token, window):
+                continue
+            
             seen.add(key)
             condition = _metric_condition(window)
             benchmark = _benchmark_name(window, blob[:500])
             verified_bench = benchmark != "unverified benchmark"
+            
+            # Additional filter: drop if condition is still generic/missing after validation
+            if condition == "condition not stated in excerpt":
+                continue
+            
             rows.append(
                 {
                     "n": n,
@@ -411,7 +592,7 @@ def extract_quantitative_rows(evidence: list[dict], citations: list[dict] | None
                     "warning": "" if verified_bench else "Unverified Benchmark",
                     "title": (ev.get("title") or "")[:80],
                     "year": year_of(ev),
-                    "band": quality_band_for(str(ev.get("url") or ""), str(ev.get("tier") or "")),
+                    "band": quality_band_for(str(ev.get("url") or ""), str(ev.get("tier") or ""), str(ev.get("title") or "")),
                     "url": ev.get("url") or "",
                 }
             )
@@ -426,8 +607,8 @@ def _is_setup_parameter(token: str, window: str = "") -> bool:
     w = (window or "").lower()
     # Keep clear outcome units.
     if re.search(
-        r"%|\bms\b|µs|\bus\b|\btflop|\bgflop|\bflop|tok(?:ens)?/s|gb/s|gib|"
-        r"×|x\s*(?:faster|speedup|improvement)",
+        r"%|\bms\b|Âµs|\bus\b|\btflop|\bgflop|\bflop|tok(?:ens)?/s|gb/s|gib|"
+        r"Ã—|x\s*(?:faster|speedup|improvement)",
         t,
     ):
         return False
@@ -443,7 +624,7 @@ def _is_setup_parameter(token: str, window: str = "") -> bool:
             w,
         ):
             return True
-        # Bare token counts without latency/cost/throughput context → setup.
+        # Bare token counts without latency/cost/throughput context â†’ setup.
         if not re.search(
             r"\b(latency|ttft|throughput|cost|pre-?fill|decode|generated|error|accurac)\b",
             w,
@@ -473,6 +654,67 @@ def _metric_condition(window: str) -> str:
     if re.search(r"\bkv[- ]?cache|multi[- ]?node|cluster|gpu\s*memory|hbm\b", low):
         return "scalability / systems regime"
     return "condition not stated in excerpt"
+
+
+def _has_valid_metric_and_condition(token: str, window: str) -> bool:
+    """Semantic gate: require metric/unit name AND experimental condition.
+    
+    Drops bare numbers like "1970s", "16%", "53%" without context.
+    Returns True only if the number has BOTH:
+    1. A metric/unit name (accuracy, latency, FLOP, etc.)
+    2. An experimental condition (dataset, setup, benchmark, etc.)
+    """
+    t = (token or "").lower()
+    w = (window or "").lower()
+    
+    # Check for valid metric/unit in token or nearby context
+    # Clear outcome metrics with units
+    has_metric = bool(re.search(
+        r"%|accuracy|error|precision|recall|f1|"
+        r"\bms\b|µs|\bus\b|seconds?|minutes?|latency|ttft|throughput|"
+        r"tflop|gflop|\bflop|tok(?:ens)?/s|req(?:uests)?/s|"
+        r"gb/s|gib|gb|tb|memory|bandwidth|"
+        r"×|x\s*(?:faster|speedup|improvement)|"
+        r"cost|price|\$|tokens?|parameters?",
+        t + " " + w,
+    ))
+    
+    # Bare years without metric context are not valid
+    if re.match(r"^\d{4}s?$", t.strip()):
+        return False
+    
+    # Bare percentages without outcome metric context
+    if re.search(r"^\d+(?:\.\d+)?%$", t.strip()) and not re.search(
+        r"accuracy|error|precision|recall|improvement|reduction|increase|decrease|"
+        r"pass@\d+|success|failure|correct|incorrect",
+        w,
+    ):
+        return False
+    
+    # Check for experimental condition in context
+    # Require specific named benchmarks, datasets, or experimental setups
+    has_condition = bool(re.search(
+        r"\b("
+        r"dataset|benchmark|task\s+(?:subset|set)|test\s+set|evaluation\s+(?:set|setup)|"
+        r"on\s+(?:the\s+)?(?:\w+\s+)?(?:dataset|benchmark|task)|"
+        r"swe-bench|humaneval|mbpp|gaia|webarena|browsergym|agentbench|"
+        r"mmlu|gpqa|math|gsm8k|hotpotqa|triviaqa|livecodebench|"
+        r"baseline|ablation(?:\s+study)?|condition|setting|scenario|"
+        r"hard\s+task|easy\s+task|all\s+tasks|subset|"
+        r"gpu|node|cluster|kv[- ]cache|batch\s+size|model\s+size|"
+        r"vs\.?|versus|compared\s+to|against\s+"
+        r")\b",
+        w,
+        re.I,
+    ))
+    
+    # "experiment" alone without specific benchmark/dataset is too generic
+    if not has_condition and re.search(r"\bexperiment\b", w, re.I):
+        # Check if there's a specific experimental setup mentioned
+        if re.search(r"(?:in\s+(?:the|our|this)\s+)?experiment(?:al)?\s+(?:setup|configuration|protocol)", w, re.I):
+            has_condition = True
+    
+    return has_metric and has_condition
 
 
 def temporal_warnings(evidence: list[dict], horizon: str = "") -> list[str]:
@@ -507,7 +749,7 @@ def source_quality_rows(evidence: list[dict], citations: list[dict] | None = Non
                 "n": url_to_n.get(url, "?"),
                 "title": (ev.get("title") or url or "untitled")[:90],
                 "tier": ev.get("tier") or "unknown",
-                "band": quality_band_for(str(ev.get("url") or ""), str(ev.get("tier") or "")),
+                "band": quality_band_for(str(ev.get("url") or ""), str(ev.get("tier") or ""), str(ev.get("title") or "")),
                 "publication_status": publication_status(ev),
                 "year": year_of(ev),
             }
@@ -541,21 +783,21 @@ def method_notes_for_writer(
     quality = source_quality_rows(evidence, citations)
     lines = [
         "Adversarial method (follow this; do not bury it):",
-        "Hypotheses to keep in tension — argue ONCE under Contradictions & debates:",
+        "Hypotheses to keep in tension â€” argue ONCE under Contradictions & debates:",
         *[f"- {h}" for h in hyps[:2]],
         "Subquestions:",
         *[f"- {s}" for s in subs[:8]],
         "Attribution discipline: never write that this memo/pipeline surveyed N papers. "
         "If a source reviewed N artifacts, attribute that count to [n].",
         "Scalability: if the question asks for it, treat KV-cache / GPU memory bandwidth / "
-        "multi-node as its own analysis subsection — not a latency synonym.",
-        "Worked example: when ≥2 named systems appear in notes, include one concrete walkthrough.",
+        "multi-node as its own analysis subsection â€” not a latency synonym.",
+        "Worked example: when â‰¥2 named systems appear in notes, include one concrete walkthrough.",
         "Quantitative fragments already in the working set (table these; do not pad empties):",
     ]
     if numbers:
         lines.extend(
-            f"- [{row['n']}] {row['metric']} — condition: {row.get('condition') or 'unset'}; "
-            f"baseline: {row.get('comparison_baseline') or 'not explicitly compared'} — "
+            f"- [{row['n']}] {row['metric']} â€” condition: {row.get('condition') or 'unset'}; "
+            f"baseline: {row.get('comparison_baseline') or 'not explicitly compared'} â€” "
             f"{row['title']} ({row['year'] or 'year?'}, {row['band']})"
             for row in numbers
         )
@@ -596,7 +838,7 @@ def claim_register_markdown(claims: list[Any], citations: list[dict] | None = No
         text = _field(claim, "text") or ""
         kind = normalize_kind(str(_field(claim, "kind") or ""), has_quote=bool(_field(claim, "quote")))
         prov = _field(claim, "provenance") or "unknown"
-        verify = verify_label.get(str(_field(claim, "verification_status") or ""), _field(claim, "verification_status") or "—")
+        verify = verify_label.get(str(_field(claim, "verification_status") or ""), _field(claim, "verification_status") or "â€”")
         indep = independent_source_count(claim, evidence)
         flags = []
         if indep < 2:
@@ -605,16 +847,16 @@ def claim_register_markdown(claims: list[Any], citations: list[dict] | None = No
             flags.append("author-estimate")
         if prov == "secondhand":
             flags.append("secondhand")
-        support = ", ".join(str(x) for x in (_field(claim, "support_ids") or [])[:3]) or "—"
-        year = _field(claim, "published") or "—"
+        support = ", ".join(str(x) for x in (_field(claim, "support_ids") or [])[:3]) or "â€”"
+        year = _field(claim, "published") or "â€”"
         band = _field(claim, "quality_band") or quality_band_for(
             str(_field(claim, "url") or ""), str(_field(claim, "tier") or "")
         )
         conf = _field(claim, "confidence")
-        pct = f"{int(float(conf) * 100)}%" if conf is not None else "—"
+        pct = f"{int(float(conf) * 100)}%" if conf is not None else "â€”"
         rows.append(
             f"| {(text or '')[:70]} | {kind} | {prov} | {verify} | {indep} | "
-            f"{', '.join(flags) or '—'} | {support} | {year} | {band} | {pct} |"
+            f"{', '.join(flags) or 'â€”'} | {support} | {year} | {band} | {pct} |"
         )
     return "\n".join(rows)
 
@@ -630,7 +872,7 @@ def quantitative_table_markdown(rows: list[dict[str, Any]]) -> str:
         lines.append(
             f"| [{row.get('n')}] | {row.get('metric_name') or row.get('metric')} | "
             f"{row.get('value') or row.get('metric')} | {row.get('benchmark_name') or 'unverified benchmark'} | "
-            f"{row.get('condition') or '—'} | {row.get('comparison_baseline') or 'not explicitly compared'} | "
-            f"{row.get('warning') or '—'} | {row.get('year') or '—'} |"
+            f"{row.get('condition') or 'â€”'} | {row.get('comparison_baseline') or 'not explicitly compared'} | "
+            f"{row.get('warning') or 'â€”'} | {row.get('year') or 'â€”'} |"
         )
     return "\n".join(lines)

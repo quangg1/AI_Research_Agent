@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "updatedAt": "2026-09-08T07:12:39.523Z",
+  "shouldInject": true,
+  "triggers": [
+    "session_size"
+  ],
+  "message": "[Claude Skills] Task scope drift detected — skill set refreshed by the extension. Triggers: session_size (session transcript at critical size). Session transcript is large — prefer /compact, load only active skills, and avoid re-reading ignored SKILL.md files. Active skills: self-learning, file-style-conventions, skill-creator, skill-usage-insights, skill-feedback-adaptation, skill-official-updater, cross-platform-scripting. Refine .claude/learning/task-skill-proposals.json only if the user's goal changed; otherwise follow the refreshed set.",
+  "activeSkills": [
+    "self-learning",
+    "file-style-conventions",
+    "skill-creator",
+    "skill-usage-insights",
+    "skill-feedback-adaptation",
+    "skill-official-updater",
+    "cross-platform-scripting"
+  ],
+  "offProfileSkills": []
+}

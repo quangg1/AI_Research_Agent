@@ -6,7 +6,7 @@ import types
 
 import pytest
 
-from app.llm.client import CreditsExhaustedError, LLMClient, bind_llm, get_llm, redact_secret, reset_llm
+from app.llm.client import CreditsExhaustedError, LLMClient, bind_llm, current_role, get_llm, redact_secret, reset_llm
 from app.llm.providers import OPENAI_COMPAT_BASE, is_credits_error, is_retryable_slot_error, split_api_keys
 from app.llm.redact import scrub_obj, scrub_text
 
@@ -128,6 +128,59 @@ def test_same_provider_semicolon_keys_failover(monkeypatch):
     monkeypatch.setattr(LLMClient, "_post_chat", fake_post_chat)
     assert client.generate_json("hello") == {"ok": True}
     assert client._api_key == "sk-live-key-bbbbbbb"
+    client.close()
+
+
+def test_generate_logs_slot_key_fingerprint_role_and_real_tokens(monkeypatch):
+    """Regression: there was no per-call log of which key served a request or
+    how many tokens it actually cost — only silent success or a slot-level
+    failure line. Without it, reconstructing token usage after the fact
+    means guessing from constants (see: manual ~105k-token estimate that
+    turned out ~15% high once measured against the real tokenizer)."""
+    monkeypatch.setattr("app.llm.client.settings.google_api_key", "")
+    monkeypatch.setattr("app.llm.client.settings.openai_api_key", "")
+    monkeypatch.setattr("app.llm.client.settings.xai_api_key", "")
+    monkeypatch.setattr("app.llm.client.settings.grok_api_key", "")
+
+    def fake_init(self, api_key):
+        self._gemini = object()
+        self.mode = "gemini"
+
+    class Usage:
+        prompt_token_count = 120
+        candidates_token_count = 40
+
+    class Response:
+        text = "hello"
+        usage_metadata = Usage()
+
+    def fake_generate_content(**_kwargs):
+        return Response()
+
+    events: list[tuple[str, dict]] = []
+    monkeypatch.setattr(LLMClient, "_init_gemini", fake_init)
+    monkeypatch.setattr("app.observability.logging.event", lambda name, **kw: events.append((name, kw)))
+
+    client = LLMClient(provider="gemini", api_key="AIza-abcdefghijklmnop123456", use_env=False)
+    client._gemini = types.SimpleNamespace(models=types.SimpleNamespace(generate_content=fake_generate_content))
+
+    role_token = current_role.set("critic")
+    try:
+        assert client.generate("hello") == "hello"
+    finally:
+        current_role.reset(role_token)
+
+    ok_events = [kw for name, kw in events if name == "llm_call_ok"]
+    assert len(ok_events) == 1
+    payload = ok_events[0]
+    assert payload["slot"] == 1
+    assert payload["role"] == "critic"
+    assert payload["prompt_tokens"] == 120
+    assert payload["output_tokens"] == 40
+    assert payload["total_tokens"] == 160
+    assert payload["token_source"] == "usage_metadata"
+    assert payload["key_fingerprint"] == "123456"
+    assert "abcdefghijklmnop" not in payload["key_fingerprint"]
     client.close()
 
 
@@ -255,9 +308,15 @@ def test_credits_pause_retries_after_interrupt_continue(monkeypatch):
 def test_is_credits_error_detects_quota_not_generic_rate_limit():
     assert is_credits_error(402, "pay up")
     assert is_credits_error(429, "insufficient_quota")
-    assert is_credits_error(429, "429 RESOURCE_EXHAUSTED. exceeded your current quota")
-    assert is_credits_error(429, "429 RESOURCE_EXHAUSTED")
-    assert is_credits_error(429, "Resource has been exhausted (e.g. check quota).")
+    # Gemini's free-tier per-minute throttle reuses RESOURCE_EXHAUSTED /
+    # "exceeded your current quota" wording for a plain RPM bump — verified
+    # against a live account sitting at 1/5 RPM, 9/20 RPD when this exact
+    # message fired. That text is indistinguishable from real daily quota
+    # exhaustion, so a 429 must not be treated as a dead wallet unless it
+    # carries an explicit provider "insufficient_quota" style marker.
+    assert not is_credits_error(429, "429 RESOURCE_EXHAUSTED. exceeded your current quota")
+    assert not is_credits_error(429, "429 RESOURCE_EXHAUSTED")
+    assert not is_credits_error(429, "Resource has been exhausted (e.g. check quota).")
     assert not is_credits_error(429, "rate_limit_exceeded please retry")
     assert not is_credits_error(
         429,
@@ -265,6 +324,7 @@ def test_is_credits_error_detects_quota_not_generic_rate_limit():
     )
     assert is_retryable_slot_error(429, "rate_limit_exceeded please retry")
     assert is_retryable_slot_error(429, "429 RESOURCE_EXHAUSTED. Please try again later.")
+    assert is_retryable_slot_error(429, "429 RESOURCE_EXHAUSTED. exceeded your current quota")
 
 
 def test_retryable_429_tries_every_gemini_key_before_pause(monkeypatch):
@@ -272,6 +332,11 @@ def test_retryable_429_tries_every_gemini_key_before_pause(monkeypatch):
     monkeypatch.setattr("app.llm.client.settings.openai_api_key", "")
     monkeypatch.setattr("app.llm.client.settings.xai_api_key", "")
     monkeypatch.setattr("app.llm.client.settings.grok_api_key", "")
+    # A 429/503 that never carries a real credits/dead-key marker gets one
+    # backoff-and-retry pass across the whole pool before CreditsExhaustedError
+    # (see app.llm.client._RETRYABLE_BACKOFF_SECONDS) — don't sleep for real in tests.
+    slept: list[float] = []
+    monkeypatch.setattr("app.llm.client.time.sleep", lambda s: slept.append(s))
     seen: list[str] = []
 
     def fake_init(self, api_key):
@@ -292,11 +357,18 @@ def test_retryable_429_tries_every_gemini_key_before_pause(monkeypatch):
     )
     with pytest.raises(CreditsExhaustedError):
         client.generate("hello")
+    # One full pass, a backoff, then a second full pass (still all-retryable) before giving
+    # up. The retry after backoff resumes from wherever the pool rotation left off (the
+    # last-tried slot), not a restart at the first key.
     assert seen == [
         "AIza-first-xxxxxxxx",
         "AIza-second-yyyyyyyy",
         "AIza-third-zzzzzzzz",
+        "AIza-third-zzzzzzzz",
+        "AIza-first-xxxxxxxx",
+        "AIza-second-yyyyyyyy",
     ]
+    assert slept == [20]
     client.close()
 
 

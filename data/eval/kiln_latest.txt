@@ -1,0 +1,1062 @@
+D E E P  R E S E A R C H  M E M O
+Ag en tic Sy n thetic D ata Eng in eerin g  for Specialized AI
+D om ain s : Architectures , M odel C ollaps e D y n am ics , an d O ut-
+of-D is tribution  E v aluation  Fram ew ork s
+A T  A  G L A N C E
+A g e n t i c  s y n t h e t i c  d a t a  g e n e r a t i o n  p i p e l i n e s  u s i n g  m u l t i - a g e n t  f e e d b a c k ,  e x e c u t i o n
+v a l i d a t i o n ,  a n d  s u p p o r t - c o n s t r a i n e d  fi l t e r i n g  r e l i a b l y  m i t i g a t e  s p e c i a l i z e d  d o m a i n  d a t a
+s c a r c i t y  w h i l e  p r e v e n t i n g  f a c t u a l  d e g r a d a t i o n .  H o w e v e r ,  u n c o n s t r a i n e d  r e c u r s i v e  s e l f -
+t r a i n i n g  o n  m o d e l - g e n e r a t e d  o u t p u t s  i n d u c e s  r a p i d  k n o w l e d g e  c o l l a p s e  w h e r e  l i n g u i s t i c
+f l u e n c y  m a s k s  c a t a s t r o p h i c  l o s s  o f  f a c t u a l  r e l i a b i l i t y  [ 6 ,  8 ] .
+C O N F ID E N C E
+6 6 / 1 0 0  · sta n d a rd
+M u st-an sw e r 3 3 %  · P rim ary  so u rce s — %  · C ritical 8 3 %
+R E V IS IT  IF
+a  cita tio n  m e a su re d  th e m . P re fe r q u a lita tive  gu id a n ce  o n ly.
+A t  a  g l a n c e
+A ge n tic  syn th e tic  d a ta  ge n e ra tio n  p ip e lin e s  u sin g  m u lti- a ge n t fe e d b a ck,  e xe cu tio n  va lid a tio n ,  a n d
+su p p o rt- co n stra in e d  filte rin g  re lia b ly  m itiga te  sp e cia lize d  d o m a in  d a ta  sca rcity  w h ile  p re ve n tin g
+fa ctu a l d e gra d a tio n .  H o w e ve r,  u n co n stra in e d  re cu rsive  se lf- tra in in g  o n  m o d e l- ge n e ra te d  o u tp u ts
+in d u ce s  ra p id  kn o w le d ge  co lla p se  w h e re  lin gu istic  flu e n cy  m a sks  ca ta stro p h ic  lo ss  o f  fa ctu a l re lia b ility
+[ 6  p r e p r i n t ] [ 8  p r e p r i n t ]
+.
+E x e c u t iv e  s u m m a r y
+A ge n tic  syn th e tic  d a ta  ge n e ra tio n  p ro vid e s  a  sca la b le  m e th o d o lo g y  fo r o ve rco m in g  sp e cia lize d  d o m a in
+d a ta  sca rcity  b y  o rch e stra tin g  sim u la te d  a ge n t- h u m a n  in te ra ctio n  tra je cto rie s,  d yn a m ic  m u lti- a ge n t
+critiq u e,  a n d  e n viro n m e n t e xe cu tio n  fe e d b a ck  
+[ 4  p r e p r i n t ] [ 5  p r e p r i n t ]
+.  S p e cia lize d  A I  d o m a in s— su ch  a s
+le ga l re a so n in g ,  fin a n cia l a n a lytics,  te ch n ica l e n gin e e rin g ,  a n d  h e a lth ca re — re q u ire  strict stru ctu ra l
+a d h e re n ce,  lo n g- ta il e ve n t co ve ra ge,  a n d  fa ctu a l p re cisio n  th a t sta tic  p ro m p t d istilla tio n  ca n n o t
+re lia b ly  d e live r 
+[ 4  p r e p r i n t ] [ 1 0  p r e p r i n t ]
+.  D e p lo yin g  m u lti- a ge n t p ip e lin e s  e n a b le s  o p e n - w e igh t m o d e ls  to
+m a tch  o r e xce e d  fro n tie r a rch ite ctu re s  like  G P T- 4 o  a n d  C la u d e  3 .5  o n  co m p le x  to o l- u se  a n d
+in te ra ctio n  b e n ch m a rks  
+[ 4  p r e p r i n t ]
+.
+H o w e ve r,  re cu rsive  se lf- tra in in g  w ith o u t strict su p p o rt co n stra in ts  risks  se ve re  m o d e l co lla p se,
+w h e re in  d o w n stre a m  m o d e ls  m a in ta in  su rfa ce - le ve l syn ta ctic  flu e n cy  w h ile  a ccu m u la tin g  la te n t
+10:50 2/9/26 Kiln — LLM systems research
+localhost:5173/?run=91e2879b-5cca-4c54-9ec1-a97ab76b844a 1/18
+
+fa ctu a l e rro rs  a cro ss  ge n e ra tio n  ite ra tio n s  
+[ 6  p r e p r i n t ] [ 9  p r e p r i n t ]
+.  To  su sta in  o u t- o f- d istrib u tio n
+ge n e ra liza tio n  a n d  p re ve n t se lf- re in fo rcin g  b ia s  a m p lifica tio n ,  sp e cia lize d  A I  syste m s  m u st in te gra te
+su p p o rt- co n stra in e d  p o licy  o p tim iza tio n ,  m u lti- a ge n t e va lu a tio n  fra m e w o rks,  a n d  e xp licit o u t- o f-
+d istrib u tio n  d e te ctio n  m e ch a n ism s  
+[ 2  p r e p r i n t ] [ 8  p r e p r i n t ] [ 1 0  p r e p r i n t ]
+.
+K e y  f in d in g s
+1 .  M u lti- tu rn  a ge n tic  sim u la tio n  p ip e lin e s  ge n e ra te  h igh - fid e lity  in te ra ctio n  tra je cto rie s  th a t a llo w
+fin e - tu n e d  o p e n - w e igh t m o d e ls  to  o u tp e rfo rm  fro n tie r a rch ite ctu re s  o n  co m p le x  to o l- u se
+e va lu a tio n s  
+[ 4  p r e p r i n t ]
+.
+2 .  R e cu rsive  syn th e tic  tra in in g  w ith o u t e n viro n m e n t gro u n d in g  in d u ce s  la te n t kn o w le d ge  co lla p se,
+w h e re  d o w n stre a m  m o d e ls  p re se rve  stylistic  flu e n cy  a n d  gra m m a tica l stru ctu re  w h ile  fa ctu a l
+co rre ctn e ss  se ve re ly  d e gra d e s  a cro ss  ge n e ra tio n s  
+[ 6  p r e p r i n t ] [ 9  p r e p r i n t ]
+.
+3 .  S yn th e tic  d a ta  ge n e ra tio n  se rve s  a s  a n  e ffe ctive  a ctive  m e ch a n ism  fo r o u t- o f- d istrib u tio n  ( O O D )
+d e te ctio n ,  e n a b lin g  cla ssifica tio n  m o d e ls  to  lo w e r fa lse  p o sitive  ra te s  a cro ss  u n se e n  d istrib u tio n
+sh ifts  
+[ 2  p r e p r i n t ]
+.
+4 .  S u p p o rt- co n stra in e d  re ctifica tio n  a n d  a n ch o re d  p o licy  o p tim iza tio n  ( A P O )  p re ve n t e xp lo ra tio n
+co lla p se  d u rin g  p o licy  u p d a te s,  p re se rvin g  m o d e  co ve ra ge  a n d  sta b ilizin g  syn th e tic  d istrib u tio n
+a lign m e n t 
+[ 8  p r e p r i n t ]
+.
+5 .  M u lti- a ge n t fra m e w o rks  o p tim ize  stru ctu ra l d a ta se t d ive rsity  a n d  p riva cy  p re se rva tio n  fo r R e trie va l-
+A u gm e n te d  G e n e ra tio n  ( R A G )  b e n ch m a rkin g  w ith o u t re lyin g  o n  sta tic  h u m a n  p ro m p t te m p la te s
+[ 5  p r e p r i n t ]
+.
+6 .  Tra d itio n a l i.i.d .  tra in in g  a ssu m p tio n s  fa il u n d e r sp e cia lize d  d o m a in  d e p lo ym e n ts,  re q u irin g  fo rm a l
+o u t- o f- d istrib u tio n  ge n e ra liza tio n  fra m e w o rks  to  co m b a t sp u rio u s  co rre la tio n  le a rn in g  
+[ 1 0  p r e p r i n t ]
+.
+7 .  L a n gu a ge  m o d e l se lf- ra tio n a liza tio n s  su ffe r sign ifica n t a ccu ra cy  d ro p s  w h e n  e va lu a te d  o n  o u t- o f-
+d istrib u tio n  b e n ch m a rks,  d e m o n stra tin g  th a t e xp la n a tio n  flu e n cy  d o e s  n o t gu a ra n te e  u n d e rlyin g
+re a so n in g  sta b ility  
+[ 1  p r e p r i n t ] [ 1 1  p e e r ]
+.
+E v id e n c e  m a t r ix
+S tu d y D o m a in M a in  re su lt H e lp s  /  h a rm s Lim ita tio n
+O u t- o f- D istrib u tio n
+D e te ctio n  u sin g
+LLM  /  M L
+re se a rch
+Lo w e rs  fa lse  p o sitive  ra te s
+a cro ss  n in e  In D - O O D  d a ta se t
+H e lp s  w h e n
+gro u n d e d
+E va lu a te d  p rim a rily
+o n  cla ssifica tio n
+10:50 2/9/26 Kiln — LLM systems research
+localhost:5173/?run=91e2879b-5cca-4c54-9ec1-a97ab76b844a 2/18
+
+S tu d y D o m a in M a in  re su lt H e lp s  /  h a rm s Lim ita tio n
+S yn th e tic  D a ta
+G e n e ra tio n  
+[ 2  p r e p r i n t ]
+p a irs  via  syn th e tic  O O D
+sa m p lin g
+b e n ch m a rks
+A P IG e n - M T  
+[ 4  p r e p r i n t ]
+M u lti- tu rn
+a ge n tic  to o l-
+u se
+O u tp e rfo rm s  G P T- 4 o  a n d
+C la u d e  3 .5  o n  - b e n ch  a n d
+B F C L  b e n ch m a rks  u sin g
+sim u la te d  m u lti- tu rn
+tra je cto rie s
+H e lp s  w h e n
+gro u n d e d
+R e lia n ce  o n
+sim u la te d  h u m a n -
+a ge n t in te ra ctio n
+q u a lity
+D ive rse  A n d  P riva te
+S yn th e tic  D a ta se ts
+G e n e ra tio n  
+[ 5  p r e p r i n t ]
+S tru ctu re d  /
+R A G
+e va lu a tio n
+M u lti- a ge n t ge n e ra tio n
+a ch ie ve s  h igh  stru ctu ra l
+d ive rsity  a n d  p riva cy
+p re se rva tio n  fo r R A G
+e va lu a tio n
+H e lp s  w h e n
+gro u n d e d
+F o cu se d  o n  R A G
+re trie va l e va lu a tio n
+co n te xts
+K n o w le d ge  C o lla p se  in
+LLM s  
+[ 6  p r e p r i n t ]
+LLM
+re cu rsive
+tra in in g
+Id e n tifie s  kn o w le d ge
+co lla p se  w h e re  flu e n cy
+p e rsists  w h ile  fa ctu a l
+a ccu ra cy  d e gra d e s
+e xp o n e n tia lly
+H a rm s
+u n co n stra in e d
+lo o p s
+E m p irica l fo cu s  o n
+re cu rsive  se lf-
+tra in in g  lo o p s
+To w a rd s  O u t- O f-
+D istrib u tio n
+G e n e ra liza tio n
+[ 1 0  p r e p r i n t ]
+G e n e ra l M L
+th e o ry
+S yn th e size s  th e o re tica l
+fa ilu re s  o f  i.i.d .  a ssu m p tio n s
+u n d e r re a l- w o rld  d istrib u tio n
+sh ifts
+C a u tio n  /
+fra m e w o rk
+M a th e m a tica l
+syn th e sis  o f  O O D
+d e fin itio n s
+S e lf- R a tio n a liza tio n  in
+th e  W ild  
+[ 1 1  p e e r ]
+N a tu ra l
+La n gu a ge
+In fe re n ce
+E va lu a te s  se lf- ra tio n a liza tio n
+m o d e ls  o n  la rge - sca le  O O D
+N LI ta sks,  sh o w in g  sign ifica n t
+a ccu ra cy  d ro p
+M ixe d  /  ca u tio n E va lu a te d  p rim a rily
+o n  N LI e xp la n a tio n
+stru ctu re s
+C o n t r a d ic t io n s  &  d e b a t e s
+M U LTI- TU R N  A G E N T TR A JE C TO R IE S V S. U N C O N STR A IN E D  R E C U R SIV E
+SE LF- TR A IN IN G
+A  ce n tra l te n sio n  in  syn th e tic  d a ta  e n gin e e rin g  ce n te rs  o n  w h e th e r re cu rsive  se lf- ge n e ra tio n  e xp a n d s
+o p e ra tio n a l m o d e l ca p a b ilitie s  o r in e vita b ly  ca u se s  ca ta stro p h ic  q u a lity  d e gra d a tio n .  P ro p o n e n ts  o f
+a ge n tic  in te ra ctio n  tra je cto rie s  d e m o n stra te  th a t sim u la te d  m u lti- tu rn  a ge n t- h u m a n  in te rp lay,  w h e n
+gro u n d e d  in  e xe cu tio n  e n viro n m e n ts  o r A P I  to o l re sp o n se s,  ge n e ra te s  rich  tra in in g  sign a ls  th a t a llo w
+o p e n - w e igh t m o d e ls  to  e xce e d  fro n tie r b a se lin e  m o d e ls  
+[ 4  p r e p r i n t ] [ 5  p r e p r i n t ]
+.  I n  th is  fra m e w o rk,
+τ
+10:50 2/9/26 Kiln — LLM systems research
+localhost:5173/?run=91e2879b-5cca-4c54-9ec1-a97ab76b844a 3/18
+
+e n viro n m e n t fe e d b a ck  a cts  a s  a n  e xte rn a l e n tro p y  so u rce,  co rre ctin g  ca n d id a te  tra je cto rie s  b e fo re
+p a ra m e te r u p d a te s  o ccu r 
+[ 4  p r e p r i n t ]
+.
+C o n ve rse ly,  in ve stiga tio n s  in to  re cu rsive  se lf- tra in in g  sh o w  th a t u n gro u n d e d  m o d e l o u tp u ts  in d u ce
+se ve re  kn o w le d ge  co lla p se  
+[ 6  p r e p r i n t ] [ 9  p r e p r i n t ]
+.  W h e n  a  m o d e l tra in s  o n  its  o w n  u n ve rifie d  o u tp u ts
+a cro ss  su cce ssive  ge n e ra tio n s  ( ),  th e  p ro b a b ility  m a ss  co n ce n tra te s  w ith in
+ce n tra l h igh - d e n sity  m o d e s  w h ile  tru n ca tin g  ta il d istrib u tio n s  
+[ 6  p r e p r i n t ] [ 8  p r e p r i n t ]
+.  T h is  tru n ca tio n
+le a d s  to  a  sta te  w h e re  lin gu istic  flu e n cy  re m a in s  h igh ,  b u t d o m a in  p re cisio n  a n d  fa ctu a l co rre ctn e ss
+d ro p  ra p id ly  
+[ 6  p r e p r i n t ]
+.  G ro u n d in g  th ro u gh  d e te rm in istic  to o l e xe cu tio n  o r su p p o rt- co n stra in e d  p o licy
+filte rin g  is  re q u ire d  to  p re ve n t re cu rsive  d e gra d a tio n  
+[ 4  p r e p r i n t ] [ 8  p r e p r i n t ]
+.
+SY N TH E TIC  O O D  D E C ISIO N  B O U N D A R Y  M A P P IN G  V S. SU P E R F IC IA L
+SH O R TC U T R ATIO N A LIZ ATIO N
+A  se co n d  m a jo r d e b a te  co n ce rn s  w h e th e r ge n e ra tive  syn th e tic  d a ta  ca n  in still tru e  o u t- o f- d istrib u tio n
+( O O D )  ge n e ra liza tio n  o r m e re ly  cre a te s  su p e rficia l sh o rtcu t re p re se n ta tio n s.  M e th o d o lo gie s  fo r O O D
+d e te ctio n  sh o w  th a t ge n e ra tin g  syn th e tic  sa m p le s  n e a r d e cisio n  b o u n d a rie s  e n a b le s  cla ssifie rs  to  m a p
+o u t- o f- d istrib u tio n  re gio n s  e ffe ctive ly,  su b sta n tia lly  re d u cin g  fa lse  p o sitive  ra te s  o n  u n se e n
+d istrib u tio n  sh ifts  
+[ 2  p r e p r i n t ] [ 1 0  p r e p r i n t ]
+.
+H o w e ve r,  e m p irica l e va lu a tio n s  o f  m o d e l se lf- ra tio n a liza tio n  d e m o n stra te  th a t ge n e ra te d  e xp la n a tio n s
+o fte n  re ly  o n  su p e rficia l h e u ristic  p a tte rn s  ra th e r th a n  ro b u st lo gic  
+[ 1  p r e p r i n t ] [ 1 1  p e e r ]
+.  W h e n  m o d e ls
+tra in e d  o n  se lf- ge n e ra te d  ra tio n a le s  e n co u n te r o u t- o f- d istrib u tio n  sh ifts,  th e ir re a so n in g  a ccu ra cy
+d e gra d e s  sign ifica n tly  d e sp ite  m a in ta in in g  h igh  ve rb a l co n fid e n ce  
+[ 1 1  p e e r ]
+.  T h is  in d ica te s  th a t w h ile
+syn th e tic  ge n e ra tio n  ca n  sh a rp e n  cla ssifica tio n  d e cisio n  b o u n d a rie s  
+[ 2  p r e p r i n t ]
+,  it d o e s  n o t
+a u to m a tica lly  gu a ra n te e  in va ria n t re a so n in g  ca p a b ility  u n le ss  e xp licitly  co n stra in e d  b y  o u t- o f-
+d istrib u tio n  e va lu a tio n  fra m e w o rks  
+[ 1 0  p r e p r i n t ] [ 1 1  p e e r ]
+.
+C o n c e p t u a l  f o u n d a t io n s
+S yn th e tic  sa m p le :  A  ge n e ra te d  d a ta  in sta n ce  ( e.g .,  d ia lo gu e  tra je cto ry,  e xe cu ta b le  co d e  b lo ck,
+stru ctu re d  sch e m a )  syn th e size d  b y  a n  u n d e rlyin g  m o d e l ra th e r th a n  d ire ctly  lo gge d  fro m  re a l- w o rld
+h u m a n  te le m e try  
+[ 4  p r e p r i n t ] [ 5  p r e p r i n t ]
+.
+S yn th e tic  la b e l:  A n  a u to m a te d  a n n o ta tio n  a ssign e d  to  re a l o r ge n e ra te d  in p u ts  b y  a n  L L M  ve rifie r,
+m u lti- a ge n t co n se n su s  p a n e l,  o r p ro gra m m a tic  e xe cu tio n  ke rn e l 
+[ 1  p r e p r i n t ] [ 4  p r e p r i n t ]
+.
+S yn th e tic  ta sk  /  cu rricu lu m :  A n  a ge n tica lly  m a n a ge d  ge n e ra tio n  stra te g y  w h e re  a  p la n n e r m o d u le
+d yn a m ica lly  m o d u la te s  d o m a in  to p ics,  ta sk  d ifficu lty,  a n d  stru ctu ra l co n stra in ts  to  p ro d u ce
+ta rge te d  tra in in g  d istrib u tio n s  
+[ 4  p r e p r i n t ] [ 5  p r e p r i n t ]
+.
+G
+ 
+→0 G
+ 
+→1 ⋯ → G
+ 
+N
+10:50 2/9/26 Kiln — LLM systems research
+localhost:5173/?run=91e2879b-5cca-4c54-9ec1-a97ab76b844a 4/18
+
+D a ta -ge n e ra tio n  a ge n t:  A n  a u to n o m o u s  so ftw a re  a rch ite ctu re  co m p risin g  p la n n in g ,  ge n e ra tio n ,
+va lid a tio n ,  e xe cu tio n ,  a n d  filte rin g  m o d u le s  d e sign e d  to  p ro d u ce  d o m a in - sp e cific  tra in in g  d a ta
+[ 4  p r e p r i n t ] [ 5  p r e p r i n t ]
+.
+D o m a in  a d a p ta tio n :  A d ju stin g  a  m o d e l's  p a ra m e te rs  u sin g  ta rge t- d o m a in  syn th e tic  o r re a l
+d istrib u tio n s  to  a lign  re p re se n ta tio n s  w ith  sp e cific  o p e ra tio n a l re q u ire m e n ts  
+[ 1 0  p r e p r i n t ]
+.
+D o m a in  ge n e ra liza tio n :  T h e  ca p a b ility  o f  a  syste m  to  m a in ta in  p e rfo rm a n ce  a cro ss  co m p le te ly
+u n se e n  o p e ra tio n a l d istrib u tio n s  w ith o u t a d d itio n a l p a ra m e te r u p d a te s  
+[ 1 0  p r e p r i n t ] [ 1 1  p e e r ]
+.
+D istrib u tio n  sh ift:  A  d ive rge n ce  b e tw e e n  th e  tra in in g  d a ta  p ro b a b ility  d istrib u tio n   a n d
+th e  o p e ra tio n a l d e p lo ym e n t d istrib u tio n  
+[ 2  p r e p r i n t ] [ 1 0  p r e p r i n t ]
+.
+F e e d b a ck  lo o p :  A n  ite ra tive  d a ta  e n gin e e rin g  cycle  w h e re  m o d e l o u tp u ts  a re  cu ra te d ,  va lid a te d ,
+a n d  re - in tro d u ce d  in to  tra in in g  se ts  fo r su b se q u e n t m o d e l ge n e ra tio n s  
+[ 6  p r e p r i n t ] [ 8  p r e p r i n t ]
+.
+M o d e l co lla p se :  A  d e ge n e ra tive  p ro ce ss  ca u se d  b y  u n co n stra in e d  re cu rsive  tra in in g  o n  syn th e tic
+d a ta ,  ch a ra cte rize d  b y  va ria n ce  re d u ctio n ,  m o d e  tru n ca tio n ,  a n d  fa ctu a l d e cay  
+[ 6  p r e p r i n t ] [ 8  p r e p r i n t ]
+[ 9  p r e p r i n t ]
+.
+A r c h it e c t u r e  t a x o n o m y
+Fa m ily M o d a litie s S ca le F id e lity C o n tro l T yp ica l u se
+A ge n tic  M u lti-
+Tu rn  P ip e lin e s
+Te xt,  C o d e,
+A P I ca lls
+H igh
+( p ip e lin e
+sca la b le )
+H igh
+( e n viro n m e n t-
+ve rifie d )
+H igh  ( sch e m a  &
+e xe cu tio n
+fe e d b a ck)
+M u lti- tu rn  to o l u se,
+fu n ctio n  ca llin g ,  a ge n t
+sim u la tio n  
+[ 4  p r e p r i n t ]
+M u lti- A ge n t
+R A G
+S yn th e size rs
+Te xt,
+E m b e d d in gs
+H igh M e d iu m – H igh
+( co n te xt- b o u n d )
+H igh  ( a ge n t
+ro le s,  p riva cy
+filte rs)
+R A G  e va lu a tio n ,  d e n se
+re trie va l b e n ch m a rkin g ,
+ta b u la r Q A  
+[ 5  p r e p r i n t ]
+La te n t S p a ce
+R e cu rsive
+R e a so n e rs
+La te n t
+to ke n s,  Te xt
+M e d iu m H igh  ( a b stra ct
+lo gic)
+M e d iu m  ( la te n t
+tra je cto ry
+le n gth )
+M a th e m a tica l
+re a so n in g ,  fo rm a l lo gic,
+O O D  tra n sfe r 
+[ 7  p r e p r i n t ]
+S u p p o rt-
+C o n stra in e d  R L
+A ge n ts
+Tra je cto rie s,
+A ctio n s
+H igh H igh  ( b o u n d e d
+su p p o rt)
+H igh  ( a n ch o re d
+p o licy  b o u n d s)
+E xp lo ra tio n  p o licy
+o p tim iza tio n ,  se lf- p lay
+R L  
+[ 8  p r e p r i n t ]
+D ire ct F ro n tie r
+D istilla tio n
+Te xt H igh V a ria b le
+( te a ch e r-
+Lo w  ( p ro m p t-
+le ve l
+G e n e ra l in stru ctio n
+tu n in g ,  u n co n stra in e d
+P  ( X , Y )t r a i n
+P  ( X , Y )d e p l o y
+10:50 2/9/26 Kiln — LLM systems research
+localhost:5173/?run=91e2879b-5cca-4c54-9ec1-a97ab76b844a 5/18
+
+Fa m ily M o d a litie s S ca le F id e lity C o n tro l T yp ica l u se
+d e p e n d e n t) co n stra in ts) Q A  ge n e ra tio n  
+[ 1 2  r e p o ]
+E v a l u a t io n  c h a in
+S yste m a tic  e va lu a tio n  o f  a ge n tic  syn th e tic  d a ta  ge n e ra tio n  re q u ire s  a  stru ctu re d  ve rifica tio n  p ip e lin e
+w h e re  b a sic  su rfa ce  sim ila rity  is  in su fficie n t to  co n firm  tra in in g  sa fe ty:
+1 .  F id e lity:  A sse ssin g  stru ctu ra l,  se m a n tic,  a n d  syn ta x  co rre ctn e ss  a ga in st d o m a in  sch e m a s  
+[ 5  p r e p r i n t ]
+.
+2 .  C o ve ra ge  &  D ive rsity:  M e a su rin g  se m a n tic  clu ste r e n tro p y  a n d  va ria n ce  to  co n firm  th e  p ip e lin e
+avo id s  m o d e  tru n ca tio n  
+[ 5  p r e p r i n t ] [ 8  p r e p r i n t ]
+.
+3 .  R e a l U tility  ( T S T R ):  E va lu a tin g  Tra in  o n  S yn th e tic,  Te st o n  R e a l ( T S T R )  a ccu ra cy  p e rfo rm a n ce  o n
+b e n ch m a rk  d a ta se ts  
+[ 1  p r e p r i n t ] [ 4  p r e p r i n t ]
+.
+4 .  O u t-o f-D istrib u tio n  ( O O D )  R o b u stn e ss:  Te stin g  fin e - tu n e d  d o w n stre a m  ch e ckp o in ts  o n  o u t- o f-
+d istrib u tio n  in p u ts  a n d  a d ve rsa ria l p e rtu rb a tio n s  
+[ 2  p r e p r i n t ] [ 1 0  p r e p r i n t ] [ 1 1  p e e r ]
+.
+5 .  Fa irn e ss  &  B ia s  A m p lifica tio n :  Q u a n tifyin g  su b gro u p  e rro r d isp a ritie s  a n d  m o n ito rin g  fo r syste m ic
+b ia s  e sca la tio n  
+[ 1 0  p r e p r i n t ]
+.
+6 .  P riva cy  &  D iffe re n tia l S a fe ty:  V e rifyin g  th a t syn th e tic  in sta n ce s  d o  n o t le a k  p riva te  so u rce  tra in in g
+re co rd s  o r se n sitive  e n te rp rise  a ttrib u te s  
+[ 5  p r e p r i n t ]
+.
+7 .  R e cu rsive  S ta b ility:  S tre ss- te stin g  d a ta se t d u ra b ility  a cro ss  m u lti- ge n e ra tio n a l re cu rsive  tra in in g
+lo o p s  ( )  to  d e te ct e a rly  sign s  o f  co lla p se  
+[ 6  p r e p r i n t ] [ 8  p r e p r i n t ] [ 9  p r e p r i n t ]
+.
+C h a in  ste p P rim a ry  m e trics O p e ra tio n a l d e cisio n  ru le
+F id e lity S tru ctu ra l p a rsin g  p a ss  ra te,  A P I
+e xe cu tio n  va lid  %
+R e je ct b a tch  if  e xe cu tio n  va lid  %  fa lls  b e lo w  d o m a in
+sch e m a  th re sh o ld  
+[ 4  p r e p r i n t ]
+C o ve ra ge S e m a n tic  clu ste r e n tro p y,  to p ic
+co ve ra ge  sco re
+R e - b a la n ce  a ge n t sa m p le r if  clu ste r d e n sity  co n ce n tra te s  in
+h e a d  m o d e s  
+[ 5  p r e p r i n t ]
+U tility D o w n stre a m  b e n ch m a rk  a ccu ra cy
+d e lta  (  T S T R )
+D e p lo y  syn th e tic  m ix  o n ly  if  h e ld - o u t re a l b a se lin e
+p e rfo rm a n ce  is  e xce e d e d  
+[ 1  p r e p r i n t ] [ 4  p r e p r i n t ]
+G  →0 G  
+N
+Δ
+10:50 2/9/26 Kiln — LLM systems research
+localhost:5173/?run=91e2879b-5cca-4c54-9ec1-a97ab76b844a 6/18
+
+C h a in  ste p P rim a ry  m e trics O p e ra tio n a l d e cisio n  ru le
+O O D
+R o b u stn e ss
+Fa lse  P o sitive  R a te  ( F P R ),  O O D
+d e te ctio n  A U R O C
+H a lt d a ta se t in te gra tio n  if  O O D  ge n e ra liza tio n  d e gra d e s
+ve rsu s  re a l b a se lin e  
+[ 2  p r e p r i n t ] [ 1 0  p r e p r i n t ]
+R e cu rsive
+S ta b ility
+Fa ctu a l e n tro p y,  d e cay  ra te  a cro ss
+ ge n e ra tio n s
+A p p ly  su p p o rt- co n stra in e d  re ctifica tio n  if  fa ctu a l d e cay
+trigge rs  a cro ss  lo o p s  
+[ 6  p r e p r i n t ] [ 8  p r e p r i n t ]
+C o n t r a s t  p a ir s
+1 . TA B U LA R  /  STR U C TU R E D
+H e lp s  /  p o sitive  sign a l:  M R - G S M 8 K :  A  M e ta- R e a so n in g  B e n ch m a rk  fo r L a rge  L …  
+[ 1 ]
+:  H o w e ve r,
+d e sp ite  th e  co m p le xity  a n d  d ive rsity  o f  th e se  m a th  p ro b le m s,  re ce n t sta te - o f- th e - a rt L L M s  
+[ 2 5 ] [ 3 8 ]
+[ 1 3 ]
+ h ave  a ch ie ve d  a ccu ra cy  ra te s  e xce e d in g  8 0 %  
+[ 2 0 ]
+ o n  m u lti- ste p  m a th  re a so n in g  d a ta se ts  like
+G S M 8 K  
+[ 1 0 ]
+.
+H a rm s  /  ca u tio n :  W h e n  F lu e n cy  S u rvive s  b u t F a cts  F a il u n d e r R e cu r…  
+[ 6 ]
+:  T h e  1 0 0 %  syn th e tic
+re gim e  sh o w s  ra p id  co lla p se  to  m in im u m  sco re s  b y  G e n e ra tio n  5 ,  re fle ctin g  sim u lta n e o u s  lo ss  o f
+fa ctu a l a n d  lin gu istic  co m p e te n ce  ( S ta ge  C ).
+R e a d in g:  G e n e ra tio n  re cip e  a n d  ve rifica tio n  m a tte r m o re  th a n  vo lu m e  —  th e  sa m e  d o m a in  ca n
+sh o w  la rge  ga in s  o r lo sse s  d e p e n d in g  o n  p ip e lin e  d e sign .
+2. TA B U LA R  /  STR U C TU R E D
+H e lp s  /  p o sitive  sign a l:  S yn th e tic  D a ta  G e n e ra tio n :  A  co m p re h e n sive  o ve rv…  [ ? ] :  S yn th e tic  D a ta
+G e n e ra tio n :  A  co m p re h e n sive  o ve rvie w  -  I n fo rm a tio n  W o rke rs  S yn th e tic  D a ta  G e n e ra tio n :  A
+co m p re h e n sive  o ve rvie w  B y  2 0 2 4 ,  a  sta gge rin g  6 0 %  o f  d a ta  u se d  to  tra in  A I  syste m s  glo b a lly  is
+p ro je cte d  to  b e  syn th e tic  1  .
+H a rm s  /  ca u tio n :  W h e n  F lu e n cy  S u rvive s  b u t F a cts  F a il u n d e r R e cu r…  
+[ 6 ]
+:  T h e  1 0 0 %  syn th e tic
+re gim e  sh o w s  ra p id  co lla p se  to  m in im u m  sco re s  b y  G e n e ra tio n  5 ,  re fle ctin g  sim u lta n e o u s  lo ss  o f
+fa ctu a l a n d  lin gu istic  co m p e te n ce  ( S ta ge  C ).
+R e a d in g:  G e n e ra tio n  re cip e  a n d  ve rifica tio n  m a tte r m o re  th a n  vo lu m e  —  th e  sa m e  d o m a in  ca n
+sh o w  la rge  ga in s  o r lo sse s  d e p e n d in g  o n  p ip e lin e  d e sign .
+I m p l e m e n t a t io n  c h e c k l is t
+B e fo re  ge n e ra tio n
+G  →0 G  
+N
+10:50 2/9/26 Kiln — LLM systems research
+localhost:5173/?run=91e2879b-5cca-4c54-9ec1-a97ab76b844a 7/18
+
+D e fin e  ta rge t ta sk,  p o p u la tio n ,  a n d  sh ift typ e ;  se t p rim a ry,  O O D ,  a n d  w o rst- gro u p  m e trics
+u p fro n t.
+ S p lit re a l tra in  /  ca lib ra tio n  /  te st /  O O D  b e fo re  p ro m p t o r ge n e ra to r tu n in g  ( p a ssa ge - le ve l
+h o ld o u t w h e n  o n e  d o c  yie ld s  m a n y  sa m p le s).
+ A u d it re a l d a ta  fo r cla ss  b a la n ce,  ta ils,  d u p lica te s,  la b e l n o ise  —  se t co ve ra ge  ta rge ts  fo r th e
+ge n e ra to r.
+D u rin g  ge n e ra tio n
+ M a tch  ge n e ra to r fa m ily  to  sca rcity  typ e  ( L L M  se m a n tic  ga p s,  sim u la to r p h ysica l,  G A N  ta b u la r,
+ru le s  fo r e d ge  ca se s).
+ O ve rsa m p le  ca n d id a te s,  th e n  filte r ( sch e m a ,  gro u n d in g ,  ve rifie r,  d e d u p e,  ta rge te d  h u m a n
+re vie w ).
+ R e co rd  p e r- re co rd  p ro ve n a n ce  ( ge n e ra to r ve rsio n ,  p ro m p t,  se e d ,  gro u n d in g  so u rce,  sco re s).
+B e fo re  tra in in g
+ M e a su re  a lign m e n t ( M M D / C 2 S T )  b u t d o  n o t re je ct in te n tio n a l ta il o ve rsa m p lin g .
+ R u n  p riva cy  /  m e m o riza tio n  a u d it o n  se n sitive  so u rce s.
+ A b la te  re a l- o n ly,  syn th e tic- o n ly,  a n d  h yb rid  ra tio s  u n d e r fixe d  co m p u te.
+E va lu a tio n  &  d e p lo y
+ C a ll it a n  im p ro ve m e n t o n ly  if  re a l h e ld - o u t ga in  h o ld s  w ith  gu a rd ra ils  o n  O O D ,  fa irn e ss,
+ca lib ra tio n ,  p riva cy.
+ S h a d o w  /  ca n a ry  d e p lo y  w ith  d rift a n d  su b gro u p  m o n ito rin g .
+ O n  ga p s,  co lle ct ta rge te d  re a l d a ta  first —  d o  n o t o n ly  ge n e ra te  m o re  fro m  th e  sa m e  te a ch e r.
+R e s e a r c h  g a p s  &  n e x t  e x p e r im e n t s
+I n d e p e n d e n t p rim a ry  e vid e n ce  fo r:  S e lf- R e in fo rcin g  E rro rs  a n d  M o d e l C o lla p se  M itiga tio n
+I n d e p e n d e n t p rim a ry  e vid e n ce  fo r:  A d a p ta tio n  to  S p e cia lize d  A I  D o m a in s
+I n d e p e n d e n t p rim a ry  e vid e n ce  fo r:  V e rifica tio n ,  V a lid a tio n ,  a n d  Q u a lity  C o n tro l
+I n d e p e n d e n t p rim a ry  e vid e n ce  fo r:  S ca la b ility,  To ke n  E fficie n cy,  a n d  L a te n cy/ C o st Tra d e - o ffs
+S e lf- R e in fo rcin g  E rro rs  a n d  M o d e l C o lla p se  M itiga tio n
+10:50 2/9/26 Kiln — LLM systems research
+localhost:5173/?run=91e2879b-5cca-4c54-9ec1-a97ab76b844a 8/18
+
+U n ifie d  syn th e tic- d a ta  b u d ge t th e o ry  ( o p tim a l re a l:syn th e tic  ra tio  p e r d o m a in / ge n e ra to r q u a lity).
+Ta il fid e lity  b e n ch m a rks  —  glo b a l F I D / M M D  ca n  h id e  ra re - m o d e  lo ss  b e fo re  co lla p se.
+C a u sa l fid e lity  te sts  —  co rre la tio n - m a tch e d  syn th e tics  th a t fa il u n d e r in te rve n tio n / O O D .
+F a irn e ss  e a rly- w a rn in g  m e trics  a cro ss  re cu rsive  ge n e ra tio n s  ( b e fo re  L M  p e rp le xity  m o ve s).
+G e n e ra to r– e va lu a to r co u p lin g  b ia s  ( sa m e - m o d e l ju d ge  in fla tio n  vs  in d e p e n d e n t a u d it).
+D e t a il e d  a n a l y s is
+SC A LA B ILITY, TO K E N  E F F IC IE N C Y, A N D  LATE N C Y / C O ST TR A D E - O F F S
+S ca la b ility  in  a ge n tic  syn th e tic  d a ta  ge n e ra tio n  p ip e lin e s  d e p e n d s  h e avily  o n  m a n a gin g  th e  q u a d ra tic
+in fe re n ce  o ve rh e a d s  a sso cia te d  w ith  m u lti- tu rn  a ge n t e xe cu tio n ,  d yn a m ic  co n te xt e xp a n sio n ,  a n d
+ite ra tive  ve rifie r fe e d b a ck  
+[ 4  p r e p r i n t ] [ 5  p r e p r i n t ]
+.  U n like  sta tic  p ro m p t- b a se d  sin gle - tu rn  d istilla tio n ,
+a ge n tic  w o rkflo w s  ge n e ra te  d a ta  th ro u gh  m u lti- ste p  sta te  tra n sitio n s  in vo lvin g  u se r- a ge n t sim u la tio n s,
+to o l e xe cu tio n  ke rn e ls,  a n d  m u lti- a ge n t critiq u e  lo o p s  
+[ 4  p r e p r i n t ] [ 5  p r e p r i n t ]
+.  I n  m u lti- tu rn  in te ra ctio n
+a rch ite ctu re s  su ch  a s  A P I G e n - M T,  to ke n  co n su m p tio n  sca le s  n o n - lin e a rly  w ith  d ia lo gu e  d e p th  d u e  to
+re p e a tin g  p ro m p t p re fix  co n te xts  a n d  cu m u la tive  co n ve rsa tio n  h isto rie s  
+[ 4  p r e p r i n t ]
+.  T h is  stru ctu ra l
+e sca la tio n  d ire ctly  stra in s  K e y- V a lu e  ( K V )  ca ch e  m e m o ry  a llo ca tio n  o n  se rvin g  clu ste rs,  co n stra in in g
+m a xim u m  b a tch  size s  d u rin g  d a ta se t ge n e ra tio n  
+[ 4  p r e p r i n t ]
+.
+To  o p tim ize  to ke n  e fficie n cy  w ith o u t sa crificin g  tra je cto ry  q u a lity,  a ge n tic  p ip e lin e s  e m p lo y  d yn a m ic
+p re fix  ca ch in g ,  co n te xt p ru n in g ,  a n d  p a ra lle lize d  e xe cu tio n  ve rifica tio n  
+[ 4  p r e p r i n t ] [ 5  p r e p r i n t ]
+.  S e rvin g
+a rch ite ctu re s  o p e ra tin g  m u lti- a ge n t syn th e sis  lo o p s  e n co u n te r co n tin u o u s  H igh  B a n d w id th  M e m o ry
+( H B M )  p re ssu re  a s  m u lti- tu rn  K V - ca ch e s  co m p e te  fo r m e m o ry  sp a ce  a lo n gsid e  ge n e ra tio n  p a ra m e te rs
+[ 4  p r e p r i n t ]
+.  M u lti- n o d e  d istrib u tio n  stra te gie s  m itiga te  th e se  m e m o ry  b o ttle n e cks  b y  d e co u p lin g
+tra je cto ry  ge n e ra tio n  a ge n ts  fro m  e n viro n m e n t ve rifie rs  a n d  ju d ge  m o d e ls  
+[ 4  p r e p r i n t ] [ 5  p r e p r i n t ]
+.
+I n  te rm s  o f  co m p u te  co st tra d e - o ffs,  a ge n tic  p ip e lin e s  re q u ire  h igh e r cu m u la tive  to ke n  e xp e n d itu re
+p e r ge n e ra te d  sa m p le  co m p a re d  to  d ire ct m o d e l d istilla tio n  
+[ 4  p r e p r i n t ] [ 1 2  r e p o ]
+.  H o w e ve r,  th e  re su ltin g
+syn th e tic  d a ta  d e m o n stra te s  h igh e r u tility  p e r to ke n ,  e n a b lin g  sm a lle r o p e n - w e igh t ta rge t m o d e ls  to
+a ch ie ve  ta sk  p e rfo rm a n ce  co m p e titive  w ith  fro n tie r a rch ite ctu re s  
+[ 4  p r e p r i n t ]
+.  L a te n cy  d yn a m ics  d u rin g
+ge n e ra tio n  a re  p rim a rily  d icta te d  b y  syn ch ro n o u s  ve rifica tio n  ste p s,  su ch  a s  re a l- tim e  co d e  e xe cu tio n
+sa n d b o xe s  o r m u lti- a ge n t a gre e m e n t co n se n su s  p ro to co ls  
+[ 4  p r e p r i n t ] [ 5  p r e p r i n t ]
+.
+SE LF- R E IN FO R C IN G  E R R O R S A N D  M O D E L C O LLA P SE  M ITIG ATIO N
+R e cu rsive  tra in in g  o n  syn th e tic  d a ta  in tro d u ce s  se ve re  stru ctu ra l vu ln e ra b ilitie s,  m o st n o ta b ly  m o d e l
+co lla p se — a  d e ge n e ra tive  p ro ce ss  w h e re  fin e - tu n e d  m o d e ls  p ro gre ssive ly  lo se  sta tistica l va ria n ce  a n d
+10:50 2/9/26 Kiln — LLM systems research
+localhost:5173/?run=91e2879b-5cca-4c54-9ec1-a97ab76b844a 9/18
+
+d rift fro m  tru e  d a ta  d istrib u tio n s  
+[ 6  p r e p r i n t ] [ 8  p r e p r i n t ] [ 9  p r e p r i n t ]
+.  E m p irica l in ve stiga tio n s  in to  re cu rsive
+tra in in g  d yn a m ics  d e m o n stra te  a  sp e cific  fa ilu re  m o d e  te rm e d  kn o w le d ge  co lla p se,  w h e re in
+d o w n stre a m  m o d e ls  m a in ta in  su rfa ce - le ve l lin gu istic  flu e n cy  w h ile  su ffe rin g  se ve re  d e gra d a tio n  in
+fa ctu a l a ccu ra cy  
+[ 6  p r e p r i n t ]
+.  A s  ge n e ra tio n s  p ro gre ss  ( ),  th e  ge n e ra tive  m o d e l
+sa m p le s  h e avily  fro m  h igh - p ro b a b ility  ce n tra l m o d e s  o f  its  te a ch e r's  d istrib u tio n ,  syste m a tica lly
+tru n ca tin g  lo w - p ro b a b ility  ta il e ve n ts  a n d  ra re  d o m a in  e d ge  ca se s  
+[ 6  p r e p r i n t ] [ 8  p r e p r i n t ]
+.  C o n se q u e n tly,
+se lf- re in fo rcin g  e rro rs  p ro p a ga te  u n ch e cke d  a cro ss  re cu rsive  ite ra tio n s,  ca u sin g  la te n t h a llu cin a te d
+fa cts  to  b e  tre a te d  a s  h igh - co n fid e n ce  tra in in g  ta rge ts  
+[ 6  p r e p r i n t ] [ 9  p r e p r i n t ]
+.
+M itiga tin g  se lf- re in fo rcin g  e rro rs  re q u ire s  stru ctu ra l co n stra in ts  d u rin g  d a ta  filte rin g  a n d  p o licy
+o p tim iza tio n  
+[ 8  p r e p r i n t ]
+.  Tra d itio n a l p o licy  o p tim iza tio n  a lgo rith m s  su ffe r fro m  e xp lo ra tio n  co lla p se
+w h e n  se lf- ge n e ra te d  re w a rd  sign a ls  co n tin u o u sly  n a rro w  th e  p o licy's  a ctio n  sp a ce  
+[ 8  p r e p r i n t ]
+.
+A n ch o re d  P o licy  O p tim iza tio n  ( A P O )  a d d re sse s  th is  fa ilu re  m o d e  b y  e n fo rcin g  su p p o rt- co n stra in e d
+re ctifica tio n ,  a n ch o rin g  th e  p o licy's  e xp lo ra tio n  b o u n d a ry  to  a  re fe re n ce  su p p o rt se t a n d  p re ve n tin g
+th e  su p p o rt lo ss  th a t fu e ls  re cu rsive  co lla p se  
+[ 8  p r e p r i n t ]
+.
+I n  e m p irica l e va lu a tio n s,  A P O  a ch ie ve s  a  ta rge t re ta in e d  su p p o rt o f  8 3 .8 4 %  w h ile  m a in ta in in g  a n
+o p tim a l p o licy  a ccu ra cy  o f  9 7 .4 7 % ,  co m p a re d  to  sta n d a rd  p o licy  u p d a te s  th a t e xh ib it h igh e r
+e xp lo ra tio n  lo ss  ( 1 6 .0 0 % )  a n d  su p p o rt lo ss  d e lta s  ( 1 6 .1 6 % )  
+[ 8  p r e p r i n t ]
+.  F u rth e rm o re,  in te gra tin g
+e xte rn a l d e te rm in istic  e xe cu tio n  e n viro n m e n ts,  fo rm a l lo gic  ve rifie rs,  a n d  m u lti- a ge n t cro ss-
+e xa m in a tio n  fra m e w o rks  b re a ks  a u to p h a go u s  fe e d b a ck  lo o p s  b y  filte rin g  o u t u n gro u n d e d ,  h igh ly  flu e n t
+h a llu cin a tio n s  p rio r to  p o licy  u p d a te s  
+[ 4  p r e p r i n t ] [ 6  p r e p r i n t ] [ 8  p r e p r i n t ]
+.
+A D A P TATIO N  TO  SP E C IA LIZ E D  A I D O M A IN S
+D e p lo yin g  ge n e ra tive  syn th e tic  d a ta  p ip e lin e s  in  sp e cia lize d  d o m a in s— su ch  a s  le ga l re a so n in g ,
+fin a n cia l a n a lytics,  te ch n ica l e n gin e e rin g ,  a n d  h e a lth ca re — re q u ire s  a d h e rin g  to  e xa ct stru ctu ra l
+sch e m a s,  d o m a in  ru le s,  a n d  strict p riva cy  sta n d a rd s  
+[ 4  p r e p r i n t ] [ 5  p r e p r i n t ]
+.  S p e cia lize d  A I  d o m a in s  a re
+ch a ra cte rize d  b y  sca rce  p u b lic  tra in in g  d a ta ,  lo n g- ta il e d ge  d istrib u tio n s,  a n d  ze ro - to le ra n ce
+th re sh o ld s  fo r fa ctu a l h a llu cin a tio n s  
+[ 5  p r e p r i n t ] [ 1 0  p r e p r i n t ]
+.  I n  R e trie va l- A u gm e n te d  G e n e ra tio n  ( R A G )
+a p p lica tio n s  fo r e n te rp rise  w o rkflo w s,  a ge n tic  fra m e w o rks  syn th e size  m u lti- a ge n t d a ta se ts  th a t m irro r
+re a l- w o rld  d o cu m e n t to p o lo gie s,  stru ctu re d  ta b le  re la tio n s,  a n d  co m p le x  d o m a in  q u e rie s  w ith o u t
+e xp o sin g  se n sitive  u n d e rlyin g  so u rce  te xts  
+[ 5  p r e p r i n t ]
+.
+D o m a in - sp e cific  a d a p ta tio n  m e th o d o lo gie s  m o ve  b e yo n d  b a sic  te xt e xp a n sio n  b y  u sin g  sp e cia lize d
+e n viro n m e n t fe e d b a ck  lo o p s  
+[ 4  p r e p r i n t ] [ 5  p r e p r i n t ]
+.  F o r in sta n ce,  in  so ftw a re  e n gin e e rin g  a n d  to o l- u se
+d o m a in s,  a ge n tic  p ip e lin e s  sim u la te  m u lti- tu rn  in te ra ctio n s  w h e re  sim u la te d  h u m a n  a ge n ts  p re se n t
+a m b igu o u s  d o m a in  re q u e sts,  re q u irin g  th e  a ssista n t a ge n t to  syste m a tica lly  ca ll e xte rn a l to o ls,  h a n d le
+ru n tim e  e rro rs,  a n d  u p d a te  co n te xt 
+[ 4  p r e p r i n t ]
+.
+G  →0 G  →1 ⋯ → G  
+N
+10:50 2/9/26 Kiln — LLM systems research
+localhost:5173/?run=91e2879b-5cca-4c54-9ec1-a97ab76b844a 10/18
+
+S im ila rly,  sp e cia lize d  o u t- o f- d istrib u tio n  ge n e ra liza tio n  re q u ire s  tra in in g  syn th e tic  d a ta  ge n e ra to rs  to
+ge n e ra te  n o n - i.i.d .  o p e ra tio n a l sh ifts,  fo rcin g  d o w n stre a m  d o m a in  m o d e ls  to  le a rn  in va ria n t d o m a in
+lo gic  ra th e r th a n  su p e rficia l ke yw o rd  a sso cia tio n s  
+[ 1 0  p r e p r i n t ] [ 1 1  p e e r ]
+.  I n  h igh ly  re gu la te d  se ttin gs,
+m u lti- a ge n t syn th e size rs  e n fo rce  p riva cy  gu a ra n te e s  b y  co n ve rtin g  raw  p ro p rie ta ry  d a ta  in to  p riva cy-
+p re se rvin g ,  stru ctu ra lly  a lign e d  syn th e tic  e va lu a tio n  sp lits  
+[ 5  p r e p r i n t ]
+.
+V E R IF IC ATIO N , VA LID ATIO N , A N D  Q U A LITY  C O N TR O L
+Q u a lity  co n tro l a rch ite ctu re s  in  a ge n tic  d a ta  syn th e sis  tra n sitio n  aw ay  fro m  u n co n stra in e d  L L M - a s- a-
+ju d ge  sco rin g  to w a rd  m u lti- sta ge  h yb rid  ve rifica tio n  p ip e lin e s  co m b in in g  d e te rm in istic  filte rs,  m u lti-
+a ge n t d e b a te,  a n d  p ro gra m m a tic  e xe cu tio n  ch e cks  
+[ 1  p r e p r i n t ] [ 4  p r e p r i n t ] [ 5  p r e p r i n t ]
+.  R e lyin g  so le ly  o n
+sin gle - p ro m p t fro n tie r m o d e l sco rin g  in tro d u ce s  e va lu a to r a lign m e n t b ia s,  w h e re  ju d ge  m o d e ls
+co n siste n tly  o ve r- ra te  syn th e tica lly  ge n e ra te d  te xts  th a t m im ic  th e ir o w n  stylistic  o u tp u ts,  re ga rd le ss
+o f  fa ctu a l ve ra city  
+[ 1  p r e p r i n t ] [ 6  p r e p r i n t ]
+.  To  o ve rco m e  th is,  ve rifica tio n  fra m e w o rks  d e p lo y  sp e cia lize d
+va lid a tio n  ch a in s  th a t iso la te  in d ivid u a l fu n ctio n a l cla im s  b e fo re  co m m ittin g  syn th e tic  tra je cto rie s  to
+d o w n stre a m  tra in in g  p o o ls  
+[ 4  p r e p r i n t ] [ 5  p r e p r i n t ]
+.
+A  ro b u st ve rifica tio n  fra m e w o rk  o p e ra te s  a cro ss  th re e  se q u e n tia l va lid a tio n  laye rs:
+1 .  D e te rm in istic  E xe cu tio n  R u le s:  S yn ta x  ch e cke rs,  J S O N  sch e m a  p a rse rs,  a n d  e xe cu tio n  sa n d b o xe s
+in sta n tly  d isca rd  m a lfo rm e d  o u tp u ts  o r b ro ke n  co d e  p a th s  
+[ 4  p r e p r i n t ]
+.
+2 .  M u lti-A ge n t D e b a te  &  C o n siste n cy  A u d it:  I n d e p e n d e n t critic  a ge n ts  e va lu a te  ge n e ra te d  so lu tio n s
+fro m  o p p o sin g  syste m  p ro m p ts,  re q u irin g  m u lti- a ge n t co n se n su s  b e fo re  a cce p tin g  co m p le x
+re a so n in g  ste p s  
+[ 5  p r e p r i n t ]
+.
+3 .  D istrib u tio n a l &  S u p p o rt F ilte rin g:  A d va n ce d  p o licy  o p tim iza tio n  fra m e w o rks  a p p ly  su p p o rt-
+co n stra in e d  m e trics  to  e n su re  ge n e ra te d  sa m p le s  d o  n o t co n ce n tra te  e n tire ly  w ith in  lo w - e n tro p y
+h e a d  d istrib u tio n s,  m itiga tin g  d o w n stre a m  co lla p se  risks  
+[ 8  p r e p r i n t ]
+.
+B y  e m b e d d in g  fo rm a l ve rifica tio n  ch e ckp o in ts  in to  ge n e ra tio n  lo o p s,  a ge n tic  p ip e lin e s  re d u ce  la b e l
+n o ise,  e n su re  e xa ct co n stra in t a d h e re n ce,  a n d  p re ve n t lo w - q u a lity  syn th e tic  ge n e ra tio n s  fro m
+d e gra d in g  d o w n stre a m  ta sk  u tility  
+[ 1  p r e p r i n t ] [ 4  p r e p r i n t ]
+.
+A G E N TIC  SY N TH E TIC  D ATA  G E N E R ATIO N  M E TH O D O LO G IE S
+M e th o d o lo gie s  fo r a ge n tic  syn th e tic  d a ta  ge n e ra tio n  h ave  e vo lve d  fro m  b a sic  se lf- in stru ct te xt
+ge n e ra tio n  in to  d yn a m ic,  in te ra ctive  m u lti- a ge n t o rch e stra tio n  fra m e w o rks  
+[ 4  p r e p r i n t ] [ 5  p r e p r i n t ] [ 1 2  r e p o ]
+.  M o d e rn  m u lti- a ge n t ge n e ra tio n  e n gin e s  o rga n ize  sp e cia liza tio n  th ro u gh  d istin ct su b - a ge n ts:  p la n n e r
+a ge n ts  fo rm u la te  co m p le x  m u lti- ste p  sce n a rio  b lu e p rin ts,  sim u la te d  u se r a ge n ts  in tro d u ce  re a listic
+h u m a n  va ria b ility  a n d  a m b igu o u s  go a l ch a n ge s,  ge n e ra to r a ge n ts  fo rm u la te  co d e  o r te xtu a l to o l- ca ll
+ste p s,  a n d  critic  a ge n ts  e va lu a te  so lu tio n  va lid ity  
+[ 4  p r e p r i n t ] [ 5  p r e p r i n t ]
+.  T h is  sim u la te d  in te rp lay  cre a te s
+10:50 2/9/26 Kiln — LLM systems research
+localhost:5173/?run=91e2879b-5cca-4c54-9ec1-a97ab76b844a 11/18
+
+rich  in te ra ctio n  tra je cto rie s  th a t ca p tu re  m u lti- tu rn  co n ve rsa tio n a l d yn a m ics,  e d ge - ca se  e rro r
+re co ve ry,  a n d  to o l e xe cu tio n  d e p e n d e n cie s  fa r m o re  e ffe ctive ly  th a n  sta tic  sin gle - tu rn  p ro m p t
+d istilla tio n  
+[ 4  p r e p r i n t ]
+.
+I n  m u lti- tu rn  to o l in te ra ctio n  se ttin gs,  syste m s  like  A P I G e n - M T  o p e ra tio n a lize  a ge n tic  d a ta  syn th e sis
+th ro u gh  sim u la te d  a ge n t- h u m a n  in te rp lay  
+[ 4  p r e p r i n t ]
+.  T h e  fra m e w o rk  o rch e stra te s  m u lti- tu rn  u se r-
+a ge n t d ia lo gu e s  w h e re  th e  syn th e tic  h u m a n  a ge n t syste m a tica lly  te sts  syste m  ca p a b ilitie s  a cro ss
+m u lti- ste p  A P I  e xe cu tio n  ta sks  
+[ 4  p r e p r i n t ]
+.  B y  co n tro llin g  e n viro n m e n ta l co n d itio n s,  a ge n tic  d a ta
+ge n e ra tio n  p ip e lin e s  syste m a tica lly  va ry  ta sk  co m p le xity,  d o m a in  ta xo n o m y  co ve ra ge,  a n d  co n te xt
+le n gth ,  yie ld in g  co m p re h e n sive  tra in in g  d istrib u tio n s  
+[ 4  p r e p r i n t ] [ 5  p r e p r i n t ]
+.  F u rth e rm o re,  m u lti- a ge n t
+fra m e w o rks  ta rge te d  a t sp e cia lize d  a p p lica tio n s  like  R A G  e va lu a tio n  d yn a m ica lly  syn th e size  m u lti- h o p
+q u e rie s,  co n te xtu a l gro u n d in g  d o cu m e n ts,  a n d  gro u n d - tru th  a n sw e r ke ys  w h ile  e n su rin g  stru ctu ra l
+d ive rsity  a n d  d iffe re n tia l p riva cy  
+[ 5  p r e p r i n t ]
+.
+E VA LU ATIO N  F R A M E W O R K S FO R  B IA S A N D  D ISTR IB U TIO N  SH IF T
+E va lu a tin g  d o w n stre a m  m o d e ls  tra in e d  o n  syn th e tic  d a ta  re q u ire s  a n a lytica l fra m e w o rks  ca p a b le  o f
+d e te ctin g  syste m a tic  b ia s  a m p lifica tio n ,  se m a n tic  co ve ra ge  lo ss,  a n d  p e rfo rm a n ce  d e gra d a tio n  u n d e r
+o u t- o f- d istrib u tio n  ( O O D )  sh ifts  
+[ 2  p r e p r i n t ] [ 1 0  p r e p r i n t ] [ 1 1  p e e r ]
+.  Tra d itio n a l e m p irica l e va lu a tio n s  re lyin g
+o n  in d e p e n d e n t a n d  id e n tica lly  d istrib u te d  ( i.i.d .)  te st sp lits  fa il to  id e n tify  u n d e rlyin g  m o d e l fra gility,  a s
+fin e - tu n e d  m o d e ls  fre q u e n tly  m e m o rize  syn th e tic  stylistic  p a tte rn s  w h ile  fa ilin g  u n d e r re a l- w o rld
+d e p lo ym e n t sh ifts  
+[ 1 0  p r e p r i n t ] [ 1 1  p e e r ]
+.  F o rm a l o u t- o f- d istrib u tio n  d e te ctio n  fra m e w o rks  a d d re ss  th is
+issu e  b y  le ve ra gin g  syn th e tic  d a ta  ge n e ra tio n  to  d e lib e ra te ly  co n stru ct o u t- o f- d istrib u tio n  n e ga tive
+sa m p le s,  e n a b lin g  cla ssifica tio n  m o d e ls  to  le a rn  ro b u st o p e ra tio n a l b o u n d a rie s  a n d  su b sta n tia lly
+re d u ce  fa lse  p o sitive  ra te s  
+[ 2  p r e p r i n t ]
+.
+W h e n  e va lu a tin g  m o d e l re a so n in g  ca p a b ility,  o u t- o f- d istrib u tio n  b e n ch m a rks  e va lu a te  w h e th e r fin e -
+tu n e d  m o d e ls  p o sse ss  u n d e rlyin g  d o m a in  co m p re h e n sio n  o r re ly  o n  su p e rficia l h e u ristics  
+[ 1  p r e p r i n t ]
+[ 1 1  p e e r ]
+.  E m p irica l in ve stiga tio n s  in to  m o d e l se lf- ra tio n a liza tio n  sh o w  th a t w h ile  la n gu a ge  m o d e ls
+ge n e ra te  flu e n t e xp la n a to ry  ra tio n a le s,  th e ir re a so n in g  p e rfo rm a n ce  d ro p s  sh a rp ly  u n d e r o u t- o f-
+d istrib u tio n  N L I  a n d  m e ta- re a so n in g  e va lu a tio n  ta sks  
+[ 1  p r e p r i n t ] [ 1 1  p e e r ]
+.
+D e te ctin g  syste m a tic  b ia s  a n d  d istrib u tio n  d rift re q u ire s  tra ckin g  sta tistica l d ive rge n ce s  b e tw e e n  re a l
+re fe re n ce  se ts  a n d  syn th e tic  o u tp u ts  u sin g  W a sse rste in  d ista n ce s,  M a xim u m  M e a n  D iscre p a n cy
+( M M D ),  a n d  m u lti- d im e n sio n a l se m a n tic  clu ste r e n tro p y  
+[ 2  p r e p r i n t ] [ 5  p r e p r i n t ] [ 1 0  p r e p r i n t ]
+.  S yste m a tica lly
+e va lu a tin g  d o w n stre a m  fin e - tu n e d  ch e ckp o in ts  a cro ss  stre ss- te ste d  O O D  b e n ch m a rks  e n su re s  th a t
+a ge n tica lly  syn th e size d  d a ta  in stills  ge n u in e  ta sk  ca p a b ility  ra th e r th a n  o ve rfitte d  sh o rtcu t le a rn in g
+[ 2  p r e p r i n t ] [ 1 0  p r e p r i n t ] [ 1 1  p e e r ]
+.
+10:50 2/9/26 Kiln — LLM systems research
+localhost:5173/?run=91e2879b-5cca-4c54-9ec1-a97ab76b844a 12/18
+
+Q u a n t it a t iv e  f in d in g s
+T h e  ta b le  b e lo w  syn th e size s  e m p irica l o u tco m e  m e a su re m e n ts  re p o rte d  a cro ss  th e  lite ra tu re  o n
+syn th e tic  d a ta  ge n e ra tio n ,  p o licy  o p tim iza tio n ,  a n d  re a so n in g  e va lu a tio n .
+S o u rce M e tric V a lu e B e n ch m a rk  /
+S e ttin g
+C o n d itio n  /  C o n te xt F la g
+[ 1
+p r e p r i n t ]
+M a th  E va lu a tio n
+A ccu ra cy
+8 0 .0 % M A T H
+b e n ch m a rk
+M o d e l e va lu a tio n  o n
+m a th e m a tica l p ro b le m
+so lvin g
+S in gle - p o in t
+b e n ch m a rk  re su lt
+[ 1
+p r e p r i n t ]
+G S M 8 K  R e a so n in g
+A ccu ra cy
+5 0 .0 % G S M 8 K
+b e n ch m a rk
+M o d e l e va lu a tio n  o n  m u lti-
+ste p  a rith m e tic  re a so n in g
+S in gle - p o in t
+b e n ch m a rk  re su lt
+[ 8
+p r e p r i n t ]
+Ta rge t R e ta in e d
+S u p p o rt
+8 3 .8 4 % A P O  p o licy
+o p tim iza tio n
+S u p p o rt- co n stra in e d  p o licy
+u p d a te  b o u n d a ry
+C o n tro lle d  R L
+se ttin g
+[ 8
+p r e p r i n t ]
+O p tim a l P o licy
+A ccu ra cy
+9 7 .4 7 % A P O  p o licy
+o p tim iza tio n
+P o licy  a ccu ra cy  u n d e r
+a n ch o re d  o p tim iza tio n
+C o n tro lle d  R L
+se ttin g
+[ 8
+p r e p r i n t ]
+R e ctifie d
+O p tim iza tio n
+A ccu ra cy
+9 5 .5 2 % S u p p o rt
+re ctifica tio n  te st
+O p tim iza tio n  a ccu ra cy  a fte r
+su p p o rt b o u n d a ry  filte rin g
+C o n tro lle d  R L
+se ttin g
+[ 8
+p r e p r i n t ]
+E xp lo ra tio n  Lo ss 1 6 .0 0 % S ta n d a rd  p o licy
+u p d a te
+E xp lo ra tio n  lo ss  w ith o u t
+su p p o rt co n stra in ts
+B a se lin e
+re fe re n ce
+[ 8
+p r e p r i n t ]
+S u p p o rt Lo ss  D e lta 1 6 .1 6 % S ta n d a rd  p o licy
+u p d a te
+S u p p o rt lo ss  d e lta  d u rin g
+u n co n stra in e d  p o licy
+o p tim iza tio n
+B a se lin e
+re fe re n ce
+[ 8
+p r e p r i n t ]
+R e sid u a l P o licy
+E rro r
+4 .4 8 % A P O  p o licy
+o p tim iza tio n
+P o licy  e rro r re m a in in g  u n d e r
+su p p o rt- co n stra in e d  u p d a te
+C o n tro lle d  R L
+se ttin g
+[ 8
+p r e p r i n t ]
+O u t- o f- S u p p o rt
+P ro b a b ility
+2 .5 3 % A P O  p o licy
+o p tim iza tio n
+P ro b a b ility  m a ss  fa llin g
+o u tsid e  ta rge t su p p o rt
+b o u n d a ry
+C o n tro lle d  R L
+se ttin g
+[ 8
+p r e p r i n t ]
+Tra je cto ry  S u p p o rt
+R a tio
+9 8 .4 6 % A P O  p o licy
+o p tim iza tio n
+R a tio  o f  ge n e ra te d
+tra je cto rie s  w ith in  va lid
+su p p o rt se t
+C o n tro lle d  R L
+se ttin g
+10:50 2/9/26 Kiln — LLM systems research
+localhost:5173/?run=91e2879b-5cca-4c54-9ec1-a97ab76b844a 13/18
+
+S o u rce M e tric V a lu e B e n ch m a rk  /
+S e ttin g
+C o n d itio n  /  C o n te xt F la g
+[ 8
+p r e p r i n t ]
+Tru n ca tio n  P e n a lty 1 .5 4 % A P O  p o licy
+o p tim iza tio n
+P e rfo rm a n ce  p e n a lty  fro m
+su p p o rt b o u n d a ry  tru n ca tio n
+C o n tro lle d  R L
+se ttin g
+[ 8
+p r e p r i n t ]
+P o licy  E rro r R a te 1 .5 0 % A P O  p o licy
+o p tim iza tio n
+O ve ra ll p o licy  e rro r ra te
+u n d e r a n ch o re d  o p tim iza tio n
+C o n tro lle d  R L
+se ttin g
+[ 8
+p r e p r i n t ]
+R e ctifica tio n
+B o u n d a ry  E rro r
+3 .3 0 % A P O  p o licy
+o p tim iza tio n
+E rro r ra te  a lo n g  th e  su p p o rt
+re ctifica tio n  b o u n d a ry
+C o n tro lle d  R L
+se ttin g
+W o r k e d  e x a m p l e
+To  o b se rve  h o w  a ge n tic  syn th e tic  d a ta  p ip e lin e s  fu n ctio n  o p e ra tio n a lly,  co n sid e r a  m u lti- tu rn  so ftw a re
+d e ve lo p m e n t to o l in te ra ctio n  syn th e sis  ta sk  e xe cu te d  via  th e  A P I G e n - M T  fra m e w o rk  
+[ 4  p r e p r i n t ]
+.  T h e
+syste m  syn th e size s  a ge n t- h u m a n  m u lti- tu rn  tra je cto rie s  to  fin e - tu n e  o p e n - w e igh t ta rge t m o d e ls  o n
+co m p le x  A P I  in te ra ctio n  se q u e n ce s.
+SY STE M  IN ITIA LIZ ATIO N  &  SC E N A R IO  SA M P LIN G
+T h e  p ip e lin e  re a d s  a  ta rge t d o m a in  sp e cifica tio n  ( e.g .,  e n te rp rise  clo u d  in fra stru ctu re  m a n a ge m e n t
+A P I s)  a n d  se le cts  a  ta rge t sce n a rio .  T h e  sce n a rio  p la n n e r a ge n t in sta n tia te s  tw o  d istin ct a ge n t ro le s:  a
+sim u la te d  h u m a n  u se r a ge n t in itia lize d  w ith  a n  a m b igu o u s  go a l ( e.g .,  " P ro visio n  a  se cu re  d a ta b a se
+in sta n ce  a n d  se t u p  b a cku p  sch e d u le s,  b u t m o d ify  p a ra m e te rs  if  e stim a te d  co sts  e xce e d  th e
+th re sh o ld " )  a n d  a n  a ssista n t ca n d id a te  a ge n t e q u ip p e d  w ith  e xe cu ta b le  A P I  d o cu m e n ta tio n  
+[ 4  p r e p r i n t ]
+.
+M U LTI- TU R N  D IA LO G U E  &  TR A JE C TO R Y  G E N E R ATIO N
+1 .  U se r G o a l F o rm u la tio n :  T h e  sim u la te d  u se r a ge n t ge n e ra te s  th e  in itia l p ro m p t ,  in co rp o ra tin g
+re a listic  u se r u n d e rsp e cifica tio n .  T h e  a ctive  co n te xt le n gth  sta n d s  a t a p p ro xim a te ly  3 4 0  to ke n s,
+in clu d in g  syste m  p ro m p t in stru ctio n s  a n d  ava ila b le  to o l sch e m a s.
+2 .  A ssista n t A ctio n  &  E xe cu tio n :  T h e  a ssista n t a ge n t p ro ce sse s   a n d  o u tp u ts  a  stru ctu re d  to o l ca ll
+ ta rge tin g  th e  d a ta b a se  p ro visio n in g  A P I .  T h e  o u tp u t is  ro u te d  th ro u gh  a  d e te rm in istic  syn ta x
+p a rse r.  U p o n  p a ssin g  va lid a tio n ,  th e  ca ll e xe cu te s  in  a  sa n d b o xe d  e n viro n m e n t,  re tu rn in g  a n
+e xe cu tio n  o u tp u t  ( e.g .,  co n firm in g  in sta n ce  cre a tio n  w h ile  re tu rn in g  e stim a te d  m o n th ly  co sts).
+3 .  U se r D yn a m ic  R e a ctio n :  T h e  sim u la te d  u se r a ge n t re ce ive s  ,  d e te cts  th a t co sts  e xce e d  th e
+b u d ge t co n stra in t,  a n d  ge n e ra te s  fo llo w - u p  p ro m p t  re q u e stin g  co n figu ra tio n  u p d a te s.  T h e
+co n te xt le n gth  e xp a n d s  to  a p p ro xim a te ly  8 9 0  to ke n s.
+U
+ 
+1
+U
+ 
+1
+A  
+1
+E  
+1
+E  
+1
+U  
+2
+10:50 2/9/26 Kiln — LLM systems research
+localhost:5173/?run=91e2879b-5cca-4c54-9ec1-a97ab76b844a 14/18
+
+4 .  I te ra tive  E rro r R e co ve ry:  T h e  a ssista n t a ge n t ge n e ra te s   to  a d ju st in sta n ce  sizin g  a n d  b a cku p
+re te n tio n  p e rio d s,  re ce ivin g  e xe cu tio n  co n firm a tio n  .  T h e  m u lti- tu rn  d ia lo gu e  co n clu d e s  w h e n  th e
+u se r a ge n t co n firm s  ta sk  co m p le tio n .
+M U LTI- STA G E  Q U A LITY  C O N TR O L &  F ILTE R IN G
+O n ce  th e  tra je cto ry  is  ge n e ra te d ,  it p a sse s  th ro u gh  th re e  se q u e n tia l ve rifica tio n  ch e ckp o in ts:
+E xe cu tio n  V a lid a tio n  G a te :  T h e  fu ll tra ce   is  p a rse d  p ro gra m m a tica lly.  A n y
+ru n tim e  e rro rs  o r in va lid  sch e m a  fo rm a ttin g  re su lt in  im m e d ia te  tra je cto ry  re je ctio n  
+[ 4  p r e p r i n t ]
+.
+M u lti-A ge n t D e b a te  G a te :  I n d e p e n d e n t critic  a ge n ts  e va lu a te  w h e th e r th e  a ssista n t a ge n t co rre ctly
+in te rp re te d  th e  u se r's  im p licit b u d ge t co n stra in t.  Tra je cto rie s  e xh ib itin g  u n gro u n d e d  a ssu m p tio n s
+o r se m a n tic  d rift a re  fla gge d  a n d  re m o ve d  
+[ 5  p r e p r i n t ]
+.
+S u p p o rt R e ctifica tio n  G a te :  T h e  tra je cto ry  is  ch e cke d  a ga in st th e  re fe re n ce  su p p o rt se t u sin g
+A n ch o re d  P o licy  O p tim iza tio n  ( A P O )  b o u n d s  to  e n su re  th e  sa m p le  co n trib u te s  va lid  o p e ra tio n a l
+co ve ra ge  w ith o u t in tro d u cin g  e xtre m e  lo w - p ro b a b ility  n o ise  
+[ 8  p r e p r i n t ]
+.
+A cce p te d  tra je cto rie s  a re  co m m itte d  to  th e  fin a l tra in in g  co rp u s,  p ro vid in g  h igh - fid e lity,  ve rifie d  m u lti-
+tu rn  in te ra ctio n  d a ta  fo r fin e - tu n in g  o p e n - w e igh t m o d e ls  
+[ 4  p r e p r i n t ]
+.
+U n c e r t a in t ie s  &  g a p s
+M E A SU R E M E N T &  R E P O R TIN G  G A P S
+A  critica l ga p  a cro ss  cu rre n t a ge n tic  syn th e tic  d a ta  re se a rch  is  th e  in co m p le te  re p o rtin g  o f
+co m p u ta tio n a l o ve rh e a d  m e trics.  W h ile  fu n ctio n a l a ccu ra cy  d e lta s  (  T S T R )  a n d  ta sk  p a ss  ra te s  a re
+w id e ly  re p o rte d  
+[ 1  p r e p r i n t ] [ 4  p r e p r i n t ]
+,  ke y  in fra stru ctu re  p e rfo rm a n ce  m e trics— in clu d in g  e xa ct K e y-
+V a lu e  ( K V )  ca ch e  m e m o ry  fo o tp rin t,  G P U  m e m o ry  b a n d w id th  u tiliza tio n ,  tim e - to - first- to ke n  ( T T F T )
+la te n cy,  a n d  F L O P  co n su m p tio n  p e r va lid a te d  sa m p le — a re  fre q u e n tly  o m itte d .  S ta n d a rd izin g  th e
+re p o rtin g  o f  to ta l co m p u te  co sts  ( F L O P s  p e r va lid a te d  to ke n )  a n d  ge n e ra tio n  la te n cy  a cro ss
+sta n d a rd ize d  h a rd w a re  sta cks  is  n e ce ssa ry  to  a llo w  fa ir o p e ra tio n a l co m p a riso n s  b e tw e e n  a ge n tic  d a ta
+ge n e ra tio n  p ip e lin e s  a n d  tra d itio n a l d ire ct d istilla tio n  a p p ro a ch e s.
+F IE LD - W ID E  TE C H N IC A L C H A LLE N G E S
+Lo n g-Te rm  R e cu rsive  Lo o p  S ta b ility:  W h ile  su p p o rt- co n stra in e d  fra m e w o rks  like  A n ch o re d  P o licy
+O p tim iza tio n  ( A P O )  re d u ce  e xp lo ra tio n  lo ss  a n d  su p p o rt d e cay  
+[ 8  p r e p r i n t ]
+,  e m p irica l va lid a tio n  o ve r
+d e e p  re cu rsive  ge n e ra tio n s  ( )  in  m u lti- a ge n t se ttin gs  re m a in s  lim ite d .  L o n g- te rm  d yn a m ics  o f
+re cu rsive  se lf- tra in in g  re q u ire  fu rth e r lo n gitu d in a l stu d y  
+[ 6  p r e p r i n t ] [ 8  p r e p r i n t ]
+.
+A  
+2
+E  
+2
+( U  , A  , E  , U  , A  , E  )1 1 1 2 2 2
+Δ
+G
+ 
++1 0
+10:50 2/9/26 Kiln — LLM systems research
+localhost:5173/?run=91e2879b-5cca-4c54-9ec1-a97ab76b844a 15/18
+
+E va lu a to r A lign m e n t &  LLM -a s-a -Ju d ge  B ia s:  A u to m a te d  ve rifie rs  a n d  ju d ge  m o d e ls  e xh ib it
+syste m a tic  se lf- p re fe re n ce  b ia s,  favo rin g  syn th e tica lly  ge n e ra te d  stylistic  p a tte rn s  o ve r n a tu ra l
+h u m a n  o u tp u ts  
+[ 1  p r e p r i n t ] [ 6  p r e p r i n t ]
+.  D e ve lo p in g  fu lly  o b je ctive,  n o n - ge n e ra tive  e va lu a tio n  m e trics
+fo r q u a lita tive  d o m a in  ta sks  re m a in s  a n  a ctive  re se a rch  ch a lle n ge.
+N o n -i.i.d .  O O D  G e n e ra liza tio n  B o u n d a rie s:  E xistin g  o u t- o f- d istrib u tio n  fra m e w o rks  p ro vid e
+m a th e m a tica l fo rm a lism s  fo r d o m a in  sh ifts  
+[ 1 0  p r e p r i n t ]
+,  b u t p ra ctica l m e th o d s  fo r p re d ictin g  e xa ctly
+w h e n  a  syn th e tic  tra in in g  d istrib u tio n  w ill fa il u n d e r re a l- w o rld  o p e ra tio n a l sh ifts  re q u ire  co n tin u e d
+e m p irica l b e n ch m a rkin g  o n  sp e cia lize d  d o m a in  w o rklo a d s  
+[ 2  p r e p r i n t ] [ 1 0  p r e p r i n t ] [ 1 1  p e e r ]
+.
+R e f e r e n c e s
+1 .  M R - G S M 8 K :  A  M e ta- R e a so n in g  B e n ch m a rk  fo r L a rge  L a n gu a ge  M o d e l E va lu a tio n  —
+h t t p s : / / a r x i v . o r g / h t m l / 2 3 1 2 . 1 7 0 8 0 v 4
+2 .  O u t- o f- D istrib u tio n  D e te ctio n  u sin g  S yn th e tic  D a ta  G e n e ra tio n  —
+h t t p s : / / a r x i v . o r g / h t m l / 2 5 0 2 . 0 3 3 2 3 v 1
+3 .  S yn th e tic  D a ta  G e n e ra tio n  U sin g  L a rge  L a n gu a ge  M o d e ls  —
+h t t p s : / / a r x i v . o r g / h t m l / 2 5 0 3 . 1 4 0 2 3 v 1
+4 .  A P I G e n - M T :  A ge n tic  P I p e lin e  fo r M u lti- Tu rn  D a ta  G e n e ra tio n  via  S im u la te d  A ge n t- H u m a n  I n te rp lay
+—  h t t p s : / / a r x i v . o r g / h t m l / 2 5 0 4 . 0 3 6 0 1 v 4
+5 .  D ive rse  A n d  P riva te  S yn th e tic  D a ta se ts  G e n e ra tio n  fo r R A G  e va lu a tio n :  A  m u lti- a ge n t fra m e w o rk  —
+h t t p s : / / a r x i v . o r g / h t m l / 2 5 0 8 . 1 8 9 2 9 v 1
+6 .  W h e n  F lu e n cy  S u rvive s  b u t F a cts  F a il u n d e r R e cu rsive  S yn th e tic  Tra in in g  —
+h t t p s : / / a r x i v . o r g / h t m l / 2 5 0 9 . 0 4 7 9 6 v 1
+7 .  U n lo ckin g  O u t- o f- D istrib u tio n  G e n e ra liza tio n  in  Tra n sfo rm e rs  via  R e cu rsive  L a te n t S p a ce  R e a so n in g
+—  h t t p s : / / a r x i v . o r g / h t m l / 2 5 1 0 . 1 4 0 9 5 v 1
+8 .  A n ch o re d  P o licy  O p tim iza tio n :  M itiga tin g  E xp lo ra tio n  C o lla p se  via  S u p p o rt- C o n stra in e d
+R e ctifica tio n  —  h t t p s : / / a r x i v . o r g / h t m l / 2 6 0 2 . 0 5 7 1 7 v 1
+9 .  R e cu rsive  S e lf- Tra in in g  C o lla p se  in  C o d e  L L M s  -  a rX iv  —  h t t p s : / / a r x i v . o r g / h t m l / 2 6 0 6 . 2 8 4 3 8 v 1
+1 0 .  To w a rd s  O u t- O f- D istrib u tio n  G e n e ra liza tio n :  A  S u rve y  —  h t t p s : / / a r x i v . o r g / p d f / 2 1 0 8 . 1 3 6 2 4
+1 1 .  S e lf- R a tio n a liza tio n  in  th e  W ild :  A  L a rge - sca le  O u t- o f- D istrib u tio n  E va lu a tio n  o n  N L I - re la te d  ta sks  -
+A C L  A n th o lo g y  —  h t t p s : / / a c l a n t h o l o g y . o r g / 2 0 2 5 . t a c l - 1 . 1 5
+10:50 2/9/26 Kiln — LLM systems research
+localhost:5173/?run=91e2879b-5cca-4c54-9ec1-a97ab76b844a 16/18
+
+1 2 .  A  S u rve y  o f  L L M - B a se d  M e th o d s  fo r S yn th e tic  D a ta  ...  —  h t t p s : / / g i t h u b . c o m / a h m a d -
+a l i s m a i l / L L M _ b a s e d _ S y n t h e t i c _ D a t a _ G e n e r a t i o n
+S o u r c e  q u a l it y
+B a n d  /  p e e r_ re vie w e d :  
+[ 1 1  p e e r ]
+B a n d  /  sp e cia list:  
+[ 1 2  s p e c i a l i s t ]
+
+S O U R C E S
+1 2
+[ 1 ] P E E R  R E V IE W E D
+M R -GS M 8K : A  M e ta-R e ason ing  B e n ch m ark  for  Large  Lan gu age  M ode l E valu ation
+arxiv.o rg
+[ 2 ] P E E R  R E V IE W E D
+O u t-o f-D istribu tion  D e te ction  u sing  S yn th e tic D ata  Ge n e ration
+arxiv.o rg
+[ 3 ] P E E R  R E V IE W E D
+S yn th e tic D ata  Ge n e ration  U sing  Large  Lan gu age  M ode ls
+arxiv.o rg
+[ 4 ] P E E R  R E V IE W E D
+A P IGe n -M T: A ge n tic P Ipe line  for  M u lti-Tu rn  D ata  Ge n e ration  via S im u late d A ge n t-H u m an  In te rplay
+arxiv.o rg
+[ 5 ] P E E R  R E V IE W E D
+D ive rse  A n d P rivate  S yn th e tic D atase ts  Ge n e ration  for  RA G e valu ation: A  m u lti-age n t fram e w ork
+arxiv.o rg
+[ 6 ] P E E R  R E V IE W E D
+W h e n  F lu e n cy  S u rvive s  bu t Facts  Fail u n de r R e cu rsive  S yn th e tic Training
+arxiv.o rg
+[ 7 ] P E E R  R E V IE W E D
+U n loc king  O u t-o f-D istribu tion  Ge n e ralization  in Tran sform e rs  via R e cu rsive  Late n t S pa ce  R e ason ing
+arxiv.o rg
+[ 8 ] P E E R  R E V IE W E D
+A n ch ore d P olicy  O p tim ization: M itigating  E xploration  C ollaps e  via S u ppor t-C on straine d R e ctification
+arxiv.o rg
+10:50 2/9/26 Kiln — LLM systems research
+localhost:5173/?run=91e2879b-5cca-4c54-9ec1-a97ab76b844a 17/18
+
+
+
+[ 9 ] P E E R  R E V IE W E D
+R e cu rsive  S e lf-Training  C ollaps e  in C ode  LLM s  - arX iv
+arxiv.o rg
+[ 1 0 ] P E E R  R E V IE W E D
+To w ards  O u t-O f-D istribu tion  Ge n e ralization: A  S u rve y
+10:50 2/9/26 Kiln — LLM systems research
+localhost:5173/?run=91e2879b-5cca-4c54-9ec1-a97ab76b844a 18/18

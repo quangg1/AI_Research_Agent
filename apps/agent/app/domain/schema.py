@@ -59,6 +59,7 @@ HOST_TIER: dict[str, SourceTier] = {
     "platform.openai.com": SourceTier.OFFICIAL_REGULATION,
     "docs.anthropic.com": SourceTier.OFFICIAL_REGULATION,
     "anthropic.com": SourceTier.OFFICIAL_REGULATION,
+    "developers.openai.com": SourceTier.OFFICIAL_REGULATION,
     "ai.google.dev": SourceTier.OFFICIAL_REGULATION,
     "ai.google.com": SourceTier.OFFICIAL_REGULATION,
     "cloud.google.com": SourceTier.OFFICIAL_REGULATION,
@@ -75,15 +76,19 @@ HOST_TIER: dict[str, SourceTier] = {
     "docs.pytorch.org": SourceTier.STANDARD_BODY,
     "langchain.com": SourceTier.STANDARD_BODY,
     "python.langchain.com": SourceTier.STANDARD_BODY,
+    "docs.langchain.com": SourceTier.STANDARD_BODY,
     "docs.smith.langchain.com": SourceTier.STANDARD_BODY,
     "langchain-ai.github.io": SourceTier.STANDARD_BODY,
     "docs.llamaindex.ai": SourceTier.STANDARD_BODY,
+    "docs.crewai.com": SourceTier.STANDARD_BODY,
+    "crewai.com": SourceTier.STANDARD_BODY,
+    "microsoft.github.io": SourceTier.STANDARD_BODY,
     "nvidia.com": SourceTier.STANDARD_BODY,
     "docs.nvidia.com": SourceTier.STANDARD_BODY,
-    "arxiv.org": SourceTier.PEER_REVIEWED,
-    "openalex.org": SourceTier.PEER_REVIEWED,
-    "semanticscholar.org": SourceTier.PEER_REVIEWED,
-    "doi.org": SourceTier.PEER_REVIEWED,
+    "arxiv.org": SourceTier.SPECIALIST_RESEARCH,  # preprint â€” not venue peer-reviewed
+    "openalex.org": SourceTier.NEWS_ANALYSIS,  # aggregator
+    "semanticscholar.org": SourceTier.NEWS_ANALYSIS,  # aggregator
+    "doi.org": SourceTier.SPECIALIST_RESEARCH,  # DOI host != peer venue
     "aclanthology.org": SourceTier.PEER_REVIEWED,
     "crfm.stanford.edu": SourceTier.INTERGOVERNMENTAL,
     "helm.stanford.edu": SourceTier.INTERGOVERNMENTAL,
@@ -101,6 +106,7 @@ HOST_TIER: dict[str, SourceTier] = {
 ALLOWED_DOC_HOSTS = {
     "openai.com",
     "platform.openai.com",
+    "developers.openai.com",
     "docs.anthropic.com",
     "anthropic.com",
     "ai.google.dev",
@@ -113,8 +119,12 @@ ALLOWED_DOC_HOSTS = {
     "docs.pytorch.org",
     "langchain.com",
     "python.langchain.com",
+    "docs.langchain.com",
     "docs.smith.langchain.com",
     "langchain-ai.github.io",
+    "docs.crewai.com",
+    "crewai.com",
+    "microsoft.github.io",
     "arxiv.org",
     "crfm.stanford.edu",
     "helm.stanford.edu",
@@ -260,7 +270,7 @@ class ResearchBrief(BaseModel):
     query_type: str = QueryType.OPEN_RESEARCH.value
     sector: str = ""
     geography: str = ""
-    time_horizon: str = "2025–2026"
+    time_horizon: str = "2025â€“2026"
     decision_type: str = ""
     constraints: list[str] = Field(default_factory=list)
     must_cover: list[str] = Field(default_factory=list)
@@ -272,6 +282,8 @@ class ResearchBrief(BaseModel):
     assumptions: list[str] = Field(default_factory=list)
     hypotheses: list[str] = Field(default_factory=list)
     subquestions: list[str] = Field(default_factory=list)
+    # Compiled ResearchContract (dict); optional so older briefs still validate.
+    research_contract: dict = Field(default_factory=dict)
 
 
 class CitationRef(BaseModel):

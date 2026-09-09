@@ -1,307 +1,247 @@
 # Kiln — Evidence-Backed Decision Research for LLM Systems
 
-**Kiln** is a multi-tenant research platform that turns complex questions about applied AI—serving economics, RAG architecture, agent design, evaluation methodology—into **cited decision memos** with explicit coverage gates, contradiction analysis, and human approval checkpoints.
+[![CI](https://github.com/quangg1/AI_Research_Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/quangg1/AI_Research_Agent/actions/workflows/ci.yml)
+
+**Kiln** (`AI_Research_Agent`) is a deep-research agent stack that turns high-stakes LLM-systems questions — serving economics, RAG architecture, agent design, evaluation — into **cited decision memos** with coverage gates, contradiction analysis, and human approval checkpoints.
 
 It is **not** a general-purpose chatbot. Every run is a bounded LangGraph pipeline with tool budgets, falsifiable routing rules, and post-generation integrity checks.
 
----
+### Tóm tắt (VI)
 
-## What problem it solves
+**Kiln** là nền tảng nghiên cứu sâu (deep research) cho quyết định hệ thống LLM: agent Python/LangGraph + API NestJS + Web React, kèm Postgres / Redis / Qdrant. Pipeline có ngân sách tool, cổng kiểm tra coverage, và memo có trích dẫn.
 
-Teams building LLM-powered products face decisions that are:
-
-- **High stakes** (architecture, cost, compliance)
-- **Noisy** (vendor decks, blog folklore, conflicting papers)
-- **Moving fast** (docs and benchmarks change quarterly)
-
-Kiln produces memos that separate **verified claims** from **open questions**, cite primary sources, and flag when research budget or evidence coverage is insufficient—so readers know what is solid versus what still needs validation.
+- **Chạy nhanh (không clone tay):** dùng one-liner bên dưới — script tự shallow-clone vào thư mục quản lý (`~/.kiln/...`), tạo `.env`, rồi `docker compose up`.
+- **Yêu cầu:** Docker Desktop.
+- **Auth local:** `AUTH_MODE=dev` (header `X-Dev-Org-Id=org_default`) — mở UI và gửi câu hỏi nghiên cứu.
+- **Nhánh hiện tại:** `cursor/fix-kiln-memo-quality-4dd5` (README/quickstart đẩy trên nhánh này; GitHub mặc định có thể vẫn là `main` — merge khi sẵn sàng).
 
 ---
 
-## Product surfaces
+## Features (high level)
 
-| Surface | Purpose |
-|--------|---------|
-| **Research** | Full agent pipeline: brief → plan → multi-source retrieval → critic loops → cited memo |
-| **Workspace** | Organization-scoped run history, search, pin/archive, follow-up threads |
-| **Corpus** | Shared LLM-systems baseline + **per-org uploads** (markdown) indexed for the docs agent |
-| **Scenarios** | Deterministic calculators for serving cost and RAG vs fine-tune tradeoffs |
-| **Settings** | Billing (Stripe), org API keys, optional bring-your-own LLM key |
-| **Share links** | Tokenized read-only access to completed memos |
-
----
-
-## System architecture
+| Area | What you get |
+|------|----------------|
+| **Research agent** | LangGraph pipeline: brief → plan → multi-source retrieval → critic loops → cited memo |
+| **API** | NestJS BFF, BullMQ jobs, SSE progress, org tenancy |
+| **Web** | React + Vite UI (research, workspace, corpus, scenarios) |
+| **Data** | PostgreSQL 16 (runs, checkpoints, evidence), Redis (queue), Qdrant (corpus vectors) |
+| **Quality** | Coverage gates, claim–quote checks, folklore blocking, Trust Bench eval harnesses |
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌──────────────────────────────────────┐
-│  Web (React)│────▶│ API (NestJS)│────▶│ Agent (Python / FastAPI / LangGraph) │
-│  Vite + TS  │ SSE │ BullMQ jobs │ NDJSON│ Research graph + report writer      │
-└─────────────┘     └──────┬──────┘     └───────────┬──────────────────────────┘
-                           │                          │
-                    ┌──────▼──────┐            ┌───────▼────────┐
-                    │ Redis queue │            │ PostgreSQL     │
-                    └─────────────┘            │ runs, events,  │
-                                               │ checkpoints,   │
-                                               │ evidence graph │
-                                               └───────┬────────┘
-                                                       │
-                                               ┌───────▼────────┐
-                                               │ Qdrant         │
-                                               │ corpus vectors │
-                                               └────────────────┘
+Web (React :5173) ──► API (NestJS :3000) ──► Agent (FastAPI/LangGraph :8000)
+                           │                        │
+                        Redis                    Postgres + Qdrant
 ```
-
-| Layer | Technology | Responsibility |
-|-------|------------|----------------|
-| **Web** | React, Vite, TypeScript | Research UI, workspace, corpus upload, Clerk auth bridge |
-| **API** | NestJS, BullMQ, Redis | Auth, tenancy, billing, job dispatch, SSE progress |
-| **Agent** | Python 3.12, FastAPI, LangGraph | Research graph, LLM orchestration, retrieval, memo generation |
-| **Data** | PostgreSQL 16 | Runs, orgs, users, corpus metadata, LangGraph checkpoints, evidence graph |
-| **Vectors** | Qdrant | Org-scoped + global corpus embeddings |
-| **Contracts** | `@kiln/contracts` (Zod) | Shared API schemas between web and API |
 
 ---
 
-## Research pipeline (LangGraph)
+## Prerequisites
 
-Every production run uses **deep** depth with split tool budgets:
-
-| Pool | Cap (production) | Used for |
-|------|------------------|----------|
-| Retrieval | 28 calls | Web search (Tavily), academic search (OpenAlex), internal docs |
-| Enrich | 24 calls | Full-page fetch for quotes and gap filling |
-| Iterations | up to 6 | Critic-driven re-planning when coverage gaps remain |
-
-**Showcase / benchmark mode** (`SHOWCASE_MODE=true`) raises caps to 48 + 36 retrieval/enrich and 10 iterations for demo runs.
-
-```
-briefing → planner → plan_gate (HITL)
-              ↓
-    search ∥ scholar ∥ docs
-              ↓
-         collector → enrich → retrieve → extract
-              ↓
-           critic ──(gaps + budget)──► planner
-              ↓
-            hitl (HITL)
-              ↓
-           report → memo_gate (HITL) → publish
-```
-
-### Human-in-the-loop gates
-
-1. **Briefing** — User confirms research goal and must-answer dimensions  
-2. **Plan gate** — User approves agent plan before any tool calls  
-3. **HITL / memo gate** — User reviews evidence coverage and final memo  
-
-### Coverage gate (hard stop semantics)
-
-The critic assigns a structured `gate_reason` consumed by the UI and report metrics:
-
-| Reason | Meaning |
-|--------|---------|
-| `sufficient` | Must-answer slots covered; safe to approve |
-| `insufficient_coverage` | Gaps remain; pipeline can loop if budget allows |
-| `insufficient_budget` | Gaps remain but tool/iteration budget exhausted |
-| `contradicted` | Material tensions unresolved in evidence |
-
-The LLM cannot override a failed coverage check—`domain/coverage.py` is a hard gate on top of the critic model output.
-
-### Evidence sources
-
-| Agent | Source | Role |
-|-------|--------|------|
-| **Search** | Tavily (fallback: DuckDuckGo) | Current web, vendor docs, benchmarks |
-| **Scholar** | OpenAlex (+ Semantic Scholar) | Peer-reviewed and preprint literature |
-| **Docs** | Curated corpus + org uploads | Internal notes, uploaded domain documents |
-
-Evidence is merged, ranked (authority + numeric benchmark bias), enriched with full text where possible, and passed through quote verification before memo synthesis.
-
-### Report writer
-
-- **Primary:** Section-wise deep generation (`race_write.py`) with RACE-style structure  
-- **Fallback:** Deterministic composer when LLM unavailable  
-- **Post-process:** Citation deduplication, quantitative table sanitization, contradiction merge (`memo_structure.py`)  
-- **Integrity:** Claim–quote verification, folklore blocking, optional re-research loop  
-
-Target memo length for deep runs: ~5,500 words with executive summary, quantitative table, worked example, and decision rules.
+- **Docker Desktop** (Docker Engine + Compose v2)
+- Optional but recommended for real runs: at least one LLM API key (`GOOGLE_API_KEY` / `OPENAI_API_KEY` / `XAI_API_KEY`) and `TAVILY_API_KEY` for web search
 
 ---
 
-## Multi-tenancy and security
+## Quick start — no manual clone (primary)
 
-| Concern | Implementation |
-|---------|----------------|
-| **Identity** | [Clerk](https://clerk.com) (sign-in, org switcher) or dev-mode headers for local work |
-| **Tenancy boundary** | Organization — runs, billing, corpus uploads, knowledge reuse scoped by `org_id` |
-| **API auth** | JWT + `X-Org-Id`, or org API keys (`kiln_*`) |
-| **Agent isolation** | Execution payload carries `orgId`; corpus/Qdrant/knowledge filtered per org |
-| **Billing** | Stripe subscriptions; monthly run quota per org |
-| **Secrets** | Visitor LLM keys held in memory only (BYOK); never persisted to Postgres |
-| **Service auth** | Shared key between API and agent for internal execution stream |
+The quickstart script creates a managed install directory, shallow-clones this repo, copies `.env.example` → `.env` (safe local demo defaults: `AUTH_MODE=dev`), and starts the stack.
 
-Database migrations live in `infra/postgres/` (init + numbered migrations through corpus tenancy).
-
----
-
-## Quality engineering
-
-Kiln is designed to be **testable without live LLM calls** for routing and gate behavior:
-
-| Harness | Command | What it validates |
-|---------|---------|-------------------|
-| Domain + routing eval | `python -m app.eval.runner` | Query classification, folklore blocking, golden set |
-| Graph routing | `python -m app.eval.graph_routing` | Coverage gate transitions (budget vs coverage) |
-| RACE proxy metrics | `python -m app.eval.race_bench` | Memo structure and grounding proxies |
-| Unit tests | `pytest` (180+ tests across agent) | Budget accounting, coverage, citations, fetch guards |
-
-Golden set: `data/eval/golden_set.json`
-
-**CLI / showcase runner** (no web UI, auto-approves HITL):
+### macOS / Linux
 
 ```bash
-SHOWCASE_MODE=true python -m app.eval.showcase_run "Your research question?"
+curl -fsSL https://raw.githubusercontent.com/quangg1/AI_Research_Agent/cursor/fix-kiln-memo-quality-4dd5/scripts/quickstart.sh | bash
 ```
 
----
+### Windows (PowerShell)
 
-## Repository layout
-
-```
-AI_Research_Agent/
-├── apps/
-│   ├── agent/          # LangGraph pipeline, LLM, retrieval, report writer
-│   ├── api/            # NestJS BFF, auth, billing, job queue
-│   └── web/            # React SPA
-├── packages/
-│   └── contracts/      # Shared Zod schemas (TypeScript)
-├── infra/
-│   └── postgres/       # SQL init + migrations
-├── data/
-│   ├── corpus/         # Global LLM-systems markdown corpus + org uploads
-│   └── eval/             # Golden set and fixtures
-└── docs/
-    ├── agent-research-system.md   # Deep dive: nodes, domain rules, file map
-    ├── ops.md                     # Backups, auth modes
-    ├── deploy-oracle.md           # Oracle Cloud Always Free
-    └── deploy-render.md           # Render.com blueprint
+```powershell
+irm https://raw.githubusercontent.com/quangg1/AI_Research_Agent/cursor/fix-kiln-memo-quality-4dd5/scripts/quickstart.ps1 | iex
 ```
 
----
+Or download-and-run:
 
-## Tech stack summary
-
-| Category | Choices |
-|----------|---------|
-| Language | Python 3.12 (agent), TypeScript (API + web) |
-| Agent framework | LangGraph with PostgreSQL checkpointer |
-| LLM providers | Google Gemini, OpenAI, xAI Grok (multi-key failover) |
-| Search | Tavily, DuckDuckGo |
-| Academic | OpenAlex, Semantic Scholar |
-| Embeddings | Gemini `text-embedding-004` (hash fallback offline) |
-| Queue | BullMQ on Redis |
-| Payments | Stripe |
-| Auth | Clerk Organizations |
-| Containers | Docker Compose (local); Render / Oracle guides for production |
-
----
-
-## Quick start (local)
-
-### Prerequisites
-
-- Docker and Docker Compose  
-- API keys in `.env` (see `.env.example`): at minimum one LLM provider; Tavily recommended for search quality  
-
-### Run the full stack
-
-```bash
-cp .env.example .env
-# Edit .env: GOOGLE_API_KEY, TAVILY_API_KEY, etc.
-
-docker compose up -d --build agent api web
+```powershell
+curl.exe -fsSL https://raw.githubusercontent.com/quangg1/AI_Research_Agent/cursor/fix-kiln-memo-quality-4dd5/scripts/quickstart.ps1 -o quickstart.ps1
+powershell -ExecutionPolicy Bypass -File .\quickstart.ps1
 ```
+
+### What you get
 
 | Service | URL |
 |---------|-----|
-| Web UI | http://localhost:5173 |
+| **Web UI** | http://localhost:5173 |
 | API health | http://localhost:3000/health |
 | Agent health | http://localhost:8000/health |
 
-### Auth modes
+Default install path: `~/.kiln/AI_Research_Agent` (override with `KILN_HOME` / `$env:KILN_HOME`).
 
-| Mode | `.env` | Use case |
-|------|--------|----------|
-| **Dev** (default) | `AUTH_MODE=dev`, `VITE_AUTH_MODE=dev` | Local development without Clerk |
-| **Clerk** | `AUTH_MODE=clerk`, `VITE_AUTH_MODE=clerk` + Clerk keys | Production / demo with real sign-in |
+Pin a branch/tag:
 
-### Agent-only development
+```bash
+KILN_REF=main curl -fsSL https://raw.githubusercontent.com/quangg1/AI_Research_Agent/cursor/fix-kiln-memo-quality-4dd5/scripts/quickstart.sh | bash
+```
+
+```powershell
+$env:KILN_REF = "main"; irm https://raw.githubusercontent.com/quangg1/AI_Research_Agent/cursor/fix-kiln-memo-quality-4dd5/scripts/quickstart.ps1 | iex
+```
+
+> **Note:** First run **builds** images from source (several minutes). After the [publish-ghcr](.github/workflows/publish-ghcr.yml) workflow has published images, quickstart will prefer `ghcr.io/quangg1/kiln-*` pulls when available.
+
+### Add API keys (for real research)
+
+Edit the generated `.env` in the install directory, set e.g. `GOOGLE_API_KEY=...` (and ideally `TAVILY_API_KEY=...`), then:
+
+```bash
+cd ~/.kiln/AI_Research_Agent
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --force-recreate agent api
+```
+
+### Submit a research run
+
+1. Open http://localhost:5173
+2. Dev auth attaches `X-Dev-User-Id` / `X-Dev-Org-Id=org_default` automatically
+3. Enter a research question → confirm briefing / plan gates → wait for the cited memo
+
+Example questions: *Fine-tune weekly runbooks vs RAG for a 50k-chunk corpus?* · *Self-host 8B FP8 vs 70B API at fixed QPS?*
+
+---
+
+## Alternative: managed shallow clone (no pipe-to-shell)
+
+```bash
+mkdir -p ~/.kiln && cd ~/.kiln
+git clone --depth 1 --branch cursor/fix-kiln-memo-quality-4dd5 https://github.com/quangg1/AI_Research_Agent.git AI_Research_Agent
+cd AI_Research_Agent
+cp .env.example .env
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+```
+
+Windows (PowerShell):
+
+```powershell
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.kiln" | Out-Null
+Set-Location "$env:USERPROFILE\.kiln"
+git clone --depth 1 --branch cursor/fix-kiln-memo-quality-4dd5 https://github.com/quangg1/AI_Research_Agent.git AI_Research_Agent
+Set-Location AI_Research_Agent
+Copy-Item .env.example .env
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+```
+
+> Pure `docker compose -f https://raw.githubusercontent.com/...` without a checkout usually fails here because build contexts and volume mounts need the repo files locally — that is why quickstart manages a shallow clone for you.
+
+---
+
+## Full local-dev clone (secondary)
+
+```bash
+git clone https://github.com/quangg1/AI_Research_Agent.git
+cd AI_Research_Agent
+git checkout cursor/fix-kiln-memo-quality-4dd5   # or main after merge
+cp .env.example .env
+# edit .env — set LLM + search keys
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+```
+
+Useful Make targets: `make up`, `make down`, `make logs`, `make test`, `make eval`.
+
+### Agent-only (no full stack)
 
 ```bash
 cd apps/agent
 pip install -e ".[dev]"
 pytest -q
-python -m app.eval.runner
 python -m app.cli "Does RAG always require a vector database?"
 ```
 
-After code changes in Docker, rebuild affected services:
+---
+
+## Environment variables
+
+See **[`.env.example`](.env.example)** for the full list. Quickstart copies it to `.env` with safe local defaults.
+
+| Variable | Purpose | Local demo default |
+|----------|---------|-------------------|
+| `AUTH_MODE` / `VITE_AUTH_MODE` | `dev` / `clerk` / `disabled` | `dev` |
+| `ALLOW_DEV_AUTH` | Allow `X-Dev-*` headers | `true` |
+| `GOOGLE_API_KEY` / `OPENAI_API_KEY` / `XAI_API_KEY` | LLM providers | empty (set for real runs) |
+| `TAVILY_API_KEY` | Web search | empty (recommended) |
+| `S2_API_KEY` | Semantic Scholar (rate limits) | empty |
+| `WEB_PORT` | Host port for UI | `5173` |
+| `DATABASE_URL` / `REDIS_URL` / `QDRANT_URL` | Infra (compose overrides hosts inside containers) | localhost URLs in example |
+| `AGENT_SHARED_KEY` / `API_*_KEY` | Service-to-service | empty OK for local demo |
+| `CLERK_*` / `STRIPE_*` | Production auth/billing | empty |
+
+**Do not commit** a filled `.env`. Shared keys and Stripe/Clerk secrets stay local.
+
+---
+
+## Ports
+
+| Service | Host port | Notes |
+|---------|-----------|-------|
+| Web | **5173** | Nginx serves SPA and proxies `/v1/` → API |
+| API | **3000** | Published via `docker-compose.dev.yml` |
+| Agent | **8000** | Health: `/health` |
+| Postgres | 5432 | Dev overlay |
+| Redis | 6379 | Dev overlay |
+| Qdrant | 6333 / 6334 | Dev overlay |
+
+Production-style `docker-compose.yml` alone publishes only the web port; quickstart always includes `docker-compose.dev.yml` so API/agent health checks are reachable on the host.
+
+---
+
+## Prebuilt images (GHCR) — optional
+
+Workflow: [`.github/workflows/publish-ghcr.yml`](.github/workflows/publish-ghcr.yml)  
+Override: [`docker-compose.ghcr.yml`](docker-compose.ghcr.yml)
 
 ```bash
-docker compose up -d --build agent api web
+docker compose -f docker-compose.yml -f docker-compose.ghcr.yml -f docker-compose.dev.yml pull
+docker compose -f docker-compose.yml -f docker-compose.ghcr.yml -f docker-compose.dev.yml up -d
 ```
 
----
+Images: `ghcr.io/quangg1/kiln-agent`, `kiln-api`, `kiln-web`.
 
-## Example research questions
-
-Questions that showcase Kiln’s strengths—falsifiable, architecture-focused, evidence-rich:
-
-1. *Fine-tune weekly runbooks vs RAG for a 50k-chunk internal corpus?*  
-2. *Vector-only RAG vs BM25 + cross-encoder reranker on the same corpus?*  
-3. *Self-host 8B FP8 vs 70B API for batch inference at fixed QPS?*  
-4. *Can synthetic data agents overcome domain data scarcity without model collapse?*  
-5. *Is LLM-as-judge an unbiased ground truth for RAG evaluation?*  
-
-Architectural folklore (e.g. “RAG always needs a vector DB”) should appear as **contradictions or caveats**, not recommendations—the grounding layer enforces this.
+**Caveat:** Until the workflow has run successfully and packages are public (or you `docker login ghcr.io`), pulls fail and quickstart **falls back to local build**. Trigger via Actions → *publish-ghcr* → *Run workflow* after merge/push.
 
 ---
 
-## Design principles (for reviewers)
+## Architecture (short)
 
-1. **Budgeted pipeline, not infinite agent loop** — Split retrieval/enrich pools; critic respects remaining iterations.  
-2. **Rules outside the graph** — Business logic in `domain/`; nodes orchestrate; domain is unit-tested without HTTP.  
-3. **Critic is authoritative** — Coverage slots trump LLM “sufficient” verdicts.  
-4. **Three-source retrieval** — Web, papers, and corpus converge in one evidence set.  
-5. **Three approval gates** — Brief, plan, and memo before publish.  
-6. **Org-scoped knowledge** — Corpus uploads and answer reuse do not leak across tenants.  
-7. **Eval-first** — Golden set and graph routing tests run in CI-friendly harnesses.  
+| Layer | Tech | Role |
+|-------|------|------|
+| Web | React, Vite, TypeScript | Research UI, workspace, corpus |
+| API | NestJS, BullMQ | Auth, tenancy, jobs, SSE |
+| Agent | Python 3.12, FastAPI, LangGraph | Research graph + memo writer |
+| Postgres | 16 | Runs, events, checkpoints, evidence |
+| Redis | 7 | Job queue |
+| Qdrant | 1.13 | Corpus embeddings |
+
+Repo layout: `apps/agent`, `apps/api`, `apps/web`, `packages/contracts`, `infra/postgres`, `data/corpus`, `docs/`.
+
+Deeper docs: [docs/agent-research-system.md](docs/agent-research-system.md) · [docs/ops.md](docs/ops.md) · [docs/deploy-render.md](docs/deploy-render.md) · [docs/deploy-oracle.md](docs/deploy-oracle.md)
 
 ---
 
-## Documentation
+## Status / branch notes
 
-| Document | Contents |
-|----------|----------|
-| [docs/agent-research-system.md](docs/agent-research-system.md) | Full pipeline: nodes, budget, domain file map, Nest↔agent wire protocol |
-| [docs/ops.md](docs/ops.md) | Operations, backups, auth |
-| [docs/deploy-oracle.md](docs/deploy-oracle.md) | Oracle Always Free deployment |
-| [docs/deploy-render.md](docs/deploy-render.md) | Render.com deployment |
+- Active development branch for memo-quality work: **`cursor/fix-kiln-memo-quality-4dd5`** (this README and quickstart scripts live here).
+- GitHub’s default branch may still be **`main`**. Visitors who land on `main` without this README should switch branches or merge this branch when ready.
+- CD today: Render auto-deploy from `main` (see `render.yaml`). GHCR publish is additive for local/quickstart pulls.
 
 ---
 
 ## License
 
-See repository license file. Third-party API usage (Clerk, Stripe, Tavily, LLM providers) requires respective account keys.
+No `LICENSE` file is published in the repository yet. Third-party APIs (Clerk, Stripe, Tavily, LLM providers) require their own account keys and terms.
 
 ---
 
-## Sample output
+## Design principles (for reviewers)
 
-A full showcase memo on synthetic data and data-generation agents (generated via `showcase_run`) is available at:
-
-- `data/corpus/showcase_synthetic_data.md` — rendered memo  
-- `data/corpus/showcase_synthetic_data.json` — run metrics, coverage slots, and structured report  
-
-This demonstrates deep memo structure: executive summary, quantitative table, worked example, contradictions debate, decision rules, and explicit limitation notes when budget gates apply.
+1. **Budgeted pipeline** — split retrieval/enrich pools; critic respects remaining iterations.
+2. **Rules outside the graph** — business logic in `domain/`; nodes orchestrate.
+3. **Critic is authoritative** — coverage slots trump model “sufficient” claims.
+4. **Three-source retrieval** — web, papers, and corpus.
+5. **Human gates** — brief, plan, and memo before publish.
+6. **Org-scoped knowledge** — no cross-tenant corpus leakage.

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
+from app.conf.thresholds import RetrievalThresholds
+from app.domain.adaptive_code_ratio import adaptive_code_ratio, explain_code_ratio
 from app.domain.research_depth import effective_depth
 from app.domain.retrieval_limits import (
     API_RESULTS_PER_QUERY,
@@ -33,6 +36,19 @@ def search_node(state: ResearchState) -> dict:
     if budget_from(state).remaining_retrieval_calls <= 0:
         return {"evidence": [], "traces": [{"node": "search", "skipped": "budget", "external_calls": 0}]}
 
+    # Issue #2 fix: Adaptive code ratio based on query intent
+    brief = state.get("brief") or {}
+    query_type = brief.get("query_type") or brief.get("category")
+    query_text = state.get("query") or ""
+    max_code_ratio = adaptive_code_ratio(query_type, query_text)
+    
+    # Log adaptive ratio decision
+    event("search_adaptive_code_ratio",
+        query_type=query_type,
+        ratio=max_code_ratio,
+        explanation=explain_code_ratio(max_code_ratio, query_type)
+    )
+
     questions = _questions(state, AgentName.SEARCH)
     parallel = fanout_parallelism(state, ceiling=FANOUT_CEILING)
     hits: list[dict] = []
@@ -41,7 +57,7 @@ def search_node(state: ResearchState) -> dict:
 
     with trace_span("search", active_agent="search", parallel=parallel) as span:
         def run_one(question: str) -> tuple[str, list[dict], int]:
-            rows, calls = _search(question)
+            rows, calls = _search(question, max_code_ratio=max_code_ratio)
             return question, rows[:API_RESULTS_PER_QUERY], calls
 
         with ThreadPoolExecutor(max_workers=parallel) as pool:
@@ -91,7 +107,110 @@ def _questions(state: ResearchState, agent: AgentName) -> list[str]:
     return [compact_retrieval_query(q, goal=state.get("query") or "", agent=agent.value) for q in raw[:limit]]
 
 
-def _search(query: str) -> tuple[list[dict], int]:
+def _classify_paper_domain(paper: dict) -> str:
+    """Classify evidence into domain (shared with scholar.py for consistency).
+    
+    Returns: "code" | "benchmark" | "docs" | "theory"
+    """
+    url = paper.get("url", "").lower()
+    title = paper.get("title", "").lower()
+    snippet = paper.get("snippet", "").lower()
+    blob = f"{url} {title} {snippet}"
+    
+    # Code: GitHub, GitLab, implementation
+    if any(host in url for host in ["github.com", "gitlab.com", "bitbucket.org", "codeberg.org"]):
+        return "code"
+    if re.search(r"\b(implementation|source code|library|package|repository)\b", title):
+        return "code"
+    
+    # Benchmark: evaluation, metrics, comparison
+    if re.search(r"\b(benchmark|evaluation|comparison|leaderboard|ablation)\b", title):
+        return "benchmark"
+    if re.search(r"\b(metric|performance comparison|empirical study)\b", title):
+        return "benchmark"
+    
+    # Docs: official documentation, API reference
+    if any(host in url for host in ["docs.", "documentation", "api.", "developer."]):
+        return "docs"
+    if re.search(r"\b(documentation|api reference|guide|tutorial|manual)\b", title):
+        return "docs"
+    
+    # Theory: papers, research, analysis
+    if any(host in url for host in ["arxiv.org", "aclanthology.org", "openreview.net", "acm.org", "ieee.org"]):
+        return "theory"
+    
+    return "theory"
+
+
+def _balanced_evidence_pool(papers: list[dict], max_code_ratio: float = RetrievalThresholds.MAX_CODE_RATIO) -> list[dict]:
+    """Enforce domain balance to prevent coding skew (same logic as scholar.py).
+    
+    Strategy (FIXED to prevent backfill violation):
+    1. Take ALL non-code papers first (diverse evidence)
+    2. Calculate code papers needed to reach max_code_ratio of final pool
+    3. Never exceed max_code_ratio, even when source pool is heavily skewed
+    
+    Args:
+        papers: Raw search results from Tavily/DDG
+        max_code_ratio: Maximum fraction of code papers (default 40%)
+    
+    Returns:
+        Balanced evidence pool with enforced diversity
+    """
+    if not papers:
+        return []
+    
+    # Classify by domain
+    code_papers = []
+    theory_papers = []
+    benchmark_papers = []
+    doc_papers = []
+    
+    for p in papers:
+        domain = _classify_paper_domain(p)
+        if domain == "code":
+            code_papers.append(p)
+        elif domain == "theory":
+            theory_papers.append(p)
+        elif domain == "benchmark":
+            benchmark_papers.append(p)
+        else:
+            doc_papers.append(p)
+    
+    total = len(papers)
+    
+    logger.info(
+        f"search_domain_balance_before: total={total}, code={len(code_papers)}, "
+        f"theory={len(theory_papers)}, benchmark={len(benchmark_papers)}, docs={len(doc_papers)}"
+    )
+    
+    # NEW STRATEGY: Build balanced pool without backfill violation
+    balanced = []
+    balanced.extend(theory_papers)
+    balanced.extend(benchmark_papers)
+    balanced.extend(doc_papers)
+    
+    non_code_count = len(balanced)
+    
+    # Calculate max code papers to reach max_code_ratio
+    if non_code_count > 0:
+        max_code_count = int(non_code_count * (max_code_ratio / (1 - max_code_ratio)))
+    else:
+        max_code_count = int(total * max_code_ratio)
+    
+    balanced.extend(code_papers[:max_code_count])
+    
+    balanced_code = sum(1 for p in balanced if _classify_paper_domain(p) == "code")
+    code_ratio = balanced_code / len(balanced) if balanced else 0
+    logger.info(
+        f"search_domain_balance_after: total={len(balanced)}, code={balanced_code}, "
+        f"code_ratio={code_ratio:.2%}, target_max={max_code_ratio:.2%}"
+    )
+    
+    return balanced
+
+
+def _search(query: str, max_code_ratio: float = RetrievalThresholds.MAX_CODE_RATIO) -> tuple[list[dict], int]:
     key = cache.cache_key("search", query)
     hit = cache.get(key)
     if hit is not None:
@@ -104,7 +223,11 @@ def _search(query: str) -> tuple[list[dict], int]:
     if not rows:
         external_calls += 1
         rows = retry_call(lambda: _ddg(query), attempts=2, default=[]) or []
-    return cache.put(key, rows), external_calls
+    
+    # NEW: Apply domain balancing to prevent coding skew (now adaptive based on query type)
+    balanced_rows = _balanced_evidence_pool(rows, max_code_ratio=max_code_ratio)
+    
+    return cache.put(key, balanced_rows), external_calls
 
 
 def _tavily(query: str) -> list[dict]:

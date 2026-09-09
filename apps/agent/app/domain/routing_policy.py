@@ -71,7 +71,8 @@ def agents_for(
     if remaining_calls <= 1:
         return [AgentName.DOCS] if has_corpus else [AgentName.SEARCH]
     if query_type == QueryType.FACTUAL:
-        chosen = [AgentName.DOCS, AgentName.SEARCH]
+        # Always include SCHOLAR for better quality, even on factual queries
+        chosen = [AgentName.DOCS, AgentName.SEARCH, AgentName.SCHOLAR]
     elif query_type == QueryType.COMPARISON:
         chosen = [AgentName.DOCS, AgentName.SEARCH, AgentName.SCHOLAR]
     else:

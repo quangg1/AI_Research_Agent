@@ -10,20 +10,26 @@ import re
 from app.domain.decompose import derive_slots, must_cover_from_slots
 from app.domain.research_intent import user_goal
 from app.llm.client import CreditsExhaustedError, llm
+from app.llm.roles import use_role_model
 from app.report.deep_write import notes_max_chars, word_count, word_target, writer_system
 from app.report.memo_structure import consolidate_memo_structure, merge_inline_citations
 
-_REQUIRED_SECTIONS = (
+# References is omitted from truncation-required on purpose:
+# bind_markdown_to_ledger always rebuilds ## References after the writer
+# finishes. Treating a missing References heading as truncation caused
+# truncated_unrepaired on otherwise-complete memos (live run ff3c5688).
+_TRUNCATION_REQUIRED_SECTIONS = (
     "At a glance",
     "Executive summary",
     "Key findings",
     "Detailed analysis",
     "Decision rule",
-    "References",
 )
+_REQUIRED_SECTIONS = _TRUNCATION_REQUIRED_SECTIONS + ("References",)
+
 
 _TRUNC_TAIL_RE = re.compile(r"[.!?)\]\"']$")
-_CITE_STACK_RE = re.compile(r"(\[\d+(?:\s+(?:peer|repo|docs|news))?\])(?:\s*\[\d+(?:\s+(?:peer|repo|docs|news))?\]){2,}")
+_CITE_STACK_RE = re.compile(r"(\[\d+(?:\s+(?:peer|repo|docs|news|preprint|primary|specialist|vendor|unreliable|industry))?\])(?:\s*\[\d+(?:\s+(?:peer|repo|docs|news|preprint|primary|specialist|vendor|unreliable|industry))?\]){2,}")
 
 
 def race_criteria(query: str, brief: dict | None = None, dossier: list[dict] | None = None) -> dict:
@@ -73,15 +79,39 @@ def criteria_block(criteria: dict) -> str:
     return "\n".join(lines)
 
 
+def _tail_looks_complete(text: str) -> bool:
+    """References often end in URLs/paths — that is NOT truncation."""
+    tail = (text or "")[-160:].strip()
+    if not tail:
+        return False
+    if tail.endswith("```"):
+        return True
+    if _TRUNC_TAIL_RE.search(tail):
+        return True
+    # URL / path / markdown-link / cite / fence leftovers
+    if re.search(r"(https?://\S+|www\.\S+|\]\([^)]+\)|`[^`]+`|\[[0-9]+[^\]]*\])\s*$", tail, re.I):
+        return True
+    # Ends on identifier / filename when closing sections already exist
+    if re.search(r"[A-Za-z0-9/_\-]+\s*$", tail) and re.search(
+        r"^##\s+(References|Source quality|Limitations)\s*$", text, re.I | re.M
+    ):
+        return True
+    return False
+
+
 def memo_looks_truncated(markdown: str) -> bool:
+    """False-positive guard: research memos normally end on References URLs.
+
+    Root bug was treating URL/path tails as truncation, then discarding the whole
+    LLM memo for compose. Section contract (including At a glance) stays strict.
+    """
     text = (markdown or "").strip()
     if not text or word_count(text) < 400:
         return True
-    for heading in _REQUIRED_SECTIONS:
+    for heading in _TRUNCATION_REQUIRED_SECTIONS:
         if not re.search(rf"^##\s+{re.escape(heading)}\s*$", text, re.I | re.M):
             return True
-    tail = text[-120:].strip()
-    if tail and not _TRUNC_TAIL_RE.search(tail) and not tail.endswith("```"):
+    if not _tail_looks_complete(text):
         return True
     if "## Detailed analysis" in text and text.count("### ") < 2:
         return True
@@ -93,7 +123,7 @@ def missing_sections(markdown: str) -> list[str]:
     return [h for h in _REQUIRED_SECTIONS if not re.search(rf"^##\s+{re.escape(h)}\s*$", text, re.I | re.M)]
 
 
-_CITE_ANY_RE = re.compile(r"\[\d+(?:\s+(?:peer|repo|docs|news))?\]")
+_CITE_ANY_RE = re.compile(r"\[\d+(?:\s+(?:peer|repo|docs|news|preprint|primary|specialist|vendor|unreliable|industry))?\]")
 _SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
 
@@ -146,8 +176,13 @@ def strip_visual_artifacts_section(markdown: str) -> str:
     return _VISUAL_SECTION.sub("\n", markdown or "")
 
 
-def polish_citations(markdown: str) -> str:
-    text = consolidate_memo_structure(markdown or "")
+def polish_citations(
+    markdown: str,
+    *,
+    citations: list[dict] | None = None,
+    evidence: list[dict] | None = None,
+) -> str:
+    text = consolidate_memo_structure(markdown or "", citations=citations, evidence=evidence)
     text = split_stacked_citation_sentences(destack_inline_citations(text))
     text = strip_visual_artifacts_section(text)
     return strip_spurious_hrules(text)
@@ -424,6 +459,7 @@ def _gen(prompt: str, max_tokens: int, system: str | None = None) -> str:
     slots = getattr(llm, "_slots", None) or []
     if not llm.available and not slots:
         return ""
-    return (
-        llm.generate(prompt, system=system or writer_system(), max_tokens=max_tokens) or ""
-    ).strip()
+    with use_role_model(llm, "writer"):
+        return (
+            llm.generate(prompt, system=system or writer_system(), max_tokens=max_tokens) or ""
+        ).strip()

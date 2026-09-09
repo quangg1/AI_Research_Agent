@@ -8,6 +8,22 @@ def test_primary_docs_host():
     assert score > 0.9
 
 
+def test_agent_framework_official_docs_hosts_are_recognized():
+    """Real run: a memo compared LangGraph/AutoGen/CrewAI/OpenAI Agents by
+    name, but their actual official docs live on hosts this allowlist never
+    had (docs.langchain.com, developers.openai.com, docs.crewai.com,
+    microsoft.github.io for AutoGen) — every one of them fell through to
+    UNKNOWN, so even when search found them they ranked no better than a
+    random blog and the writer fell back on unreferenced training data."""
+    assert tier_for("https://docs.langchain.com/oss/python/langchain/multi-agent") is SourceTier.STANDARD_BODY
+    assert tier_for("https://developers.openai.com/api/docs/guides/agents") is SourceTier.OFFICIAL_REGULATION
+    assert tier_for("https://docs.crewai.com/en/concepts/processes") is SourceTier.STANDARD_BODY
+    assert (
+        tier_for("https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/teams.html")
+        is SourceTier.STANDARD_BODY
+    )
+
+
 def test_eval_lab():
     assert tier_for("https://helm.stanford.edu/intro").name == "INTERGOVERNMENTAL"
 

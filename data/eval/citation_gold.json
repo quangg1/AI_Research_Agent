@@ -1,0 +1,26 @@
+{
+  "cases": [
+    {
+      "id": "lora_serving",
+      "query": "multi-tenant LoRA serving latency tradeoffs",
+      "evidence": [
+        {
+          "url": "https://arxiv.org/abs/2401.10001",
+          "title": "S-LoRA paper",
+          "snippet": "S-LoRA achieves 4x throughput with heterogeneous adapters.",
+          "quote": "S-LoRA achieves 4x throughput with heterogeneous adapters."
+        },
+        {
+          "url": "https://arxiv.org/abs/2402.20002",
+          "title": "vLLM batching",
+          "snippet": "Continuous batching reduces tail latency under bursty traffic.",
+          "quote": "Continuous batching reduces tail latency under bursty traffic."
+        }
+      ],
+      "required_urls": [
+        "https://arxiv.org/abs/2401.10001"
+      ],
+      "min_citations": 1
+    }
+  ]
+}

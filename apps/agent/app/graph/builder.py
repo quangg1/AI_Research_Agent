@@ -3,6 +3,7 @@ from __future__ import annotations
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from app.conf.thresholds import CoverageThresholds
 from app.graph.nodes.briefing import briefing_node, briefing_node_auto
 from app.graph.nodes.collector import collector_node, retrieve_node
 from app.graph.nodes.critic import critic_node
@@ -49,12 +50,78 @@ def after_critic(state: ResearchState, hitl_target: str = "hitl") -> str:
     critic = state.get("critic") or {}
     status = critic.get("status")
     followups = critic.get("followup_queries") or state.get("followups") or []
+    
+    # Early exit checks
     if budget.exhausted or budget.remaining_calls <= 0:
         return hitl_target
     if status == "sufficient":
         return hitl_target
+    
+    # Quality-aware early stopping for production efficiency
     if followups and budget.remaining_iterations > 0:
+        coverage = critic.get("coverage") or {}
+        depth_score = (critic.get("depth_score") or {}).get("score") or 0
+        must_pct = (critic.get("depth_score") or {}).get("must_answer", {}).get("pct") or 0
+        current_sources = coverage.get("unique_sources") or 0
+        iteration = budget.iterations
+        
+        # Track quality history for smart stopping
+        quality_history = state.get("_quality_history") or []
+        quality_history.append({
+            "iteration": iteration,
+            "unique_sources": current_sources,
+            "must_pct": must_pct,
+            "depth_score": depth_score,
+        })
+        
+        # EARLY STOP 1: Quality already excellent (save budget)
+        if must_pct >= CoverageThresholds.MUST_COVERAGE_EXCELLENT and depth_score >= CoverageThresholds.DEPTH_SCORE_EXCELLENT:
+            from app.observability.logging import event
+            event(
+                "critic_early_stop_quality_sufficient",
+                iteration=iteration,
+                must_pct=must_pct,
+                depth_score=depth_score,
+                message="Quality already excellent - stopping to save budget"
+            )
+            return hitl_target
+        
+        # EARLY STOP 2: No improvement in last 2 iterations (stagnation)
+        if len(quality_history) >= 3:
+            recent = quality_history[-3:]
+            
+            # Check if sources, coverage, AND score are stagnant
+            sources_stagnant = (
+                recent[0]["unique_sources"] == recent[1]["unique_sources"] == recent[2]["unique_sources"]
+            )
+            # FIXED: Use centralized stagnation threshold
+            # (e.g., 60% → 64% → 68% is +4%/iter = good progress, should NOT stop)
+            coverage_stagnant = (
+                abs(recent[2]["must_pct"] - recent[1]["must_pct"]) < CoverageThresholds.COVERAGE_STAGNATION_THRESHOLD_PCT
+                and abs(recent[1]["must_pct"] - recent[0]["must_pct"]) < CoverageThresholds.COVERAGE_STAGNATION_THRESHOLD_PCT
+            )
+            score_stagnant = (
+                abs(recent[2]["depth_score"] - recent[1]["depth_score"]) < 3
+                and abs(recent[1]["depth_score"] - recent[0]["depth_score"]) < 3
+            )
+            
+            if sources_stagnant and coverage_stagnant and score_stagnant:
+                from app.observability.logging import event
+                event(
+                    "critic_stagnation_detected",
+                    iteration=iteration,
+                    unique_sources=current_sources,
+                    must_pct=must_pct,
+                    depth_score=depth_score,
+                    stagnant_iterations=3,
+                    remaining_gaps=len(coverage.get("critical_gaps") or []),
+                    message="No quality improvement in 3 iterations - stopping to save budget"
+                )
+                return hitl_target
+        
+        # Continue iterating if still improving or not yet stagnant
         return "planner"
+    
     return hitl_target
 
 
@@ -71,8 +138,12 @@ def after_hitl(state: ResearchState) -> str:
 
 
 def after_memo_gate(state: ResearchState) -> str:
-    if state.get("status") == "revising":
+    status = state.get("status")
+    if status == "revising":
         return "critic"
+    if status == "revising_quality":
+        # Quality issues detected - go back to report to rewrite from notes
+        return "report"
     return END
 
 
@@ -129,7 +200,7 @@ def build_graph(checkpointer=None, enable_hitl: bool = True, *, allow_memory: bo
         builder.add_conditional_edges("hitl", after_hitl, {"planner": "planner", "report": "report"})
     else:
         builder.add_conditional_edges("critic", after_critic_eval, {"planner": "planner", "report": "report"})
-    builder.add_conditional_edges("memo_gate", after_memo_gate, {"critic": "critic", END: END})
+    builder.add_conditional_edges("memo_gate", after_memo_gate, {"critic": "critic", "report": "report", END: END})
     builder.add_conditional_edges(
         "report",
         after_report,

@@ -16,7 +16,72 @@ def extract_node(state: ResearchState) -> dict:
     retrieved = tag_evidence_roles(state.get("retrieved") or state.get("evidence") or [], query)
     on_topic = [e for e in retrieved if not e.get("off_topic")]
     working = on_topic if len(on_topic) >= 3 else retrieved
-    slots = brief.get("must_answer") or must_answer_for(query)
+    
+    # EVIDENCE-FIRST DIMENSION REFINEMENT
+    # If this is first iteration and we have scholar/high-quality evidence,
+    # refine dimensions from paper concepts instead of using generic templates
+    
+    # Debug logging to check conditions
+    iteration_check = budget.iterations == 1
+    evidence_check = len(working) >= 3
+    not_refined_check = not brief.get("dimensions_refined")
+    has_papers = any(e.get("tier") in {"peer_reviewed", "specialist_research"} for e in working[:10])
+    
+    event("extract_dimension_check",
+          iteration=budget.iterations,
+          iteration_ok=iteration_check,
+          evidence_count=len(working),
+          evidence_ok=evidence_check,
+          not_refined=not_refined_check,
+          has_papers=has_papers,
+          paper_tiers=[e.get("tier") for e in working[:10]])
+    
+    should_refine_dimensions = (
+        iteration_check
+        and evidence_check
+        and not_refined_check
+        and has_papers
+    )
+    
+    if should_refine_dimensions:
+        from app.domain.decompose import synthesize_dimensions_from_evidence
+        from app.domain.research_contract import (
+            filter_poison_must_answer_slots,
+            must_answer_from_contract,
+        )
+
+        # Contract-aligned slots win for LoRA/QLoRA/FT queries — never let
+        # off-topic paper concepts (HAR / preference / class-rebalanced) become
+        # critical must-answer dimensions.
+        contract_slots = must_answer_from_contract(
+            query,
+            brief.get("research_contract") or state.get("research_contract"),
+            brief=brief,
+        )
+        if contract_slots:
+            paper_dimensions = contract_slots
+            source = "research_contract"
+        else:
+            paper_dimensions = synthesize_dimensions_from_evidence(
+                query, working, fallback_to_heuristic=True
+            )
+            paper_dimensions = filter_poison_must_answer_slots(paper_dimensions, query)
+            source = "paper_concepts"
+
+        brief = {
+            **brief,
+            "must_answer": paper_dimensions,
+            "dimensions_refined": True,
+        }
+        event(
+            "extract_dimensions_refined",
+            old_count=len(brief.get("must_answer") or []),
+            new_count=len(paper_dimensions),
+            paper_specific=sum(1 for d in paper_dimensions if d.get("paper_cite")),
+            source=source,
+        )
+
+    slots = brief.get("must_answer") or must_answer_for(query, brief=brief)
     coverage = score_must_answer(query, working, slots)
 
     gap_retries = int(state.get("gap_micro_retries") or 0)

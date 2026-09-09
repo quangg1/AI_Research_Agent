@@ -282,6 +282,8 @@ class ResearchBrief(BaseModel):
     assumptions: list[str] = Field(default_factory=list)
     hypotheses: list[str] = Field(default_factory=list)
     subquestions: list[str] = Field(default_factory=list)
+    # Compiled ResearchContract (dict); optional so older briefs still validate.
+    research_contract: dict = Field(default_factory=dict)
 
 
 class CitationRef(BaseModel):

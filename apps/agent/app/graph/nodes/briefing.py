@@ -11,6 +11,7 @@ from app.domain.routing_policy import classify_query, out_of_scope
 from app.domain.coverage import must_answer_for
 from app.domain.research_intent import is_comparison_query, is_mechanism_query, must_cover_for
 from app.domain.schema import QueryType, ResearchBrief
+from app.domain.research_contract import compile_research_contract
 from app.domain.textutil import entity_candidates, user_goal
 from app.graph.serde import dump, pythonize
 from app.graph.state import ResearchState, budget_from
@@ -27,6 +28,19 @@ STACK_RE = re.compile(
     re.I,
 )
 
+
+
+
+def _brief_with_contract(query: str, brief: ResearchBrief) -> dict:
+    """Dump brief and attach compiled research_contract without breaking pydantic."""
+    data = dump(brief)
+    try:
+        contract = compile_research_contract(query, data)
+        data["research_contract"] = contract.to_dict()
+    except Exception:
+        # Fail-soft: briefing must not die if contract compile fails.
+        data.setdefault("research_contract", {})
+    return data
 
 async def briefing_node(state: ResearchState) -> dict:
     """Build an editable research brief, then pause for user confirm (Deep Research style)."""
@@ -78,7 +92,7 @@ async def briefing_node(state: ResearchState) -> dict:
     refined_query = _compose_query(query, merged)
     event("briefing_confirmed", action=action, goal=merged.goal)
     return {
-        "brief": dump(merged),
+        "brief": _brief_with_contract(refined_query, merged),
         "brief_confirmed": True,
         "query": refined_query,
         "query_type": merged.query_type,
@@ -101,10 +115,11 @@ def briefing_node_auto(state: ResearchState) -> dict:
             "traces": [{"node": "briefing", "decision": "out_of_scope"}],
         }
     brief = ResearchBrief.model_validate(apply_forced_depth(dump(_llm_brief(query) or _heuristic_brief(query))))
+    composed = _compose_query(query, brief)
     return {
-        "brief": dump(brief),
+        "brief": _brief_with_contract(composed, brief),
         "brief_confirmed": True,
-        "query": _compose_query(query, brief),
+        "query": composed,
         "query_type": brief.query_type,
         "status": "researching",
         "traces": [{"node": "briefing", "action": "auto"}],

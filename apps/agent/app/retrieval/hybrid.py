@@ -93,9 +93,16 @@ def hybrid_retrieve(
         if overlap < 0.18 and float(bm_scores[i]) < 1.2:
             continue
         cred = float(doc.get("credibility") or 0.3)
-        score = float(0.40 * dense_norm[i] + 0.30 * bm_norm[i] + 0.20 * overlap + 0.10 * cred)
+        # Relevance-first: term overlap dominates; credibility is a light tie-break.
+        score = float(0.35 * dense_norm[i] + 0.25 * bm_norm[i] + 0.35 * overlap + 0.05 * cred)
         scored.append((score, {**doc, "retrieval_score": round(score, 4), "term_overlap": round(overlap, 3)}))
-    scored.sort(key=lambda x: (-x[0], str(x[1].get("id") or x[1].get("url") or x[1].get("title") or "")))
+    scored.sort(
+        key=lambda x: (
+            -float(x[1].get("term_overlap") or 0),
+            -x[0],
+            str(x[1].get("id") or x[1].get("url") or x[1].get("title") or ""),
+        )
+    )
     candidates = [doc for _, doc in scored[: max(k * 3, k)]]
     return rerank_candidates(query, candidates, k=k, use_llm=use_llm_reranker)
 

@@ -60,7 +60,13 @@ def _report_sync(state: ResearchState) -> dict:
     retrieved = state.get("retrieved") or state.get("evidence") or []
     critic = state.get("critic") or {}
     budget = budget_from(state)
-    citations = [c.model_dump(mode="json") for c in build_ledger(retrieved)] or list(state.get("citations") or [])
+    brief_for_ledger = state.get("brief") or {}
+    contract_for_ledger = brief_for_ledger.get("research_contract") or state.get("research_contract")
+    citations = [c.model_dump(mode="json") for c in build_ledger(
+        retrieved,
+        query=state.get("query") or "",
+        contract=contract_for_ledger if isinstance(contract_for_ledger, dict) else None,
+    )] or list(state.get("citations") or [])
     metrics = _metrics(state, budget)
     metrics["query_type"] = state.get("query_type") or (state.get("brief") or {}).get("query_type")
     seed_claims = None
@@ -118,6 +124,28 @@ def _report_sync(state: ResearchState) -> dict:
     report.at_a_glance = integrity["at_a_glance"]
     report.limitations = integrity["limitations"]
     report.metrics = {**report.metrics, **integrity["metrics_patch"]}
+    # Phase B: post-draft constraint audit vs ResearchContract (fail-soft).
+    try:
+        from app.domain.constraint_audit import apply_constraint_audit
+
+        _brief = state.get("brief") or {}
+        audited = apply_constraint_audit(
+            report.body_markdown or "",
+            query=state.get("query") or "",
+            brief=_brief if isinstance(_brief, dict) else {},
+            state=state if isinstance(state, dict) else {},
+            citations=citations,
+            evidence=retrieved,
+        )
+        if audited.get("had_contract") and not audited.get("skipped"):
+            report.body_markdown = audited.get("body_markdown") or report.body_markdown
+            report.metrics["constraint_audit"] = {
+                "flags": audited.get("flags") or [],
+                "gaps": audited.get("gaps") or [],
+                "missing_mandatory": audited.get("missing_mandatory") or [],
+            }
+    except Exception as _audit_exc:
+        report.metrics["constraint_audit"] = {"skipped": True, "error": type(_audit_exc).__name__}
     report.body_markdown = annotate_inline_citation_tiers(report.body_markdown or "", citations)
     report.decision_rule = annotate_inline_citation_tiers(report.decision_rule or "", citations)
     if "## Decision rule" in (report.body_markdown or "") and report.decision_rule:
@@ -956,7 +984,13 @@ def _regenerate_for_quality(state: ResearchState) -> dict:
     )
     
     # Rebuild dossier and citations (they're already dimension-filtered from first pass)
-    citations = [c.model_dump(mode="json") for c in build_ledger(retrieved)] or list(state.get("citations") or [])
+    brief_for_ledger = state.get("brief") or {}
+    contract_for_ledger = brief_for_ledger.get("research_contract") or state.get("research_contract")
+    citations = [c.model_dump(mode="json") for c in build_ledger(
+        retrieved,
+        query=state.get("query") or "",
+        contract=contract_for_ledger if isinstance(contract_for_ledger, dict) else None,
+    )] or list(state.get("citations") or [])
     metrics = _metrics(state, budget)
     metrics["regeneration_trigger"] = "quality_gate"
     metrics["quality_issues"] = issues
@@ -1129,6 +1163,28 @@ def _regenerate_for_quality(state: ResearchState) -> dict:
     report.at_a_glance = integrity["at_a_glance"]
     report.limitations = integrity["limitations"]
     report.metrics = {**report.metrics, **integrity["metrics_patch"]}
+    # Phase B: constraint audit (fail-soft) on quality-regenerate path too.
+    try:
+        from app.domain.constraint_audit import apply_constraint_audit
+
+        _brief = state.get("brief") or {}
+        audited = apply_constraint_audit(
+            report.body_markdown or "",
+            query=state.get("query") or "",
+            brief=_brief if isinstance(_brief, dict) else {},
+            state=state if isinstance(state, dict) else {},
+            citations=citations,
+            evidence=retrieved,
+        )
+        if audited.get("had_contract") and not audited.get("skipped"):
+            report.body_markdown = audited.get("body_markdown") or report.body_markdown
+            report.metrics["constraint_audit"] = {
+                "flags": audited.get("flags") or [],
+                "gaps": audited.get("gaps") or [],
+                "missing_mandatory": audited.get("missing_mandatory") or [],
+            }
+    except Exception as _audit_exc:
+        report.metrics["constraint_audit"] = {"skipped": True, "error": type(_audit_exc).__name__}
     report.body_markdown = annotate_inline_citation_tiers(report.body_markdown or "", citations)
     report.decision_rule = annotate_inline_citation_tiers(report.decision_rule or "", citations)
     

@@ -167,17 +167,34 @@ def pick_quote(ev: dict, limit: int = 280, *, claim_or_dimension: str = "", patt
     return blob[:limit]
 
 
-def build_ledger(evidence: list[dict], k: int = 12) -> list[Citation]:
+def build_ledger(
+    evidence: list[dict],
+    k: int = 12,
+    *,
+    query: str = "",
+    contract: dict | None = None,
+) -> list[Citation]:
     from app.domain.coverage import canonical_source_key, dedupe_evidence, tag_evidence_roles
+    from app.domain.research_contract import (
+        filter_evidence_for_contract,
+        topic_relevance_score,
+    )
     from app.domain.research_intent import authority_score, demote_secondary
 
     seen: set[str] = set()
     out: list[Citation] = []
     cleaned = demote_secondary(tag_evidence_roles(dedupe_evidence(list(evidence or []))))
     cleaned = [e for e in cleaned if not e.get("off_topic")]
+    # Pre-cite scope filter (contract excludes + metric_grounding assessors).
+    if query or contract:
+        cleaned = filter_evidence_for_contract(cleaned, query, contract)
     ranked = sorted(
         cleaned,
-        key=lambda e: (authority_score(e), float(e.get("credibility") or e.get("retrieval_score") or 0)),
+        key=lambda e: (
+            topic_relevance_score(e, query) if query else 0.5,
+            authority_score(e),
+            float(e.get("credibility") or e.get("retrieval_score") or 0),
+        ),
         reverse=True,
     )
     n = 1

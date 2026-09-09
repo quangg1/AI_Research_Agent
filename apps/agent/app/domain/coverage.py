@@ -724,6 +724,18 @@ def build_evidence_dossier(
     from app.retrieval.passage import select_best_excerpts_per_dimension
     
     slots = (coverage or {}).get("slots") or must_answer_for(query)
+    # Pre-cite scope filter when a ResearchContract is attached to coverage/brief.
+    contract = (coverage or {}).get("research_contract")
+    pool = list(evidence or [])
+    if contract or query:
+        try:
+            from app.domain.research_contract import filter_evidence_for_contract
+            filtered = filter_evidence_for_contract(pool, query, contract)
+            if filtered:
+                pool = filtered
+        except Exception:
+            pool = list(evidence or [])
+    evidence = pool
     by_id = {e.get("id"): e for e in evidence if e.get("id")}
     anchors = _anchors(query)
     dossier: list[dict[str, Any]] = []
@@ -779,7 +791,11 @@ def build_evidence_dossier(
                 dim_scored.append((score, ev))
             
             # Take top items for this dimension
-            dim_scored.sort(key=lambda x: (x[0], float(x[1].get("credibility") or 0)), reverse=True)
+            # Topic/dimension relevance first; credibility secondary (tier display unchanged).
+            dim_scored.sort(
+                key=lambda x: (x[0], float(x[1].get("credibility") or 0)),
+                reverse=True,
+            )
             for _, ev in dim_scored[:3 - len(items)]:
                 eid = ev.get("id") or ""
                 if eid and eid not in seen:

@@ -503,15 +503,18 @@ def numeric_evidence_score(ev: dict) -> float:
 
 
 def retrieval_rank_score(ev: dict, query: str = "") -> float:
-    from app.domain.research_intent import authority_score, topic_relevance_penalty
+    """Relevance-first rank: topic relevance primary, authority/tier secondary."""
+    from app.domain.research_contract import topic_relevance_score
+    from app.domain.research_intent import authority_score
 
     weight = numeric_rank_weight(query)
-    blob = " ".join(str(ev.get(k) or "") for k in ("title", "snippet", "quote"))
-    # A named-benchmark result fragment (e.g. "62.4% on SWE-bench") is on-topic
-    # for any ML-systems question even when it doesn't echo the query's exact
-    # wording — only penalize sources with no such signal AND no shared term.
-    penalty = 0.0 if BENCHMARK_RE.search(blob) else topic_relevance_penalty(ev, query)
-    return authority_score(ev) + numeric_evidence_score(ev) * weight + penalty
+    # Amplify relevance so it dominates authority (~ -3.5..+16) and numeric boosts.
+    relevance = topic_relevance_score(ev, query)
+    return (
+        float(relevance) * 100.0
+        + authority_score(ev)
+        + numeric_evidence_score(ev) * weight
+    )
 
 
 def numeric_rank_weight(query: str = "") -> float:

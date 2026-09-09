@@ -15,7 +15,13 @@ from app.domain.adversarial import (
 )
 from app.domain.citations import host_of, quote_in_source
 from app.domain.locator import locate_quote
-from app.domain.metric_grounding import assess_causal_delta, assess_claim_span_grounding, assess_scope_overgeneralization
+from app.domain.metric_grounding import (
+    assess_causal_delta,
+    assess_claim_span_grounding,
+    assess_scope_overgeneralization,
+    assess_subject_scale_scope,
+    assess_subject_topic_scope,
+)
 from app.domain.schema import Claim
 from app.observability.logging import event
 
@@ -77,6 +83,7 @@ def verify_against_sources(
     *,
     refetch: bool = True,
     fetch_fn: Callable[[str], str] | None = None,
+    query: str = "",
 ) -> dict[str, Any]:
     """Attach locator + verification_status to each claim. Optionally refetch URLs."""
     by_url = {(e.get("url") or "").rstrip("/").lower(): e for e in evidence if e.get("url")}
@@ -114,6 +121,12 @@ def verify_against_sources(
         kind = normalize_kind(data.get("kind") or "", has_quote=bool(data.get("quote")))
         causal = assess_causal_delta(data.get("text") or "", text)
         scope = assess_scope_overgeneralization(data.get("text") or "", text)
+        scale_scope = assess_subject_scale_scope(
+            data.get("text") or "", text, query=query or ""
+        )
+        topic_scope = assess_subject_topic_scope(
+            data.get("text") or "", text, query=query or ""
+        )
         span_gate = assess_claim_span_grounding(
             data.get("text") or "",
             text,
@@ -129,6 +142,14 @@ def verify_against_sources(
             status, note = str(causal["status"]), str(causal.get("note") or "Causal comparison not supported by source.")
         elif scope and scope.get("status") == "scope_bleed":
             status, note = "wrong_causal", str(scope.get("note") or "Scope overgeneralization.")
+        elif scale_scope and scale_scope.get("status") == "scale_mismatch":
+            status, note = "wrong_causal", str(
+                scale_scope.get("note") or "Model-scale attribution not supported by source."
+            )
+        elif topic_scope and topic_scope.get("status") == "topic_mismatch":
+            status, note = "unsupported", str(
+                topic_scope.get("note") or "Source is off-scope for the asked subject."
+            )
         elif span_gate and span_gate.get("status") == "ungrounded":
             status, note = "unsupported", str(span_gate.get("note") or "Claim lacks a grounded 1-2 sentence source span.")
         elif kind in {"inferred", "speculative", "recommendation"} and not locator.found:

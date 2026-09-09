@@ -505,3 +505,453 @@ def assess_claim_span_grounding(
         min_ratio=0.34,
     )
 
+
+# --- Subject / scale / topic claim↔evidence gates (Kiln memo quality) ---------
+# Catch live-memo failure modes where a retrieved paper is "about LoRA/QLoRA"
+# but does not support the *asked* subject (7B VRAM footprints) — e.g. a 1.5B
+# profiling paper, a mental-health DPO/ORPO/KTO paper, or an email-QA abstention
+# paper driving Key findings / Detailed analysis sections.
+
+MODEL_SCALE_RE = re.compile(
+    r"\b(?P<n>\d+(?:\.\d+)?)\s*[Bb](?:illion)?(?:\s*(?:param(?:eter)?s?|model))?\b"
+)
+
+MEMORY_QUERY_RE = re.compile(
+    r"\b("
+    r"VRAM|peak\s+(?:GPU\s+)?memory|memory\s+footprint|training\s+memory|"
+    r"GPU\s+memory|GB\s+VRAM|memory\s+(?:usage|consumption|requirement)s?|"
+    r"LoRA\s+vs\.?\s+QLoRA|QLoRA\s+vs\.?\s+LoRA"
+    r")\b",
+    re.I,
+)
+
+MEMORY_CLAIM_RE = re.compile(
+    r"\b("
+    r"VRAM|peak\s+(?:GPU\s+)?memory|memory\s+footprint|training\s+memory|"
+    r"GPU\s+memory|(?:\d+(?:\.\d+)?)\s*(?:GB|MB)\b|tok(?:ens)?/s|throughput|"
+    r"NF4|bitsandbytes|paged\s+optimizer|static\s+(?:base\s+)?weight"
+    r")\b",
+    re.I,
+)
+
+MEMORY_EVIDENCE_RE = re.compile(
+    r"\b("
+    r"bitsandbytes|NF4|paged\s+optimizer|weight\s+memory|"
+    r"(?:peak\s+)?(?:GPU\s+)?(?:VRAM|memory)\s+(?:of\s+)?(?:~?\d|footprint|usage|consumption)|"
+    r"(?:\d+(?:\.\d+)?)\s*(?:GB|MB)\b"
+    r")\b",
+    re.I,
+)
+
+# Negation / absence cues — mentioning VRAM only to say it was *not* measured
+# must not count as on-topic memory evidence.
+MEMORY_ABSENCE_RE = re.compile(
+    r"\b("
+    r"no\s+(?:GPU\s+)?(?:VRAM|memory)|(?:VRAM|memory).{0,40}(?:not\s+(?:reported|measured|provided)|absent)|"
+    r"does\s+not\s+(?:report|measure|provide).{0,40}(?:VRAM|memory|footprint)|"
+    r"without\s+(?:reporting\s+)?(?:VRAM|memory\s+footprint)"
+    r")\b",
+    re.I,
+)
+
+PREFERENCE_TOPIC_RE = re.compile(
+    r"\b("
+    r"DPO|ORPO|KTO|RLHF|preference\s+optim\w*|preference\s+alignment|"
+    r"class[- ]rebalanc\w*|chosen\s+vs\.?\s+rejected|pairwise\s+preference"
+    r")\b",
+    re.I,
+)
+
+CLINICAL_TOPIC_RE = re.compile(
+    r"\b("
+    r"mental[- ]health|clinical\s+text|depression|anxiety|therapy|"
+    r"patient\s+(?:dialog|dialogue|message)|psychiatric"
+    r")\b",
+    re.I,
+)
+
+ABSTENTION_TOPIC_RE = re.compile(
+    r"\b("
+    r"abstention|unanswerable|email\s+QA|email\s+question\s+answering|"
+    r"abstain(?:ing|s|ed)?\s+(?:from\s+)?answering|abstention\s+accuracy"
+    r")\b",
+    re.I,
+)
+
+# Subsection headings that should not be synthesized for a VRAM/memory query.
+OFF_SCOPE_SECTION_HEADING_RE = re.compile(
+    r"^###\s+("
+    r"Class[- ]rebalanced\s+preference\s+adaptation|"
+    r"Preference[- ]based\s+optimization\s+dynamics|"
+    r".{0,60}abstention.{0,40}|"
+    r".{0,40}preference\s+(?:adaptation|optim|alignment).{0,40}"
+    r")\s*$",
+    re.I | re.M,
+)
+
+
+def extract_model_scales(text: str) -> set[str]:
+    """Normalize model-size mentions to tokens like '7b', '1.5b'."""
+    out: set[str] = set()
+    for match in MODEL_SCALE_RE.finditer(text or ""):
+        raw = match.group("n")
+        try:
+            val = float(raw)
+        except ValueError:
+            continue
+        # Skip years / unrelated small ints that aren't model sizes.
+        if val < 0.1 or val > 1000:
+            continue
+        if val == int(val):
+            out.add(f"{int(val)}b")
+        else:
+            # Keep one decimal when present (1.5B).
+            out.add(f"{val:.1f}".rstrip("0").rstrip(".") + "b")
+    return out
+
+
+def is_memory_footprint_query(query: str) -> bool:
+    q = query or ""
+    if MEMORY_QUERY_RE.search(q):
+        return True
+    # LoRA vs QLoRA + (7B|memory|VRAM|GB) without explicit "vs" still counts.
+    if re.search(r"\b(?:LoRA|QLoRA)\b", q, re.I) and re.search(
+        r"\b(?:VRAM|memory|footprint|\d+(?:\.\d+)?\s*[Bb])\b", q, re.I
+    ):
+        return True
+    return False
+
+
+def source_topic_tags(source_text: str) -> set[str]:
+    text = source_text or ""
+    tags: set[str] = set()
+    if PREFERENCE_TOPIC_RE.search(text):
+        tags.add("preference")
+    if CLINICAL_TOPIC_RE.search(text):
+        tags.add("clinical")
+    if ABSTENTION_TOPIC_RE.search(text):
+        tags.add("abstention")
+    # Positive memory evidence only — ignore "VRAM not reported" disclaimers.
+    if MEMORY_EVIDENCE_RE.search(text) and not (
+        MEMORY_ABSENCE_RE.search(text) and not re.search(
+            r"\d+(?:\.\d+)?\s*(?:GB|MB)\b", text, re.I
+        )
+    ):
+        tags.add("memory")
+    elif re.search(r"\d+(?:\.\d+)?\s*(?:GB|MB)\b", text, re.I) and MEMORY_EVIDENCE_RE.search(text):
+        tags.add("memory")
+    return tags
+
+
+def assess_subject_scale_scope(
+    claim_text: str,
+    source_text: str,
+    query: str = "",
+) -> dict[str, Any] | None:
+    """Forbid attributing a source's numbers to a model scale the source never measured.
+
+    Classic failure: arXiv profiling Qwen2.5-1.5B on RTX 4060 cited as 7B VRAM/throughput.
+    """
+    claim = claim_text or ""
+    source = source_text or ""
+    if not claim.strip() or len(source) < 40:
+        return None
+
+    claim_scales = extract_model_scales(claim)
+    source_scales = extract_model_scales(source)
+    query_scales = extract_model_scales(query)
+
+    # Target scale: what the claim asserts, preferring the query's asked scale.
+    target = (claim_scales & query_scales) or (claim_scales if claim_scales else set())
+    if query_scales and not claim_scales:
+        # "peak VRAM … for 7B fine-tuning" sometimes omits "7B" next to the number
+        # but the surrounding claim block still attributes to the asked scale.
+        if MEMORY_CLAIM_RE.search(claim) and query_scales:
+            target = set(query_scales)
+
+    if not target:
+        return None
+    if not source_scales:
+        # Source never states a model scale — cannot prove mismatch; leave to span gate.
+        return None
+
+    # Source supports the claimed scale if it mentions it.
+    if target & source_scales:
+        return None
+
+    # Mismatch only when claim carries load-bearing numbers (or memory metrics)
+    # that look like quantitative attribution, not a soft mention.
+    numbers = load_bearing_numeric_tokens(claim)
+    if not numbers and not MEMORY_CLAIM_RE.search(claim):
+        return None
+
+    # Prefer flagging when at least one claimed number also appears in the source
+    # (misattribution of real figures) OR claim explicitly names the wrong scale.
+    source_flat = source.replace(",", "")
+    number_overlap = [n for n in numbers if n in source_flat]
+    if not number_overlap and not (claim_scales - source_scales):
+        return None
+
+    src_list = ", ".join(sorted(source_scales))
+    tgt_list = ", ".join(sorted(target))
+    return {
+        "status": "scale_mismatch",
+        "note": (
+            f"Claim attributes quantitative results to model scale {tgt_list}, but the "
+            f"cited source only measures {src_list}. Do not transplant those numbers "
+            "onto the asked scale; keep each figure scoped to the experiment that produced it."
+        ),
+        "claim_scales": sorted(claim_scales),
+        "source_scales": sorted(source_scales),
+        "query_scales": sorted(query_scales),
+    }
+
+
+def assess_subject_topic_scope(
+    claim_text: str,
+    source_text: str,
+    query: str = "",
+) -> dict[str, Any] | None:
+    """Mark preference / clinical / abstention sources as off-scope for memory queries.
+
+    Classic failures: mental-health DPO/ORPO/KTO LoRA paper and email-QA abstention
+    paper (~0.998) driving VRAM / LoRA-vs-QLoRA memory sections.
+    """
+    if not is_memory_footprint_query(query):
+        return None
+    claim = claim_text or ""
+    source = source_text or ""
+    if not claim.strip() or len(source) < 40:
+        return None
+
+    tags = source_topic_tags(source)
+    off_tags = tags & {"preference", "clinical", "abstention"}
+    if not off_tags:
+        return None
+
+    # If the source also has real memory/VRAM evidence, allow memory claims that
+    # are actually grounded there — only block when memory evidence is absent.
+    has_memory_evidence = "memory" in tags
+    claim_is_memory = bool(MEMORY_CLAIM_RE.search(claim))
+    claim_is_off = bool(
+        PREFERENCE_TOPIC_RE.search(claim)
+        or CLINICAL_TOPIC_RE.search(claim)
+        or ABSTENTION_TOPIC_RE.search(claim)
+    )
+
+    # Case A: memory/VRAM claim cited to an off-topic paper with no memory spans.
+    if claim_is_memory and not has_memory_evidence:
+        return {
+            "status": "topic_mismatch",
+            "note": (
+                "Query asks for VRAM/memory footprints, but the cited source is primarily "
+                f"{', '.join(sorted(off_tags))} (preference/clinical/abstention) and does not "
+                "report on-topic memory/VRAM evidence for the asked comparison. "
+                "Do not use it to drive Key findings / Detailed analysis / Decision rule."
+            ),
+            "tags": sorted(tags),
+        }
+
+    # Case B: claim itself is preference/abstention prose — off-scope for a memory query
+    # even if the source mentions LoRA as a training tool.
+    if claim_is_off and not claim_is_memory:
+        return {
+            "status": "topic_mismatch",
+            "note": (
+                "Claim concerns "
+                f"{', '.join(sorted(off_tags))} rather than the asked VRAM/memory comparison. "
+                "Keep Hu/Dettmers-style primaries when they actually report memory; "
+                "do not synthesize preference/abstention sections from this cite alone."
+            ),
+            "tags": sorted(tags),
+        }
+
+    return None
+
+
+def audit_memo_subject_scope(memo: str, query: str = "") -> list[str]:
+    """Memo-level warnings for off-scope sections / scale bleed on memory queries."""
+    if not memo:
+        return []
+    notes: list[str] = []
+    if is_memory_footprint_query(query or memo):
+        if OFF_SCOPE_SECTION_HEADING_RE.search(memo):
+            notes.append(
+                "Off-scope section(s) under Detailed analysis (preference adaptation / "
+                "preference optimization / abstention) for a VRAM/memory query. "
+                "Those cites must not drive Key findings, Detailed analysis, or Decision rule."
+            )
+        # 1.5B-only figures attributed next to 7B language (heuristic).
+        if extract_model_scales(query) and re.search(
+            r"\b1\.5\s*[Bb]\b.{0,120}\b7\s*[Bb]\b|\b7\s*[Bb]\b.{0,120}\b1\.5\s*[Bb]\b",
+            memo,
+            re.I | re.S,
+        ):
+            notes.append(
+                "Scale bleed: memo juxtaposes 1.5B experiment figures with 7B attributions. "
+                "Keep each VRAM/throughput number scoped to the model size actually measured."
+            )
+        if re.search(r"\b0\.998\b", memo) and re.search(
+            r"\babstention\b", memo, re.I
+        ):
+            notes.append(
+                "Abstention-accuracy figures (e.g. 0.998) appear in a memory/VRAM memo — "
+                "they are off-topic for LoRA vs QLoRA peak-memory comparison."
+            )
+    return notes
+
+
+def demote_off_scope_memo_content(
+    body: str,
+    *,
+    query: str,
+    citations: list[dict] | None = None,
+    evidence: list[dict] | None = None,
+) -> tuple[str, list[str]]:
+    """Soft-demote off-topic subsections and scale-mismatched quantitative lines.
+
+    Does NOT strip [n] markers inside ## References / ## Source quality (avoids ****).
+    """
+    if not body or not is_memory_footprint_query(query):
+        return body or "", []
+
+    flags: list[str] = []
+    text = body
+
+    # 1) Drop ### preference / abstention subsections under Detailed analysis.
+    def _drop_off_scope_subsections(md: str) -> tuple[str, int]:
+        parts = re.split(r"(^###\s+.+$)", md, flags=re.M)
+        if len(parts) <= 1:
+            return md, 0
+        out: list[str] = []
+        dropped = 0
+        i = 0
+        while i < len(parts):
+            part = parts[i]
+            if re.match(r"^###\s+", part):
+                heading = part
+                body_chunk = parts[i + 1] if i + 1 < len(parts) else ""
+                if OFF_SCOPE_SECTION_HEADING_RE.match(heading.strip()) or (
+                    PREFERENCE_TOPIC_RE.search(heading)
+                    or ABSTENTION_TOPIC_RE.search(heading)
+                ):
+                    # Only replace this ### body — stop before the next ##/### heading
+                    # so ## References / later sections are not swallowed.
+                    nxt = re.search(r"^##\s+", body_chunk, re.M)
+                    rest = body_chunk[nxt.start():] if nxt else ""
+                    out.append(heading)
+                    out.append(
+                        "\n> **Demoted (off-scope for query):** this subsection was "
+                        "synthesized from preference/clinical/abstention sources that do not "
+                        "ground the asked VRAM/memory comparison.\n\n"
+                    )
+                    if rest:
+                        out.append(rest)
+                    dropped += 1
+                    i += 2
+                    continue
+                out.append(heading)
+                out.append(body_chunk)
+                i += 2
+                continue
+            out.append(part)
+            i += 1
+        return "".join(out), dropped
+
+    text, n_drop = _drop_off_scope_subsections(text)
+    if n_drop:
+        flags.append(f"off_scope_sections_demoted_{n_drop}")
+
+    # 2) Strip Key findings / Decision rule lines that fail scale or topic gates
+    #    against the cited evidence (prose only — protected sections untouched).
+    if evidence and citations:
+        by_n = {}
+        for c in citations:
+            try:
+                by_n[int(c["n"])] = c
+            except (KeyError, TypeError, ValueError):
+                continue
+        by_url = {
+            (ev.get("url") or "").strip().rstrip("/").lower(): ev
+            for ev in evidence
+            if ev.get("url")
+        }
+
+        def _source_for_line(line: str) -> str:
+            blobs: list[str] = []
+            for match in CITE_MARKER_RE.finditer(line):
+                for piece in match.group(1).split(","):
+                    digits = re.match(r"\s*(\d+)", piece)
+                    if not digits:
+                        continue
+                    cite = by_n.get(int(digits.group(1))) or {}
+                    url = (cite.get("url") or "").strip().rstrip("/").lower()
+                    ev = by_url.get(url) or {}
+                    blob = (
+                        ev.get("full_text")
+                        or ev.get("text")
+                        or ev.get("content")
+                        or ev.get("snippet")
+                        or cite.get("snippet")
+                        or ""
+                    )
+                    if blob:
+                        blobs.append(blob)
+            return "\n".join(blobs)
+
+        protected = {"source quality", "references"}
+
+        def _scrub_section_lines(md: str) -> tuple[str, int]:
+            sections = re.split(r"(^##\s+.+$)", md, flags=re.M)
+            out_parts: list[str] = []
+            removed = 0
+            in_protected = False
+            target_section = False
+            for part in sections:
+                if re.match(r"^##\s+", part):
+                    name = re.sub(r"^##\s+", "", part).strip().lower()
+                    in_protected = any(p in name for p in protected)
+                    target_section = name in {
+                        "key findings",
+                        "decision rule",
+                        "executive summary",
+                        "at a glance",
+                        "comparison",
+                    } or name.startswith("detailed analysis")
+                    out_parts.append(part)
+                    continue
+                if in_protected or not target_section:
+                    out_parts.append(part)
+                    continue
+                kept_lines: list[str] = []
+                for line in part.splitlines(keepends=True):
+                    raw = line.rstrip("\n")
+                    if not raw.strip() or not CITE_MARKER_RE.search(raw):
+                        kept_lines.append(line)
+                        continue
+                    src = _source_for_line(raw)
+                    if len(src) < 40:
+                        kept_lines.append(line)
+                        continue
+                    scale = assess_subject_scale_scope(raw, src, query=query)
+                    topic = assess_subject_topic_scope(raw, src, query=query)
+                    if (scale and scale.get("status") == "scale_mismatch") or (
+                        topic and topic.get("status") == "topic_mismatch"
+                    ):
+                        removed += 1
+                        continue
+                    kept_lines.append(line)
+                out_parts.append("".join(kept_lines))
+            return "".join(out_parts), removed
+
+        text, n_removed = _scrub_section_lines(text)
+        if n_removed:
+            flags.append(f"off_scope_claim_lines_stripped_{n_removed}")
+
+    return text, flags
+
+
+# Citation marker used by demote_off_scope_memo_content (kept local to avoid
+# importing report_integrity → cycle).
+CITE_MARKER_RE = re.compile(r"\[(\d+(?:\s+[A-Za-z]+)?(?:\s*,\s*\d+(?:\s+[A-Za-z]+)?)*)\]")
+

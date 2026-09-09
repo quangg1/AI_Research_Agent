@@ -201,6 +201,26 @@ def enforce_report_integrity(
                 "Some named framework/product descriptions could not be verified against "
                 "retrieved sources and their citations were removed."
             )
+
+    # Subject/scope gates: demote preference/abstention sections and strip
+    # scale-mismatched quantitative attributions on memory/VRAM queries.
+    # Soft-demotes claims/sections only — never blanks [n] inside References.
+    if query:
+        from app.domain.metric_grounding import demote_off_scope_memo_content
+
+        demoted_body, demote_flags = demote_off_scope_memo_content(
+            body,
+            query=query,
+            citations=citations or [],
+            evidence=evidence,
+        )
+        if demote_flags:
+            body = demoted_body
+            flags.extend(demote_flags)
+            limitations.append(
+                "Some memo sections/claims were demoted because cited sources did not "
+                "ground the asked subject (model scale or memory-vs-alignment scope)."
+            )
     
     # Check citation relevance - prevent off-topic papers from being cited
     # (e.g. biology/neuroscience papers for AI/ML claims). Never mutate

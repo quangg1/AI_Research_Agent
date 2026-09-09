@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import re
 
-from app.domain.metric_grounding import audit_memo_causal_deltas, audit_memo_scope_bleed
+from app.domain.metric_grounding import (
+    audit_memo_causal_deltas,
+    audit_memo_scope_bleed,
+    audit_memo_subject_scope,
+)
 
 EXPONENTIAL_TOKEN_RE = re.compile(
     r"exponentially larger (?:set|number) of (?:key-value pairs|tokens|premises)|"
@@ -164,6 +168,7 @@ def audit_memo(text: str, *, query: str = "") -> list[str]:
             )
     notes.extend(audit_memo_causal_deltas(blob))
     notes.extend(audit_memo_scope_bleed(blob))
+    notes.extend(audit_memo_subject_scope(blob, query=query))
     notes.extend(audit_memo_primary_sources(blob, query=query))
     try:
         from app.domain.report_integrity import audit_memo_integrity

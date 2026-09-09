@@ -74,15 +74,35 @@ def criteria_block(criteria: dict) -> str:
     return "\n".join(lines)
 
 
+def _tail_looks_complete(text: str) -> bool:
+    """References often end in URLs/paths — that is NOT truncation."""
+    tail = (text or "")[-160:].strip()
+    if not tail:
+        return False
+    if tail.endswith("```"):
+        return True
+    if _TRUNC_TAIL_RE.search(tail):
+        return True
+    # URL / path / markdown-link / cite / fence leftovers
+    if re.search(r"(https?://\S+|www\.\S+|\]\([^)]+\)|`[^`]+`|\[[0-9]+[^\]]*\])\s*$", tail, re.I):
+        return True
+    # Ends on identifier / filename when closing sections already exist
+    if re.search(r"[A-Za-z0-9/_\-]+\s*$", tail) and re.search(
+        r"^##\s+(References|Source quality|Limitations)\s*$", text, re.I | re.M
+    ):
+        return True
+    return False
+
+
 def memo_looks_truncated(markdown: str) -> bool:
     text = (markdown or "").strip()
     if not text or word_count(text) < 400:
         return True
-    for heading in _REQUIRED_SECTIONS:
-        if not re.search(rf"^##\s+{re.escape(heading)}\s*$", text, re.I | re.M):
-            return True
-    tail = text[-120:].strip()
-    if tail and not _TRUNC_TAIL_RE.search(tail) and not tail.endswith("```"):
+    # At a glance is often a sidecar field; missing heading alone must not discard a full LLM memo.
+    required = tuple(h for h in _REQUIRED_SECTIONS if h.lower() != "at a glance")
+    if any(not re.search(rf"^##\s+{re.escape(h)}\s*$", text, re.I | re.M) for h in required):
+        return True
+    if not _tail_looks_complete(text):
         return True
     if "## Detailed analysis" in text and text.count("### ") < 2:
         return True

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import asyncio
 
 from app.domain.citations import annotate_inline_citation_tiers, bind_markdown_to_ledger, build_ledger
@@ -379,6 +381,75 @@ def _metrics(state: ResearchState, budget) -> dict:
     }
 
 
+
+def _llm_memo_worth_keeping(markdown: str) -> bool:
+    """True when an LLM draft is clearly better than compose fallback."""
+    text = (markdown or "").strip()
+    if word_count(text) < 400:
+        return False
+    if not re.search(r"^##\s+Executive summary\s*$", text, re.I | re.M):
+        return False
+    if not re.search(r"^##\s+Detailed analysis\s*$", text, re.I | re.M):
+        return False
+    compose_markers = (
+        "taken together,",
+        "agree on this dimension, so it can be treated as established",
+        "evidence reaches ",
+    )
+    low = text.lower()
+    if sum(1 for m in compose_markers if m in low) >= 2:
+        return False
+    return True
+
+
+def _prefer_llm_or_compose(
+    *,
+    llm_markdown: str,
+    compose_report_obj,
+    reason: str,
+    metrics: dict,
+):
+    """Keep substantial LLM drafts instead of silently replacing with compose."""
+    if _llm_memo_worth_keeping(llm_markdown):
+        notice = (
+            "> **Note:** Writer QA flagged this memo ("
+            + reason
+            + "); kept the LLM draft instead of replacing it with the heuristic template."
+        )
+        body = llm_markdown
+        if reason not in body and "kept the LLM draft" not in body:
+            lines = body.splitlines()
+            out: list[str] = []
+            inserted = False
+            for i, line in enumerate(lines):
+                out.append(line)
+                if not inserted and line.startswith("## Executive summary"):
+                    if i + 1 < len(lines) and lines[i + 1].strip():
+                        out.append("")
+                        out.append(notice)
+                        inserted = True
+            body = "\n".join(out) if inserted else (notice + "\n\n" + body)
+        return compose_report_obj.model_copy(
+            update={
+                "body_markdown": body,
+                "metrics": {
+                    **(compose_report_obj.metrics or {}),
+                    **metrics,
+                    "synthesis_status": reason,
+                    "kept_llm_despite_qa": True,
+                    "writer": "markdown",
+                    "word_count": word_count(body),
+                },
+            }
+        )
+    compose_report_obj.metrics = {
+        **(compose_report_obj.metrics or {}),
+        **metrics,
+        "synthesis_status": reason,
+    }
+    return compose_report_obj
+
+
 def _llm_report(
     state: ResearchState,
     evidence: list[dict],
@@ -574,8 +645,16 @@ def _llm_report(
             },
             terminal_followups=terminal_followups,
         )
-        failed.metrics["synthesis_status"] = "truncated_unrepaired"
-        return failed
+        return _prefer_llm_or_compose(
+            llm_markdown=markdown,
+            compose_report_obj=failed,
+            reason="truncated_unrepaired",
+            metrics={
+                **metrics,
+                "llm_error": llm.last_error,
+                "truncation_repaired": repaired,
+            },
+        )
     if not markdown.strip() or not memo_is_user_clean(markdown):
         failed = compose_terminal_synthesis(
             query=state.get("query") or "",
@@ -590,6 +669,35 @@ def _llm_report(
             metrics={**metrics, "llm_error": llm.last_error},
             terminal_followups=terminal_followups,
         )
+        cleaned = markdown
+        if markdown.strip() and not memo_is_user_clean(markdown):
+            drop_prefixes = tuple(
+                m.lower()
+                for m in (
+                    "Research quality",
+                    "Claim ledger",
+                    "Critic status",
+                    "Tool calls",
+                    "Working set",
+                    "Method and assumptions",
+                    "Generator:",
+                    "Graph:",
+                )
+            )
+            cleaned_lines = []
+            for line in markdown.splitlines():
+                stripped = line.strip().lstrip("#*|>-").strip().lower()
+                if stripped.startswith(drop_prefixes):
+                    continue
+                cleaned_lines.append(line)
+            cleaned = "\n".join(cleaned_lines).replace("[?]", "")
+        if _llm_memo_worth_keeping(cleaned):
+            return _prefer_llm_or_compose(
+                llm_markdown=cleaned,
+                compose_report_obj=failed,
+                reason="gemini_failed_fallback",
+                metrics={**metrics, "llm_error": llm.last_error},
+            )
         failed.metrics["synthesis_status"] = "gemini_failed_fallback"
         failed.metrics["llm_error"] = llm.last_error
         return failed

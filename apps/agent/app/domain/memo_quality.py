@@ -35,6 +35,64 @@ def _marker_numbers(marker_text: str) -> list[tuple[int, str]]:
     return out
 
 
+def _declutter_prose_chunk(
+    part: str,
+    *,
+    max_distinct_per_sentence: int,
+    max_per_source_per_paragraph: int,
+) -> tuple[str, int]:
+    """Trim stacked/saturated citation markers inside one prose block."""
+    if not part.strip() or _MARKER_RE.search(part) is None:
+        return part, 0
+    changed = 0
+    paragraphs = re.split(r"(\n\s*\n)", part)
+    section_parts: list[str] = []
+    for block in paragraphs:
+        if not block.strip():
+            section_parts.append(block)
+            continue
+        seen_in_paragraph: dict[int, int] = {}
+        sentences = re.split(r"(?<=[.!?])(\s+)", block)
+        new_sentences: list[str] = []
+        for chunk in sentences:
+            if not chunk.strip() or _MARKER_RE.search(chunk) is None:
+                new_sentences.append(chunk)
+                continue
+            all_nums: list[int] = []
+            for m in _MARKER_RE.finditer(chunk):
+                for n, _tier in _marker_numbers(m.group(1)):
+                    if n not in all_nums:
+                        all_nums.append(n)
+            allowed = set(all_nums[:max_distinct_per_sentence])
+
+            def repl(m: re.Match, _allowed=allowed, _seen=seen_in_paragraph) -> str:
+                nonlocal changed
+                nums = _marker_numbers(m.group(1))
+                kept: list[tuple[int, str]] = []
+                for n, tier in nums:
+                    if n not in _allowed:
+                        continue
+                    c = _seen.get(n, 0)
+                    if c >= max_per_source_per_paragraph:
+                        continue
+                    _seen[n] = c + 1
+                    kept.append((n, tier))
+                if len(kept) != len(nums):
+                    changed += 1
+                if not kept:
+                    return ""
+                return "[" + ", ".join(f"{n}{tier}" for n, tier in kept) + "]"
+
+            new_sentences.append(_MARKER_RE.sub(repl, chunk))
+        new_part = "".join(new_sentences)
+        new_part = re.sub(r"[ \t]+([.,;:])", r"\1", new_part)
+        new_part = re.sub(r"[ \t]{2,}", " ", new_part)
+        # If we emptied a bold cite marker (**[n]** -> ****), drop the empty bold.
+        new_part = new_part.replace("****", "")
+        section_parts.append(new_part)
+    return "".join(section_parts), changed
+
+
 def declutter_citations(
     body: str,
     *,
@@ -43,106 +101,55 @@ def declutter_citations(
 ) -> tuple[str, int]:
     """Deterministic fix for citation stacking and source saturation.
 
-    Both are pure citation-*marker-placement* issues, not content problems —
-    the underlying claim is still true whether it carries 2 citations or 5.
-    Fixing them by asking the writer LLM to regenerate the whole memo (up to
-    ~3 calls per attempt, up to 2 attempts) is expensive and, per observed
-    runs, unreliable — the model doesn't reliably fix its own over-citing.
-    This trims markers directly: at most `max_distinct_per_sentence` distinct
-    sources per sentence, at most `max_per_source_per_paragraph` repeats of
-    the same source within one paragraph. The claims and remaining citations
-    are untouched — this only declutters redundant citation decoration.
-    
-    Skips "Source quality" and "References" sections where citation lists
-    should remain intact.
+    Trims markers in prose only. Never drops memo sections. Never mutates
+    ## Source quality / ## References (those lists must stay intact).
 
-    Returns (new_body, markers_changed_count).
+    Root bug (2026-09-09): a broken section loop appended only Source quality /
+    References chunks and discarded the rest of the memo (so memo_gate logged
+    Missing '## Detailed analysis'), then still ran marker deletion on
+    References lines like `- **[4 preprint]** ...`, turning them into `- **** ...`.
     """
-    # Split by ## sections to identify and skip Source quality / References
-    sections = re.split(r"(^##\s+.+$)", body or "", flags=re.M)
-    out_sections: list[str] = []
-    skip_next = False
-    
-    for i, section in enumerate(sections):
-        # Check if this is a section header
-        if re.match(r"^##\s+(Source quality|References)\s*$", section, re.I):
-            skip_next = True
-            out_sections.append(section)
-            continue
-        
-        # If previous header was Source quality/References, skip processing this section
-        if skip_next and i > 0:
-            # Check if we hit another ## header (end of skip section)
-            if re.match(r"^##\s+", section, re.M):
-                skip_next = False
-            else:
-                out_sections.append(section)
-                continue
-        
-        # Reset skip flag if we hit a new section
-        if re.match(r"^##\s+", section):
-            skip_next = False
-        
-        # Process this section normally
-        if not section.strip():
-            out_sections.append(section)
-            continue
-    
-    # Rejoin to process non-skipped sections
+    parts = re.split(r"(^##\s+.+$)", body or "", flags=re.M)
+    out: list[str] = []
     changed_total = 0
-    processed: list[str] = []
-    
-    for section_text in out_sections:
-        # Check if this section should be skipped (between Source quality/References headers)
-        # For simplicity, process paragraph by paragraph within non-skipped sections
-        paragraphs = re.split(r"(\n\s*\n)", section_text)
-        section_parts: list[str] = []
-        
-        for part in paragraphs:
-            if not part.strip():
-                section_parts.append(part)
-                continue
-            seen_in_paragraph: dict[int, int] = {}
-            sentences = re.split(r"(?<=[.!?])(\s+)", part)
-            new_sentences: list[str] = []
-            for chunk in sentences:
-                if not chunk.strip() or _MARKER_RE.search(chunk) is None:
-                    new_sentences.append(chunk)
-                    continue
-                all_nums: list[int] = []
-                for m in _MARKER_RE.finditer(chunk):
-                    for n, _tier in _marker_numbers(m.group(1)):
-                        if n not in all_nums:
-                            all_nums.append(n)
-                allowed = set(all_nums[:max_distinct_per_sentence])
+    i = 0
+    while i < len(parts):
+        part = parts[i]
+        header_match = re.match(r"^##\s+(.+?)\s*$", part)
+        if header_match:
+            out.append(part)
+            title = header_match.group(1).strip().lower()
+            protected = title in {"source quality", "references", "core references"}
+            # Following chunk is section body until next header (or EOF).
+            if i + 1 < len(parts) and not re.match(r"^##\s+", parts[i + 1]):
+                body_chunk = parts[i + 1]
+                if protected:
+                    out.append(body_chunk)
+                else:
+                    cleaned, n = _declutter_prose_chunk(
+                        body_chunk,
+                        max_distinct_per_sentence=max_distinct_per_sentence,
+                        max_per_source_per_paragraph=max_per_source_per_paragraph,
+                    )
+                    changed_total += n
+                    out.append(cleaned)
+                i += 2
+            else:
+                i += 1
+            continue
 
-                def repl(m: re.Match) -> str:
-                    nonlocal changed_total
-                    nums = _marker_numbers(m.group(1))
-                    kept: list[tuple[int, str]] = []
-                    for n, tier in nums:
-                        if n not in allowed:
-                            continue
-                        c = seen_in_paragraph.get(n, 0)
-                        if c >= max_per_source_per_paragraph:
-                            continue
-                        seen_in_paragraph[n] = c + 1
-                        kept.append((n, tier))
-                    if len(kept) != len(nums):
-                        changed_total += 1
-                    if not kept:
-                        return ""
-                    return "[" + ", ".join(f"{n}{tier}" for n, tier in kept) + "]"
+        # Preamble before the first ## heading.
+        cleaned, n = _declutter_prose_chunk(
+            part,
+            max_distinct_per_sentence=max_distinct_per_sentence,
+            max_per_source_per_paragraph=max_per_source_per_paragraph,
+        )
+        changed_total += n
+        out.append(cleaned)
+        i += 1
 
-                new_sentences.append(_MARKER_RE.sub(repl, chunk))
-            new_part = "".join(new_sentences)
-            # Tidy spacing left by a fully-removed marker ("text  ." / "text  and").
-            new_part = re.sub(r"[ \t]+([.,;:])", r"\1", new_part)
-            new_part = re.sub(r"[ \t]{2,}", " ", new_part)
-            section_parts.append(new_part)
-        processed.append("".join(section_parts))
-    
-    return "".join(processed), changed_total
+    return "".join(out), changed_total
+
 
 
 def check_memo_quality(

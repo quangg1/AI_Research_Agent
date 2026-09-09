@@ -229,17 +229,23 @@ def _as_dict(c) -> dict:
 
 def format_reference_list(citations: list) -> str:
     lines = []
-    for raw in citations:
+    for i, raw in enumerate(citations, start=1):
         c = _as_dict(raw)
         n = c.get("n")
+        if n is None or n == "":
+            n = i
+        try:
+            n_int = int(n)
+        except (TypeError, ValueError):
+            n_int = i
         title = (c.get("title") or c.get("url") or "source").strip()
         url = (c.get("url") or "").strip()
         # Use bullet list with explicit [n] to prevent markdown auto-renumbering
         # which causes reference numbers to jump when some citations are unused
         if url and is_citable_url(url):
-            lines.append(f"- **[{n}]** [{title}]({url}) — `{url}`")
+            lines.append(f"- **[{n_int}]** [{title}]({url}) — `{url}`")
         else:
-            lines.append(f"- **[{n}]** {title}")
+            lines.append(f"- **[{n_int}]** {title}")
     return "\n".join(lines)
 
 
@@ -395,10 +401,37 @@ def bind_markdown_to_ledger(md: str, citations: list) -> str:
     cited = _cited_numbers(md)
     used = [c for c in citations if _as_dict(c).get("n") in cited] if cited else citations
     refs = format_reference_list(used)
+    quality = format_source_quality_section(used)
     reference_heading = re.search(r"(?im)^##\s+(?:Core\s+references|References)\s*$", md)
     if reference_heading:
         head = md[: reference_heading.start()].rstrip()
         md = f"{head}\n\n## References\n\n{refs}\n"
     elif refs:
         md = md.rstrip() + "\n\n## References\n\n" + refs + "\n"
+    quality_heading = re.search(r"(?im)^##\s+Source quality\s*$", md)
+    if quality and quality_heading:
+        q_start = quality_heading.start()
+        ref_after = re.search(
+            r"(?im)^##\s+(?:Core\s+references|References)\s*$",
+            md[q_start + 1 :],
+        )
+        if ref_after:
+            q_end = q_start + 1 + ref_after.start()
+            md = (
+                md[:q_start].rstrip()
+                + "\n\n## Source quality\n\n"
+                + quality
+                + "\n\n"
+                + md[q_end:]
+            )
+        else:
+            md = md[:q_start].rstrip() + "\n\n## Source quality\n\n" + quality + "\n"
+    elif quality and not quality_heading:
+        reference_heading = re.search(
+            r"(?im)^##\s+(?:Core\s+references|References)\s*$", md
+        )
+        if reference_heading:
+            head = md[: reference_heading.start()].rstrip()
+            tail = md[reference_heading.start() :]
+            md = head + "\n\n## Source quality\n\n" + quality + "\n\n" + tail
     return md

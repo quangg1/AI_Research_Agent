@@ -146,6 +146,36 @@ def _report_sync(state: ResearchState) -> dict:
             }
     except Exception as _audit_exc:
         report.metrics["constraint_audit"] = {"skipped": True, "error": type(_audit_exc).__name__}
+    # Phase C: number/claim provenance polish (fail-soft) after constraint_audit.
+    try:
+        from app.domain.number_provenance import apply_number_provenance_polish
+
+        _prov = apply_number_provenance_polish(
+            report.body_markdown or "",
+            citations=citations,
+            evidence=retrieved,
+        )
+        if not _prov.get("skipped"):
+            report.body_markdown = _prov.get("body_markdown") or report.body_markdown
+            report.metrics["number_provenance"] = {
+                "flags": _prov.get("flags") or [],
+                "rewrite_count": len(_prov.get("rewrites") or []),
+            }
+            if _prov.get("flags"):
+                lim = list(report.limitations or [])
+                lim.append(
+                    "Some author-attributed numbers were relabeled as estimates or "
+                    "calculations because they were not grounded in a 1-2 sentence "
+                    "source span."
+                )
+                # Dedupe while preserving order
+                seen = set()
+                report.limitations = [x for x in lim if not (x in seen or seen.add(x))]
+    except Exception as _prov_exc:
+        report.metrics["number_provenance"] = {
+            "skipped": True,
+            "error": type(_prov_exc).__name__,
+        }
     report.body_markdown = annotate_inline_citation_tiers(report.body_markdown or "", citations)
     report.decision_rule = annotate_inline_citation_tiers(report.decision_rule or "", citations)
     if "## Decision rule" in (report.body_markdown or "") and report.decision_rule:
@@ -1185,6 +1215,36 @@ def _regenerate_for_quality(state: ResearchState) -> dict:
             }
     except Exception as _audit_exc:
         report.metrics["constraint_audit"] = {"skipped": True, "error": type(_audit_exc).__name__}
+    # Phase C: number/claim provenance polish (fail-soft) after constraint_audit.
+    try:
+        from app.domain.number_provenance import apply_number_provenance_polish
+
+        _prov = apply_number_provenance_polish(
+            report.body_markdown or "",
+            citations=citations,
+            evidence=retrieved,
+        )
+        if not _prov.get("skipped"):
+            report.body_markdown = _prov.get("body_markdown") or report.body_markdown
+            report.metrics["number_provenance"] = {
+                "flags": _prov.get("flags") or [],
+                "rewrite_count": len(_prov.get("rewrites") or []),
+            }
+            if _prov.get("flags"):
+                lim = list(report.limitations or [])
+                lim.append(
+                    "Some author-attributed numbers were relabeled as estimates or "
+                    "calculations because they were not grounded in a 1-2 sentence "
+                    "source span."
+                )
+                # Dedupe while preserving order
+                seen = set()
+                report.limitations = [x for x in lim if not (x in seen or seen.add(x))]
+    except Exception as _prov_exc:
+        report.metrics["number_provenance"] = {
+            "skipped": True,
+            "error": type(_prov_exc).__name__,
+        }
     report.body_markdown = annotate_inline_citation_tiers(report.body_markdown or "", citations)
     report.decision_rule = annotate_inline_citation_tiers(report.decision_rule or "", citations)
     

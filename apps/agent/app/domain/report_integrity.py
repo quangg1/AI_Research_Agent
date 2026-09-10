@@ -985,9 +985,14 @@ def _drop_empty_sections(body: str) -> str:
                 # Count non-empty lines
                 content_lines = [ln for ln in content.splitlines() if ln.strip()]
                 has_citations = CITE_RE.search(content)
-                
+                # A section just labeled "Illustrative scenario" / "Composite"
+                # by the checks above is deliberately short and uncited —
+                # that's the whole point of the caveat, not a sign it should
+                # be dropped as filler.
+                is_caveated = "illustrative scenario" in content.lower() or "> **composite**" in content.lower()
+
                 # Drop if too short and no citations
-                if len(content_lines) < 3 and not has_citations:
+                if len(content_lines) < 3 and not has_citations and not is_caveated:
                     i += 2  # Skip both header and content
                     continue
             

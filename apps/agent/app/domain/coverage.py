@@ -305,9 +305,13 @@ def score_must_answer(query: str, evidence: list[dict], slots: list[dict] | None
                 or (is_primary and best.get("_topic", 0) >= 1)
             )
             and not is_secondary_host(best.get("url") or "")
-            and distinct_works >= 2  # Require ≥2 distinct works for covered status
+            # ≥2 distinct works, UNLESS the best match is itself a primary
+            # source (paper/official repo/official docs) — the monoculture
+            # this guards against is many secondary sources all repeating
+            # the same benchmark number, not one strong primary source.
+            and (distinct_works >= 2 or is_primary)
         )
-        # One work → at most weak, prevents SWE-Bench monoculture
+        # One non-primary work → at most weak, prevents SWE-Bench monoculture
         slot["status"] = "covered" if strong else "weak"
         slot["evidence_ids"] = [h.get("id") for h in hits[:3] if h.get("id")]
         slot["evidence_type"] = evidence_type_of(best, query)

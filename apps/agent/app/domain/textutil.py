@@ -60,6 +60,11 @@ GENERIC_ACRONYMS = frozenset(
         "FAQ",
         "PR",
         "OK",
+        # ML technique names, not specific named systems/products — comparing
+        # "Punica, S-LoRA, vLLM" for how they serve LoRA adapters should not
+        # also produce a spurious "LoRA" column/entity of its own.
+        "LORA",
+        "QLORA",
     }
 )
 

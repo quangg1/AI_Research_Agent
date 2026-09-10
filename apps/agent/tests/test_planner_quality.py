@@ -4,6 +4,7 @@ from app.graph.nodes.planner import _cap_sub_queries, _followups_from_prior, _me
 from app.domain.adversarial import falsification_queries
 from app.domain.decompose import subquestions_for
 from app.domain.scholar_query import normalize_plan_subqueries
+from app.domain.retrieval_limits import RETRIEVAL_POOL
 
 
 Q = (
@@ -24,7 +25,35 @@ def test_iter1_merges_slot_queries_with_falsification():
 
 def test_deep_first_pass_reserves_budget_for_critic_loop():
     assert _reserve_calls("deep", 1) == 10
-    assert _reserve_calls("deep", 2) == 0
+
+
+def test_deep_followup_rounds_still_reserve_for_later_rounds():
+    """Iterations 2..5 used to get zero reserve — call_cap was the whole
+    remaining pool, so a single followup round could spend everything pass 1
+    left behind and starve iterations 3+ before after_critic's stagnation
+    detector (needs 3 iterations of history) ever got data. Each non-final
+    round should still hold something back."""
+    assert _reserve_calls("deep", 2, max_iterations=6) > 0
+    assert _reserve_calls("deep", 3, max_iterations=6) > 0
+    assert _reserve_calls("deep", 5, max_iterations=6) > 0
+    # Last allowed iteration has no next round to protect.
+    assert _reserve_calls("deep", 6, max_iterations=6) == 0
+
+
+def test_reserve_pool_spread_lets_a_query_reach_three_iterations():
+    """End-to-end budget math: with the old all-or-nothing reserve, a
+    single gap-fill round at iteration 2 could exhaust the pool and after_
+    critic would stop right after iteration 2 — never giving the 3-
+    iteration stagnation detector a chance to run. Simulate worst case
+    (each round spends its full call_cap) and confirm iteration 3 still has
+    retrieval budget available."""
+    pool = RETRIEVAL_POOL["deep"]
+    remaining = pool
+    for iteration in (1, 2):
+        reserve = _reserve_calls("deep", iteration, max_iterations=6)
+        call_cap = max(2, remaining - reserve)
+        remaining -= call_cap
+    assert remaining > 0, "iteration 3 has no budget left to run"
 
 
 def test_planner_iter1_uses_slot_aligned_followups(monkeypatch):

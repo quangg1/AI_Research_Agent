@@ -211,8 +211,8 @@ def _planner_sync(state: ResearchState) -> dict:
     if budget.remaining_calls <= 0:
         plan.agents_to_run = []
         plan.sub_queries = []
-    reserve = _reserve_calls(depth, budget.iterations)
-    call_cap = max(2, budget.remaining_retrieval_calls - reserve) if budget.iterations == 1 else budget.remaining_retrieval_calls
+    reserve = _reserve_calls(depth, budget.iterations, budget.max_iterations)
+    call_cap = max(2, budget.remaining_retrieval_calls - reserve)
     plan.sub_queries = _cap_sub_queries(plan.sub_queries, depth, call_cap)
     plan.sub_queries = normalize_plan_subqueries(plan.sub_queries, query)
 
@@ -270,11 +270,30 @@ def _cap_sub_queries(subs: list[SubQuery], depth: str, remaining_calls: int) -> 
     return out
 
 
-def _reserve_calls(depth: str, iteration: int) -> int:
-    """Keep budget for critic-driven gap loops instead of burning it all on pass 1."""
-    if iteration != 1:
+def _reserve_calls(depth: str, iteration: int, max_iterations: int = 6) -> int:
+    """Keep budget for critic-driven gap loops instead of burning it all on
+    pass 1 or 2.
+
+    Iteration 1 keeps its existing big reserve (DEEP_RESERVE_CALLS etc.) so
+    the first pass still does broad exploration. Iterations 2..max_iterations-1
+    used to get NO reserve at all — call_cap was the full remaining pool —
+    so a single critic-driven followup round could spend everything that
+    pass 1 left behind. That made after_critic's smart-stopping checks
+    (the stagnation detector needs 3 iterations of quality history) almost
+    unreachable in practice: budget hit 0 by iteration 2, before those
+    checks ever got the data to fire. Spread the same reserve pool evenly
+    across the remaining rounds instead, so several small gap-fill passes
+    stay possible and the system's own quality checks — not the budget
+    running out — decide when to stop. The final allowed iteration spends
+    whatever's left; there's no next round to protect.
+    """
+    if iteration <= 1:
+        return showcase_reserve_calls(depth, iteration)
+    if iteration >= max_iterations:
         return 0
-    return showcase_reserve_calls(depth, iteration)
+    total_reserve = showcase_reserve_calls(depth, 1)
+    followup_rounds = max(1, max_iterations - 1)
+    return max(2, total_reserve // followup_rounds)
 
 
 def _merge_subqueries(*groups: list[SubQuery]) -> list[SubQuery]:

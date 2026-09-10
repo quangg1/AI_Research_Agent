@@ -4,6 +4,7 @@ from app.domain.research_intent import (
     claim_confidence,
     decision_rule_for,
     decompose_subquestions,
+    flip_condition_for,
     is_comparison_query,
     is_mechanism_query,
     is_secondary_host,
@@ -115,6 +116,41 @@ def test_decision_rule_separates_empirical_from_heuristics():
     assert "### Engineering heuristics" in rule
     assert "How CRISPR-Cas9 cleaves DNA" in rule
     assert "Off-target effects" in rule
+
+
+def test_decision_rule_never_leaks_the_authoring_instruction():
+    """Real memo output showed the literal instruction sentence ("Only
+    thresholds measured in a cited experiment belong here. If none were
+    measured, write: Evidence-backed threshold: none.") printed as reader-
+    facing body text, verbatim, in both Decision rule and the derived At a
+    glance box — it described what decision_rule_for already does below it,
+    so it should never be emitted at all."""
+    rule = decision_rule_for(POLICY_Q, [], {"status": "insufficient"})
+    assert "Only thresholds measured in a cited experiment belong here" not in rule
+
+
+def test_decision_rule_no_orphaned_act_on_these_header():
+    """supported can be non-empty while every label is filtered out by
+    _is_slot_label_leak (bare slot ids / poison labels) — the header used to
+    print unconditionally before that filtering ran, leaving "Act on these
+    — the sources support them directly:" printed with no bullets under it."""
+    critic = {
+        "coverage": {
+            "slots": [
+                {"id": "constraints_and_limitations", "label": "constraints_and_limitations", "status": "covered"},
+            ]
+        }
+    }
+    rule = decision_rule_for(POLICY_Q, [{"n": 1}], critic)
+    assert "Act on these" not in rule
+    assert "Evidence-backed threshold: none" in rule
+
+
+def test_flip_condition_truncates_at_a_word_boundary():
+    long_goal = "Compare full-parameter fine-tuning, LoRA, and QLoRA across performance metrics, computational cost, memory footprint, and domain generalization"
+    text = flip_condition_for(long_goal, {})
+    assert "footprint, an”" not in text
+    assert "…”" in text
 
 
 def test_secondary_host_demoted():

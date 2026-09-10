@@ -236,12 +236,23 @@ def flip_condition_for(query: str, critic: dict | None = None) -> str:
         joined = "; ".join(open_slots)
         return (
             f"Revisit if: measured evidence closes “{joined}”, or a primary source "
-            f"undercuts the lead recommendation for “{goal[:100]}”."
+            f"undercuts the lead recommendation for “{_truncate_at_word(goal, 100)}”."
         )
     return (
         f"Revisit if: new measured evidence undercuts the lead recommendation for "
-        f"“{goal[:120]}”, or your latency/cost envelope forbids the gated path."
+        f"“{_truncate_at_word(goal, 120)}”, or your latency/cost envelope forbids the gated path."
     )
+
+
+def _truncate_at_word(text: str, limit: int) -> str:
+    """text[:limit] but backed off to the last whole word, plus an ellipsis
+    when it actually cut something — a truncated query title mid-word (e.g.
+    "...memory footprint, an") reads as broken, not concise."""
+    s = text or ""
+    if len(s) <= limit:
+        return s
+    cut = s[:limit].rsplit(" ", 1)[0].rstrip(",;: ")
+    return (cut or s[:limit]) + "…"
 
 def decision_rule_for(query: str, ledger: list, critic: dict) -> str:
     """An actionable rule built from what the evidence actually established."""
@@ -253,14 +264,8 @@ def decision_rule_for(query: str, ledger: list, critic: dict) -> str:
     missing = [s for s in slots if s.get("status") == "open"]
     n_src = len(ledger)
 
-    lines: list[str] = [
-        "### Empirical cutoffs (sources only)",
-        "",
-        "Only thresholds measured in a cited experiment belong here. "
-        "If none were measured, write: *Evidence-backed threshold: none.*",
-        "",
-    ]
-    empirical_bullets = False
+    lines: list[str] = ["### Empirical cutoffs (sources only)", ""]
+
     def _is_slot_label_leak(label: str) -> bool:
         low = (label or "").lower().strip()
         if not low:
@@ -282,19 +287,24 @@ def decision_rule_for(query: str, ledger: list, critic: dict) -> str:
             return True
         return False
 
-    if supported:
+    bullets: list[str] = []
+    for s in supported[:6]:
+        label = str(s.get("label") or s.get("id") or "")
+        if _is_slot_label_leak(label):
+            continue
+        cite = s.get("support") or s.get("citation") or ""
+        suffix = f" — see {cite}." if cite else f" — from the {n_src} cited sources."
+        bullets.append(f"- {label}{suffix}")
+
+    # Decide the header AFTER filtering, not before — supported can be
+    # non-empty while every label gets filtered out by _is_slot_label_leak,
+    # which used to leave "Act on these..." printed with nothing under it.
+    if bullets:
         lines.append("**Act on these — the sources support them directly:**")
         lines.append("")
-        for s in supported[:6]:
-            label = str(s.get("label") or s.get("id") or "")
-            if _is_slot_label_leak(label):
-                continue
-            cite = s.get("support") or s.get("citation") or ""
-            suffix = f" — see {cite}." if cite else f" — from the {n_src} cited sources."
-            lines.append(f"- {label}{suffix}")
-            empirical_bullets = True
+        lines.extend(bullets)
         lines.append("")
-    if not empirical_bullets:
+    else:
         lines.append("*Evidence-backed threshold: none.*")
         lines.append("")
 
@@ -325,13 +335,13 @@ def decision_rule_for(query: str, ledger: list, critic: dict) -> str:
             label = s.get("label") or s.get("id")
             lines.append(f"- Do not assume: {label}.")
         lines.append("")
-    if not partial and not missing and not empirical_bullets:
+    if not partial and not missing and not bullets:
         lines.append(
-            f"For “{goal[:140]}”, act only on statements a cited primary source supports."
+            f"For “{_truncate_at_word(goal, 140)}”, act only on statements a cited primary source supports."
         )
         lines.append("")
     lines.append(
-        f"Applied to “{goal[:140]}”: empirical bullets are decision input; verify/do-not-assume "
+        f"Applied to “{_truncate_at_word(goal, 140)}”: empirical bullets are decision input; verify/do-not-assume "
         f"are open. This rests on {n_src} cited sources."
     )
     lines.append("")
@@ -349,7 +359,7 @@ def field_unknowns_for(query: str, critic: dict | None = None) -> list[str]:
         if s.get("status") == "open"
     ]
     unknowns = [
-        f"No cited source measures “{goal[:100]}” under a single shared harness "
+        f"No cited source measures “{_truncate_at_word(goal, 100)}” under a single shared harness "
         "with reported N, success rate, and failure-mode breakdown.",
         "Cross-framework serving/runtime penalties (e.g. KV-cache invalidation under long tool "
         "trajectories) are rarely reported with comparable methodology across stacks.",

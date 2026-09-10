@@ -22,6 +22,7 @@ class Citation(BaseModel):
     quote: str = ""
     tier: str = ""
     host: str = ""
+    publication_status: str = ""
 
 
 def normalize(text: str) -> str:
@@ -215,6 +216,8 @@ def build_ledger(
         blob = " ".join(str(ev.get(k) or "") for k in ("title", "snippet", "quote", "full_text"))
         if quote and not quote_in_source(quote, blob):
             quote = pick_quote({**ev, "quote": ev.get("snippet") or ev.get("title") or ""})
+        from app.domain.adversarial import publication_status
+
         out.append(
             Citation(
                 n=n,
@@ -224,6 +227,7 @@ def build_ledger(
                 quote=quote,
                 tier=ev.get("tier") or "",
                 host=host_of(ev.get("url") or ""),
+                publication_status=publication_status(ev),
             )
         )
         n += 1
@@ -349,13 +353,24 @@ def format_source_quality_section(citations: list) -> str:
     for tag in list(by_tag.keys()):
         if tag not in ordered_tags:
             ordered_tags.append(tag)
+    # Multiple tags (e.g. specialist + preprint) can share one display label —
+    # merge their bracket groups onto a single bullet instead of repeating
+    # the same "**Label**:" line once per tag.
+    label_order: list[str] = []
+    label_groups: dict[str, list[str]] = {}
     for tag in ordered_tags:
         nums = by_tag.get(tag) or []
         if not nums:
             continue
         label = INLINE_TO_BAND_LABEL.get(tag) or tag.replace("_", " ").title()
-        group = ", ".join(f"{n} {tag}".strip() for n in sorted(set(nums)))
-        lines.append(f"- **{label}**: [{group}]")
+        group = ", ".join(str(n) for n in sorted(set(nums)))
+        bracket = f"[{group} {tag}]"
+        if label not in label_groups:
+            label_groups[label] = []
+            label_order.append(label)
+        label_groups[label].append(bracket)
+    for label in label_order:
+        lines.append(f"- **{label}**: {' '.join(label_groups[label])}")
     if other:
         group = ", ".join(str(n) for n in sorted(set(other)))
         lines.append(f"- **Other sources**: [{group}]")

@@ -1,5 +1,5 @@
 from app.graph.state import merge_unique_evidence
-from app.report.memo_structure import apply_source_quality_from_ledger
+from app.report.memo_structure import _polish_source_quality_section
 
 
 def test_merge_unique_evidence_keeps_longer_full_text():
@@ -41,10 +41,7 @@ Run limits.
         {"n": 8, "url": "https://doi.org/10.1000/peer2", "tier": "peer_reviewed"},
         {"n": 11, "url": "https://pubmed.ncbi.nlm.nih.gov/1", "tier": "specialist_research"},
     ]
-    evidence = [
-        {"url": c["url"], "tier": c["tier"], "title": f"Source {c['n']}"} for c in citations
-    ]
-    out = apply_source_quality_from_ledger(md, citations, evidence)
+    out = _polish_source_quality_section(md, citations)
     sq = out.split("## Limitations")[0]
     assert "[1, 2 preprint]" in sq
     assert "[7, 8 peer]" in sq

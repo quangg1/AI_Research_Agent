@@ -156,8 +156,8 @@ def test_source_quality_rebuilt_from_ledger_when_citations_given():
     ]
     out = consolidate_memo_structure(md, citations=citations)
     sq = out.split("## References")[0]
-    assert "[1 peer, 2 peer]" in sq
-    assert "[3 preprint, 4 preprint]" in sq
+    assert "[1, 2 peer]" in sq
+    assert "[3, 4 preprint]" in sq
     assert not re.search(r":\s*\n", sq)
 
 

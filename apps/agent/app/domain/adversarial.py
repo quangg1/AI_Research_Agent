@@ -95,7 +95,13 @@ def results_section_blob(full_text: str, *, max_len: int = 6000) -> str:
     match = _RESULTS_HEADING_RE.search(text)
     if not match:
         return ""
-    return text[match.start() : match.start() + max_len]
+    end = match.start() + max_len
+    # Stop at the next heading (e.g. "## Related work") so its content never
+    # leaks into the Results/Experiments blob just because it fits max_len.
+    next_heading = re.search(r"(?im)^[ \t]*#{1,4}\s+\S", text[match.end() :])
+    if next_heading:
+        end = min(end, match.end() + next_heading.start())
+    return text[match.start() : end]
 
 
 # Patterns for validating grounded quantitative claims
@@ -653,6 +659,18 @@ def _metric_condition(window: str) -> str:
         return "baseline condition"
     if re.search(r"\bkv[- ]?cache|multi[- ]?node|cluster|gpu\s*memory|hbm\b", low):
         return "scalability / systems regime"
+    # Fall back to whatever the general "on/with/for X" condition phrase
+    # names — covers named benchmarks (SWE-bench, MMLU) and splits (OOD
+    # slices, held-out set) that don't match one of the specific labels
+    # above. Reuses the same detectors _has_valid_metric_and_condition
+    # already used to admit this row, so a row that passes the gate never
+    # gets silently dropped here for "no condition" right after.
+    bench = BENCHMARK_RE.search(window or "")
+    if bench:
+        return bench.group(0).strip()
+    cond = CONDITION_RE.search(window or "")
+    if cond:
+        return cond.group(0).strip()
     return "condition not stated in excerpt"
 
 
@@ -702,7 +720,9 @@ def _has_valid_metric_and_condition(token: str, window: str) -> bool:
         r"baseline|ablation(?:\s+study)?|condition|setting|scenario|"
         r"hard\s+task|easy\s+task|all\s+tasks|subset|"
         r"gpu|node|cluster|kv[- ]cache|batch\s+size|model\s+size|"
-        r"vs\.?|versus|compared\s+to|against\s+"
+        r"vs\.?|versus|compared\s+to|against\s+|"
+        r"held[- ]out|\bood\b|out[- ]of[- ]distribution|slices?|split|"
+        r"validation|dev\s+set|train(?:ing)?\s+set"
         r")\b",
         w,
         re.I,

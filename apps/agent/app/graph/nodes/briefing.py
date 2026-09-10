@@ -52,6 +52,11 @@ def _brief_with_contract(query: str, brief: ResearchBrief) -> dict:
 
 async def briefing_node(state: ResearchState) -> dict:
     """Build an editable research brief, then pause for user confirm (Deep Research style)."""
+    from app.domain.tenancy import missing_org_guard
+
+    blocked = missing_org_guard(state)
+    if blocked:
+        return blocked
     if state.get("brief_confirmed"):
         return {
             "status": "researching",
@@ -114,6 +119,11 @@ async def briefing_node(state: ResearchState) -> dict:
 
 def briefing_node_auto(state: ResearchState) -> dict:
     """Non-interactive briefing for eval / CLI (no interrupt)."""
+    from app.domain.tenancy import missing_org_guard
+
+    blocked = missing_org_guard(state)
+    if blocked:
+        return blocked
     query = state["query"]
     if out_of_scope(query):
         return {

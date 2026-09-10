@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
     agent_shared_key: str = ""
     app_env: str = "development"
+    # Multi-tenant fail-closed guard (domain/tenancy.py): when true, a run
+    # with no org_id is rejected instead of proceeding anonymously. Off by
+    # default for single-tenant/self-hosted deployments.
+    require_org_id: bool = False
 
     langchain_api_key: str = ""
     langchain_tracing_v2: bool = False

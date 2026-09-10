@@ -182,6 +182,8 @@ def enforce_report_integrity(
             "Some citation markers could not be resolved and were removed before publish."
         )
 
+    body = _strip_misplaced_threshold_disclaimer(body)
+
     quant = _section(body, "Quantitative findings")
     quant_absent = _quantitative_data_absent(quant)
 
@@ -492,6 +494,47 @@ def _tone_mismatch(text: str) -> str:
             "admits division — soften lead claims or elevate the caveat in At a glance."
         )
     return ""
+
+
+_THRESHOLD_DISCLAIMER_RE = re.compile(
+    r"[^.\n]*\bevidence[- ]backed threshold[^.\n]*\.\s*", re.I
+)
+
+
+def _strip_misplaced_threshold_disclaimer(body: str) -> str:
+    """Strip a "no evidence-backed threshold" disclaimer sentence that
+    landed outside ### Empirical cutoffs, or that showed up even though
+    Empirical cutoffs already has real, cited thresholds — the writer
+    prompt hands the model a quotable fallback line for when nothing was
+    measured, and it sometimes adds it as a reflexive disclaimer even when
+    real cutoffs are already listed (real run: 2 real cited thresholds
+    under Empirical cutoffs, then this disclaimer tacked on after
+    Engineering heuristics — pure noise at that point).
+    """
+    match = re.search(r"^##\s+Decision rule\s*$", body, re.I | re.M)
+    if not match:
+        return body
+    start = match.end()
+    rest = body[start:]
+    nxt = re.search(r"^##\s+", rest, re.M)
+    end = start + (nxt.start() if nxt else len(rest))
+    section = body[start:end]
+
+    empirical = re.search(r"^###\s+Empirical cutoffs[^\n]*\n(.*?)(?=^###\s+|\Z)", section, re.I | re.M | re.S)
+    empirical_has_real_cutoff = bool(empirical and re.search(r"\[\s*\d", empirical.group(1)))
+    empirical_span = empirical.span() if empirical else (0, 0)
+
+    def _maybe_strip(m: re.Match) -> str:
+        # Leave it alone if it's inside ### Empirical cutoffs AND that
+        # subsection has no other real cited threshold to speak for itself.
+        if empirical_span[0] <= m.start() < empirical_span[1] and not empirical_has_real_cutoff:
+            return m.group(0)
+        return ""
+
+    new_section = _THRESHOLD_DISCLAIMER_RE.sub(_maybe_strip, section)
+    if new_section == section:
+        return body
+    return body[:start] + new_section + body[end:]
 
 
 def _label_illustrative_section(body: str, heading: str) -> str:

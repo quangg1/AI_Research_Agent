@@ -15,15 +15,33 @@ TOOL_AGENTS = {"search", "scholar", "docs"}
 
 
 def collector_node(state: ResearchState) -> dict:
-    evidence = tag_evidence_roles(state.get("evidence") or [], state.get("query") or "")
+    query = state.get("query") or ""
+    evidence = tag_evidence_roles(state.get("evidence") or [], query)
     budget = budget_from(state)
     ran = [getattr(a, "value", a) for a in (state.get("agents_to_run") or [])]
     tool_agents = [a for a in ran if a in TOOL_AGENTS]
     external_calls = _latest_external_calls(state.get("traces") or [])
     charged_calls = sum(external_calls) if external_calls else len(tool_agents)
     budget.used_retrieval_calls += charged_calls
+
+    mandatory_fetched = 0
+    if budget.remaining_enrich_calls > 0:
+        from app.domain.research_contract import fetch_missing_mandatory_sources
+
+        fetched = fetch_missing_mandatory_sources(query, evidence)
+        for row in fetched[: budget.remaining_enrich_calls]:
+            evidence.append(row)
+            budget.used_enrich_calls += 1
+            mandatory_fetched += 1
+
     budget.sync_totals()
-    event("collector", n=len(evidence), used_tool_calls=budget.used_tool_calls, used_retrieval=budget.used_retrieval_calls)
+    event(
+        "collector",
+        n=len(evidence),
+        used_tool_calls=budget.used_tool_calls,
+        used_retrieval=budget.used_retrieval_calls,
+        mandatory_sources_fetched=mandatory_fetched,
+    )
     return {
         "evidence": evidence,
         "status": "collected",
@@ -34,6 +52,7 @@ def collector_node(state: ResearchState) -> dict:
                 "n": len(evidence),
                 "agents_ran": tool_agents,
                 "external_calls": charged_calls,
+                "mandatory_sources_fetched": mandatory_fetched,
             }
         ],
     }

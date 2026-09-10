@@ -277,3 +277,59 @@ def test_audit_allows_balanced_quantitative_backbone():
     ]
     notes = audit_memo_integrity(memo, citations=citations)
     assert not any("Band C" in n for n in notes)
+
+
+def test_enforce_strips_disclaimer_misplaced_after_real_cutoffs():
+    """The writer prompt hands the model a quotable 'Evidence-backed
+    threshold: none.' fallback for when nothing was measured — real run
+    showed it tacked on after Engineering heuristics even though Empirical
+    cutoffs already listed 2 real cited thresholds above it."""
+    body = (
+        "## Quantitative findings\n\n| Metric | Value |\n|---|---|\n| VRAM reduction | 75% [1] |\n\n"
+        "## Decision rule\n\n"
+        "### Empirical cutoffs (sources only)\n\n"
+        "- VRAM Threshold: <=12 GB requires QLoRA [1 preprint].\n"
+        "- Compute Capability: requires > 7.5 [4 primary].\n\n"
+        "### Engineering heuristics (AI suggestion — not from papers)\n\n"
+        "- Target all linear layers, not just query/value.\n\n"
+        "Evidence-backed threshold: none in collected sources — use Engineering heuristics "
+        "below for design guidance only.\n\n"
+        "## Uncertainties & gaps\n\nSomething.\n"
+    )
+    out = enforce_report_integrity(
+        body_markdown=body,
+        executive_summary="Summary.",
+        decision_rule="- Prefer QLoRA under 12GB.",
+        at_a_glance="",
+        citations=[{"n": 1, "url": "https://arxiv.org/abs/1"}],
+        critic={"depth_score": {"score": 80, "label": "deep"}},
+        limitations=[],
+    )
+    assert "evidence-backed threshold" not in out["body_markdown"].lower()
+    assert "VRAM Threshold" in out["body_markdown"]
+
+
+def test_enforce_keeps_disclaimer_when_no_real_cutoff_exists():
+    body = (
+        "## Decision rule\n\n"
+        "### Empirical cutoffs (sources only)\n\n"
+        "Evidence-backed threshold: none in collected sources.\n\n"
+        "### Engineering heuristics (AI suggestion — not from papers)\n\n"
+        "- Some qualitative heuristic.\n\n"
+        "## Uncertainties & gaps\n\nSomething.\n"
+    )
+    out = enforce_report_integrity(
+        body_markdown=body,
+        executive_summary="Summary.",
+        decision_rule=(
+            "### Empirical cutoffs (sources only)\n\n"
+            "Evidence-backed threshold: none in collected sources.\n\n"
+            "### Engineering heuristics (AI suggestion — not from papers)\n\n"
+            "- Some qualitative heuristic."
+        ),
+        at_a_glance="",
+        citations=[],
+        critic={"depth_score": {"score": 80, "label": "deep"}},
+        limitations=[],
+    )
+    assert "evidence-backed threshold" in out["body_markdown"].lower()

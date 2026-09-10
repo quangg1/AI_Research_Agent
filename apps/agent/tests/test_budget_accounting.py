@@ -68,3 +68,46 @@ def test_collector_falls_back_to_planned_tool_agents():
 
     assert result["budget"]["used_retrieval_calls"] == 2
     assert result["budget"]["used_tool_calls"] == 2
+
+
+def test_collector_fetches_mandatory_sources_for_lora_qlora_query(monkeypatch):
+    fetched: list[str] = []
+
+    def fake_fetch(url: str, title: str = "", body: str = "") -> dict:
+        fetched.append(url)
+        return {"id": f"ev_{len(fetched)}", "url": url, "title": title, "snippet": "x" * 100}
+
+    monkeypatch.setattr("app.tools.fetch.evidence_from_url", fake_fetch)
+    state = {
+        "query": "Compare LoRA and QLoRA peak VRAM for 7B models",
+        "evidence": [],
+        "agents_to_run": ["search"],
+        "budget": Budget().model_dump(),
+        "traces": [{"node": "search", "external_calls": 1}],
+    }
+
+    result = collector_node(state)
+
+    assert len(fetched) == 2
+    assert result["budget"]["used_enrich_calls"] == 2
+    assert result["traces"][0]["mandatory_sources_fetched"] == 2
+    assert len(result["evidence"]) == 2
+
+
+def test_collector_skips_mandatory_fetch_for_non_lora_query(monkeypatch):
+    monkeypatch.setattr(
+        "app.tools.fetch.evidence_from_url",
+        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("should not fetch")),
+    )
+    state = {
+        "query": "test",
+        "evidence": [],
+        "agents_to_run": ["search"],
+        "budget": Budget().model_dump(),
+        "traces": [{"node": "search", "external_calls": 1}],
+    }
+
+    result = collector_node(state)
+
+    assert result["budget"]["used_enrich_calls"] == 0
+    assert result["traces"][0]["mandatory_sources_fetched"] == 0

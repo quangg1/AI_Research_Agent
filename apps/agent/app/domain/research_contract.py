@@ -387,6 +387,40 @@ def mandatory_sources_present(
     return missing
 
 
+def fetch_missing_mandatory_sources(query: str, evidence: list[dict] | None = None) -> list[dict]:
+    """Directly fetch Hu et al. / Dettmers et al. by their known arXiv URLs
+    when a LoRA/QLoRA query hasn't turned them up through normal search.
+
+    memo_gate.py's mandatory-source check only audits after the fact and
+    either loops back to the planner (hoping a generic followup query
+    happens to surface these two specific well-known papers) or hard-blocks
+    publish — across several real runs neither of those actually got them
+    into the ledger. These are two fixed, known-good arXiv IDs; fetching
+    them directly is more reliable than hoping retrieval stumbles onto them.
+    """
+    if not LORA_QLORA_RE.search(query or ""):
+        return []
+    missing = mandatory_sources_present(
+        ResearchContract(query=query, mandatory_sources=list(MANDATORY_LORA_QLORA_SOURCES)),
+        citations=[],
+        evidence=evidence or [],
+    )
+    if not missing:
+        return []
+    from app.tools.fetch import evidence_from_url
+
+    fetched: list[dict] = []
+    for src in missing:
+        hint = (src.get("url_hint") or "").strip()
+        if not hint:
+            continue
+        url = hint if hint.startswith("http") else f"https://{hint}"
+        row = evidence_from_url(url, title=src.get("label") or "")
+        if row:
+            fetched.append(row)
+    return fetched
+
+
 # --- Contract-aligned must-answer (LoRA / QLoRA / FT tradeoff queries) --------
 
 POISON_CRITICAL_SLOT_RE = re.compile(

@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.domain.research_contract import (
     compile_research_contract,
     evidence_fails_scope_assessors,
+    fetch_missing_mandatory_sources,
     filter_evidence_for_contract,
     mandatory_sources_present,
     topic_relevance_score,
@@ -126,3 +127,42 @@ def test_mandatory_sources_detection():
         {"url": "https://arxiv.org/abs/2106.09685", "title": "LoRA Hu"},
     ]
     assert mandatory_sources_present(c, evidence=evidence) == []
+
+
+def test_fetch_missing_mandatory_sources_fetches_both_when_absent(monkeypatch):
+    """memo_gate.py's mandatory-source check only audits after the fact and
+    loops back to a generic followup or hard-blocks — across several real
+    runs neither actually got Hu/Dettmers into the ledger. Fetch the two
+    known-good arXiv URLs directly instead of hoping search stumbles onto
+    them."""
+    fetched_urls: list[str] = []
+
+    def fake_fetch(url: str, title: str = "", body: str = "") -> dict:
+        fetched_urls.append(url)
+        return {"id": f"ev_{len(fetched_urls)}", "url": url, "title": title, "snippet": "x" * 100}
+
+    monkeypatch.setattr("app.tools.fetch.evidence_from_url", fake_fetch)
+    rows = fetch_missing_mandatory_sources(QUERY_7B, evidence=[])
+    assert len(rows) == 2
+    assert any("2106.09685" in u for u in fetched_urls)
+    assert any("2305.14314" in u for u in fetched_urls)
+
+
+def test_fetch_missing_mandatory_sources_skips_when_already_present(monkeypatch):
+    monkeypatch.setattr(
+        "app.tools.fetch.evidence_from_url",
+        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("should not fetch")),
+    )
+    evidence = [
+        {"url": "https://arxiv.org/abs/2305.14314", "title": "QLoRA Dettmers"},
+        {"url": "https://arxiv.org/abs/2106.09685", "title": "LoRA Hu"},
+    ]
+    assert fetch_missing_mandatory_sources(QUERY_7B, evidence=evidence) == []
+
+
+def test_fetch_missing_mandatory_sources_skips_non_lora_query(monkeypatch):
+    monkeypatch.setattr(
+        "app.tools.fetch.evidence_from_url",
+        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("should not fetch")),
+    )
+    assert fetch_missing_mandatory_sources("How does vLLM's PagedAttention work?", evidence=[]) == []

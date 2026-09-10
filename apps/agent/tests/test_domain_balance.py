@@ -61,14 +61,13 @@ def test_balanced_evidence_pool_limits_code_papers():
     ]
     
     balanced = _balanced_evidence_pool(papers, max_code_ratio=0.40)
-    
-    # Count code papers in result
-    code_count = sum(1 for p in balanced if "github" in p["url"])
-    code_ratio = code_count / len(balanced)
-    
-    assert len(balanced) == 10, "Should return same total count"
-    assert code_ratio <= 0.40, f"Code ratio {code_ratio:.2%} exceeds 40% limit"
-    assert code_count == 4, f"Expected 4 code papers (40% of 10), got {code_count}"
+
+    assert len(balanced) == 10, "Should never drop evidence — reorder, don't discard"
+    # Non-code papers come first; the first 4 (40% of 10) code papers keep
+    # their relative order ahead of the rest, which are backfilled after.
+    assert all("github" not in p["url"] for p in balanced[:2])
+    code_papers = [p for p in balanced if "github" in p["url"]]
+    assert [p["title"] for p in code_papers[:4]] == ["Code A", "Code B", "Code C", "Code D"]
 
 
 def test_balanced_evidence_pool_preserves_ranking_within_domains():
@@ -82,10 +81,11 @@ def test_balanced_evidence_pool_preserves_ranking_within_domains():
     ]
     
     balanced = _balanced_evidence_pool(papers, max_code_ratio=0.40)
-    
-    # Check that first 2 code papers are Code 1 and Code 2 (preserved order)
+
+    # Nothing dropped, but the first 2 (40% of 5) code papers keep their
+    # relative order ahead of the rest.
     code_papers = [p for p in balanced if "github" in p["url"]]
-    assert len(code_papers) == 2, "Should keep 2/5 = 40% code papers"
+    assert len(code_papers) == 3, "Should never drop evidence — reorder, don't discard"
     assert code_papers[0]["title"] == "Code 1", "Should preserve ranking"
     assert code_papers[1]["title"] == "Code 2", "Should preserve ranking"
 

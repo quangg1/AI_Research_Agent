@@ -184,21 +184,14 @@ def _balanced_evidence_pool(papers: list[dict], max_code_ratio: float = Retrieva
         f"theory={len(theory_papers)}, benchmark={len(benchmark_papers)}, docs={len(doc_papers)}"
     )
     
-    # NEW STRATEGY: Build balanced pool without backfill violation
+    # Rank, never drop — see the matching comment in scholar.py's
+    # _balanced_evidence_pool (same fix, same reasoning: dropping excess
+    # code papers used to shrink the pool instead of just reordering it).
     balanced = []
     balanced.extend(theory_papers)
     balanced.extend(benchmark_papers)
     balanced.extend(doc_papers)
-    
-    non_code_count = len(balanced)
-    
-    # Calculate max code papers to reach max_code_ratio
-    if non_code_count > 0:
-        max_code_count = int(non_code_count * (max_code_ratio / (1 - max_code_ratio)))
-    else:
-        max_code_count = int(total * max_code_ratio)
-    
-    balanced.extend(code_papers[:max_code_count])
+    balanced.extend(code_papers)
     
     balanced_code = sum(1 for p in balanced if _classify_paper_domain(p) == "code")
     code_ratio = balanced_code / len(balanced) if balanced else 0

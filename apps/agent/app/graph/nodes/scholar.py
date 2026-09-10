@@ -125,27 +125,19 @@ def _balanced_evidence_pool(papers: list[dict], max_code_ratio: float = Retrieva
         f"theory={len(theory_papers)}, benchmark={len(benchmark_papers)}, docs={len(doc_papers)}"
     )
     
-    # NEW STRATEGY: Build balanced pool without backfill violation
-    # 1. Add all non-code papers (they're diverse and valuable)
+    # Rank, never drop: put non-code papers first, then code papers within
+    # the target ratio (preserving their ranking), then any remaining code
+    # papers backfilled at the end. Evidence is scarce and expensive to
+    # retrieve — capping the ratio by DROPPING excess code papers used to
+    # shrink a 10-source pool down to 3 when there simply weren't enough
+    # non-code sources to hit the ratio honestly. Domain balance should bias
+    # ranking order, not starve the pool.
     balanced = []
     balanced.extend(theory_papers)
     balanced.extend(benchmark_papers)
     balanced.extend(doc_papers)
-    
-    non_code_count = len(balanced)
-    
-    # 2. Calculate how many code papers to add to reach max_code_ratio
-    # If max_code_ratio = 0.4, then: code / (code + non_code) = 0.4
-    # Solving: code = 0.4 * (code + non_code) => code = (0.4 / 0.6) * non_code
-    if non_code_count > 0:
-        max_code_count = int(non_code_count * (max_code_ratio / (1 - max_code_ratio)))
-    else:
-        # Edge case: all papers are code (100% skew)
-        # Cap at original max_code_ratio of total
-        max_code_count = int(total * max_code_ratio)
-    
-    # 3. Add code papers up to calculated limit (preserve ranking)
-    balanced.extend(code_papers[:max_code_count])
+
+    balanced.extend(code_papers)
     
     # Log balanced distribution
     balanced_code = sum(1 for p in balanced if _classify_paper_domain(p) == "code")

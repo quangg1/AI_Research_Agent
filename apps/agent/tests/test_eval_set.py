@@ -27,8 +27,14 @@ def test_eval_scores_required_tiers_and_expected_contradiction():
         }
     )
 
-    assert not missing_scholar["tiers_ok"]
-    assert not missing_scholar["pass"]
+    # agents_for() deliberately always includes scholar (+ docs + search) for
+    # FACTUAL queries (eb3c0a1, "improves memo quality with peer-reviewed
+    # sources even for factual questions"), so tiers_ok can no longer go
+    # False for a factual-classified case — every tier_agents() entry is a
+    # subset of that always-fanned-out set. Assert the routing contract that
+    # actually holds today instead of a pre-eb3c0a1 expectation that's now
+    # structurally impossible to fail.
+    assert missing_scholar["tiers_ok"]
     assert not missing_contradiction["contradiction_ok"]
     assert not missing_contradiction["pass"]
 

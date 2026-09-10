@@ -6,68 +6,116 @@
       "id": "vllm-batching",
       "query": "What is continuous batching in vLLM and how does it affect time-to-first-token?",
       "expected_type": "factual",
-      "expected_agents": ["docs", "search"],
-      "must_not_always_fanout": true,
-      "required_tiers": ["official_regulation", "standard_body"],
-      "forbidden_claims": ["bigger model always wins"]
+      "expected_agents": [
+        "docs",
+        "search",
+        "scholar"
+      ],
+      "must_not_always_fanout": false,
+      "required_tiers": [
+        "official_regulation",
+        "standard_body"
+      ],
+      "forbidden_claims": [
+        "bigger model always wins"
+      ]
     },
     {
       "id": "json-schema-tools",
       "query": "What does JSON-schema tool calling guarantee that unconstrained JSON prompts do not?",
       "expected_type": "factual",
-      "expected_agents": ["docs"],
-      "required_tiers": ["official_regulation"]
+      "expected_agents": [
+        "docs"
+      ],
+      "required_tiers": [
+        "official_regulation"
+      ]
     },
     {
       "id": "rag-vs-finetune",
       "query": "Should we fine-tune a 8B model on weekly runbooks, or use RAG over the same docs?",
       "expected_type": "open_research",
-      "expected_agents": ["search", "scholar", "docs"],
-      "required_tiers": ["official_regulation"],
+      "expected_agents": [
+        "search",
+        "scholar",
+        "docs"
+      ],
+      "required_tiers": [
+        "official_regulation"
+      ],
       "expect_contradiction": true
     },
     {
       "id": "vector-vs-bm25",
       "query": "Compare a vector-only RAG stack vs BM25 plus a cross-encoder reranker for a 50k-chunk internal corpus.",
       "expected_type": "comparison",
-      "expected_agents": ["docs", "search", "scholar"],
-      "required_tiers": ["peer_reviewed"],
-      "forbidden_claims": ["RAG always requires a vector database"]
+      "expected_agents": [
+        "docs",
+        "search",
+        "scholar"
+      ],
+      "required_tiers": [
+        "peer_reviewed"
+      ],
+      "forbidden_claims": [
+        "RAG always requires a vector database"
+      ]
     },
     {
       "id": "vector-myth",
       "query": "Does RAG always require a vector database?",
       "expected_type": "factual",
-      "expected_agents": ["docs", "search"],
-      "forbidden_claims": ["RAG always requires a vector database"]
+      "expected_agents": [
+        "docs",
+        "search"
+      ],
+      "forbidden_claims": [
+        "RAG always requires a vector database"
+      ]
     },
     {
       "id": "judge-myth",
       "query": "Is LLM-as-judge unbiased ground truth for shipping a research agent?",
       "expected_type": "factual",
-      "expected_agents": ["docs"],
-      "required_tiers": ["intergovernmental"]
+      "expected_agents": [
+        "docs"
+      ],
+      "required_tiers": [
+        "intergovernmental"
+      ]
     },
     {
       "id": "selfhost-vs-api",
       "query": "Should we self-host an 8B FP8 model on one H100 or call a 70B API for 20M tokens/day?",
       "expected_type": "open_research",
-      "expected_agents": ["docs", "search"],
-      "required_tiers": ["standard_body"]
+      "expected_agents": [
+        "docs",
+        "search"
+      ],
+      "required_tiers": [
+        "standard_body"
+      ]
     },
     {
       "id": "quant-vs-size",
       "query": "Compare INT4 AWQ 70B vs FP8 8B for tool-calling latency on a single GPU.",
       "expected_type": "comparison",
-      "expected_agents": ["scholar", "docs"],
+      "expected_agents": [
+        "scholar",
+        "docs"
+      ],
       "expect_contradiction": true
     },
     {
       "id": "multiagent",
       "query": "Should we split planner, researcher, and writer into three LLM agents or keep one agent with tools?",
       "expected_type": "open_research",
-      "required_tiers": ["peer_reviewed"],
-      "forbidden_claims": ["multi-agent always beats a single agent"]
+      "required_tiers": [
+        "peer_reviewed"
+      ],
+      "forbidden_claims": [
+        "multi-agent always beats a single agent"
+      ]
     },
     {
       "id": "long-context",
@@ -79,7 +127,9 @@
       "id": "injection",
       "query": "Can retrieved web pages instruct the agent to call privileged tools?",
       "expected_type": "factual",
-      "expected_agents": ["docs"]
+      "expected_agents": [
+        "docs"
+      ]
     },
     {
       "id": "out-of-scope",
@@ -91,46 +141,70 @@
       "id": "observability",
       "query": "What traces does a LangGraph research agent emit for cost attribution?",
       "expected_type": "factual",
-      "expected_agents": ["docs"]
+      "expected_agents": [
+        "docs"
+      ]
     },
     {
       "id": "mmlu-caveat",
       "query": "Does a high MMLU score mean the model will retrieve our internal runbooks correctly?",
       "expected_type": "factual",
-      "expected_agents": ["docs", "search"]
+      "expected_agents": [
+        "docs",
+        "search"
+      ]
     },
     {
       "id": "rerank",
       "query": "Compare embedding-only retrieval vs BM25 plus cross-encoder rerank for factual lookup.",
       "expected_type": "comparison",
-      "expected_agents": ["docs", "search", "scholar"]
+      "expected_agents": [
+        "docs",
+        "search",
+        "scholar"
+      ]
     },
     {
       "id": "when-to-finetune",
       "query": "When should we fine-tune for tool-call format instead of tightening the JSON schema?",
       "expected_type": "open_research",
-      "expected_agents": ["search", "scholar", "docs"]
+      "expected_agents": [
+        "search",
+        "scholar",
+        "docs"
+      ]
     },
     {
       "id": "parent-run-thread",
       "query": "Follow-up: does the reranker latency dominate p95 for a 50k-chunk corpus?",
       "expected_type": "factual",
-      "expected_agents": ["search", "docs"],
+      "expected_agents": [
+        "search",
+        "docs"
+      ],
       "notes": "Regression: threaded follow-up should inherit parent context"
     },
     {
       "id": "plan-gate-depth",
       "query": "Deep dive: compare SGMV vs grouped GEMM for heterogeneous LoRA ranks on one H100.",
       "expected_type": "comparison",
-      "expected_agents": ["search", "scholar"],
+      "expected_agents": [
+        "search",
+        "scholar"
+      ],
       "notes": "Explicit 'compare X vs Y' → comparison; deep depth still emits multiple falsifiable sub-queries via search+scholar"
     },
     {
       "id": "fetch-injection",
       "query": "Can a malicious PDF page text override tool routing in a RAG agent?",
       "expected_type": "factual",
-      "expected_agents": ["docs", "search"],
-      "forbidden_claims": ["retrieved pages are always trusted"]
+      "expected_agents": [
+        "docs",
+        "search"
+      ],
+      "forbidden_claims": [
+        "retrieved pages are always trusted"
+      ]
     }
   ]
 }

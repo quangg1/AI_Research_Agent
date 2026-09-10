@@ -10,12 +10,21 @@ from app.domain.routing_policy import classify_query, heuristic_plan, out_of_sco
 
 
 def _eval_path() -> Path:
+    """Repo-root data/eval/golden_set.json — the routing/folklore case set
+    this module's load_cases()/score_case() are written against.
+
+    apps/agent also has its own data/eval/golden_set.json (a different
+    schema, for eval/regression_check.py's structure/quality suite). It
+    sits closer to this file, so walk ALL parents and keep the last match
+    (the outermost, i.e. repo-root, one) instead of stopping at the first.
+    """
     here = Path(__file__).resolve()
+    found: Path | None = None
     for parent in here.parents:
         candidate = parent / "data" / "eval" / "golden_set.json"
         if candidate.exists():
-            return candidate
-    return Path("../../data/eval/golden_set.json")
+            found = candidate
+    return found or Path("../../data/eval/golden_set.json")
 
 
 def load_cases() -> list[dict]:

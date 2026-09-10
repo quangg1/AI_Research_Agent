@@ -150,6 +150,15 @@ def verify_against_sources(
             status, note = "unsupported", str(
                 topic_scope.get("note") or "Source is off-scope for the asked subject."
             )
+        elif locator.found and missing_nums:
+            # The cited quote genuinely exists in the source, but the claim
+            # asserts a number the source doesn't — a more specific, more
+            # useful diagnosis than the generic "ungrounded" span_gate would
+            # give below for the same claim (its number-mismatch check would
+            # otherwise never get consulted, since span_gate about a claim
+            # asserting the wrong number naturally reads as "no matching
+            # span" too).
+            status, note = "wrong_number", f"Numbers not found in source: {', '.join(sorted(missing_nums)[:4])}."
         elif span_gate and span_gate.get("status") == "ungrounded":
             status, note = "unsupported", str(span_gate.get("note") or "Claim lacks a grounded 1-2 sentence source span.")
         elif kind in {"inferred", "speculative", "recommendation"} and not locator.found:

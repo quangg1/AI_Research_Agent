@@ -704,7 +704,8 @@ def _has_valid_metric_and_condition(token: str, window: str) -> bool:
     # Bare percentages without outcome metric context
     if re.search(r"^\d+(?:\.\d+)?%$", t.strip()) and not re.search(
         r"accuracy|error|precision|recall|improvement|reduction|increase|decrease|"
-        r"pass@\d+|success|failure|correct|incorrect",
+        r"pass@\d+|success|failure|correct|incorrect|"
+        r"completion|complet(?:ed|es)|win\s*rate|score|solved|resolved",
         w,
     ):
         return False
@@ -713,12 +714,12 @@ def _has_valid_metric_and_condition(token: str, window: str) -> bool:
     # Require specific named benchmarks, datasets, or experimental setups
     has_condition = bool(re.search(
         r"\b("
-        r"dataset|benchmark|task\s+(?:subset|set)|test\s+set|evaluation\s+(?:set|setup)|"
-        r"on\s+(?:the\s+)?(?:\w+\s+)?(?:dataset|benchmark|task)|"
+        r"datasets?|benchmarks?|tasks?\s+(?:subsets?|sets?)|test\s+sets?|evaluation\s+(?:sets?|setups?)|"
+        r"on\s+(?:the\s+)?(?:\w+\s+)?(?:datasets?|benchmarks?|tasks?)|"
         r"swe-bench|humaneval|mbpp|gaia|webarena|browsergym|agentbench|"
         r"mmlu|gpqa|math|gsm8k|hotpotqa|triviaqa|livecodebench|"
         r"baseline|ablation(?:\s+study)?|condition|setting|scenario|"
-        r"hard\s+task|easy\s+task|all\s+tasks|subset|"
+        r"hard\s+tasks?|easy\s+tasks?|all\s+tasks|subsets?|"
         r"gpu|node|cluster|kv[- ]cache|batch\s+size|model\s+size|"
         r"vs\.?|versus|compared\s+to|against\s+|"
         r"held[- ]out|\bood\b|out[- ]of[- ]distribution|slices?|split|"

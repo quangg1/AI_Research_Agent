@@ -247,8 +247,27 @@ def _planner_sync(state: ResearchState) -> dict:
 
 
 def _cap_sub_queries(subs: list[SubQuery], depth: str, remaining_calls: int) -> list[SubQuery]:
-    cap = min(PLAN_SUBQUERY_CAPS.get(depth, 8), max(1, remaining_calls))
-    return list(subs)[:cap]
+    """Cap sub_queries so the retrieval calls they can actually cost stay
+    within remaining_calls — not just the sub-query count.
+
+    A scholar sub-query costs up to 2 external calls (OpenAlex, then a
+    Semantic Scholar augment call whenever OpenAlex returns <5 results —
+    common, not an edge case). Counting 1 sub-query as 1 call let iteration
+    1 alone spend past the DEEP_RESERVE_CALLS reserve meant for the critic
+    followup loop, whenever enough sub-queries landed on scholar.
+    """
+    count_cap = PLAN_SUBQUERY_CAPS.get(depth, 8)
+    budget = max(1, remaining_calls)
+    out: list[SubQuery] = []
+    for sub in subs:
+        if len(out) >= count_cap:
+            break
+        cost = 2 if sub.agent == AgentName.SCHOLAR else 1
+        if out and budget - cost < 0:
+            break
+        budget -= cost
+        out.append(sub)
+    return out
 
 
 def _reserve_calls(depth: str, iteration: int) -> int:

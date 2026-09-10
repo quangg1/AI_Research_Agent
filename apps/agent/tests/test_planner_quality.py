@@ -1,6 +1,6 @@
 from app.domain.schema import AgentName, Budget
 from app.graph.nodes.enrich import _enrich_cap, _prioritize_enrich_urls
-from app.graph.nodes.planner import _followups_from_prior, _merge_subqueries, _planner_sync, _reserve_calls
+from app.graph.nodes.planner import _cap_sub_queries, _followups_from_prior, _merge_subqueries, _planner_sync, _reserve_calls
 from app.domain.adversarial import falsification_queries
 from app.domain.decompose import subquestions_for
 from app.domain.scholar_query import normalize_plan_subqueries
@@ -198,3 +198,32 @@ def test_enrich_prioritizes_framework_official_docs_over_generic_blog():
     ]
     ordered = _prioritize_enrich_urls(evidence, [e["url"] for e in evidence])
     assert ordered[0].startswith("https://microsoft.github.io")
+
+
+def _sq(agent: AgentName, n: int) -> list:
+    from app.domain.schema import SubQuery
+
+    return [SubQuery(agent=agent, question=f"q{i}", rationale="") for i in range(n)]
+
+
+def test_cap_sub_queries_accounts_for_scholar_double_call_cost():
+    """A scholar sub-query can cost 2 external calls (OpenAlex + Semantic
+    Scholar augment, which fires whenever OpenAlex returns <5 results —
+    common, not rare). Capping by raw sub-query count let a single planner
+    pass burn past DEEP_RESERVE_CALLS, the budget iteration 1 is supposed to
+    leave for the critic followup loop."""
+    subs = _sq(AgentName.SCHOLAR, 6)
+    capped = _cap_sub_queries(subs, "deep", remaining_calls=8)
+    assert sum(2 if s.agent == AgentName.SCHOLAR else 1 for s in capped) <= 8
+
+
+def test_cap_sub_queries_still_caps_by_count_for_cheap_agents():
+    subs = _sq(AgentName.SEARCH, 20)
+    capped = _cap_sub_queries(subs, "deep", remaining_calls=28)
+    assert len(capped) <= 12  # PLAN_SUBQUERY_CAPS["deep"]
+
+
+def test_cap_sub_queries_never_returns_empty():
+    subs = _sq(AgentName.SCHOLAR, 3)
+    capped = _cap_sub_queries(subs, "deep", remaining_calls=1)
+    assert len(capped) >= 1

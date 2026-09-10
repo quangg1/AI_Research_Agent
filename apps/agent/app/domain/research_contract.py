@@ -256,6 +256,17 @@ def evidence_fails_scope_assessors(
     if evidence_violates_excludes(ev, c):
         return True
 
+    # topic_relevance_score() already scores HAR/wearable-sensor evidence to
+    # 0.0 for a non-HAR query, but that only affects ranking order — a
+    # ranked-last source still reaches the ledger/dossier when nothing
+    # scores higher, so it still gets cited and drives prose (not just the
+    # quantitative table _sanitize_offtopic_sensor_quant_table already
+    # strips). Make the same signal a hard exclusion here too.
+    from app.domain.offtopic_domains import evidence_is_har_sensor_ood
+
+    if evidence_is_har_sensor_ood(ev, q):
+        return True
+
     blob = " ".join(str(ev.get(k) or "") for k in ("title", "snippet", "quote", "full_text"))
     if len(blob) < 40:
         return False

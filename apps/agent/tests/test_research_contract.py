@@ -88,6 +88,35 @@ def test_pre_cite_filter_drops_preference_clinical_without_vram():
     assert not any(e.get("id") == "pref" for e in kept)
 
 
+def test_pre_cite_filter_drops_har_sensor_paper():
+    """HAR/wearable-sensor papers must not enter the ledger/dossier for an
+    LLM fine-tuning query — topic_relevance_score already ranked them last,
+    but a ranked-last source still got cited when nothing else scored
+    higher (real run: HAR paper cited repeatedly as [1] for LoRA/QLoRA
+    hyperparameter and accuracy claims)."""
+    har = {
+        "id": "har",
+        "title": "Parameter-Efficient Fine-Tuning for HAR: Integrating LoRA and QLoRA into Transformer Models",
+        "snippet": "We apply LoRA and QLoRA to human activity recognition (HAR) using wearable accelerometer and gyroscope sensor data.",
+        "full_text": (
+            "Human activity recognition (HAR) from wearable sensor accelerometer and gyroscope streams. "
+            "LoRA and QLoRA adapters reduce trainable parameters for the HAR classification head."
+        ),
+        "url": "https://arxiv.org/html/2512.17983v1",
+    }
+    good = {
+        "id": "qlora",
+        "title": "QLoRA: Efficient Finetuning of Quantized LLMs",
+        "snippet": "7B QLoRA peak training VRAM fits in roughly 8-10 GB with NF4.",
+        "full_text": "QLoRA on LLaMA 7B with 4-bit NF4. Peak training VRAM around 8-10 GB.",
+        "url": "https://arxiv.org/abs/2305.14314",
+    }
+    assert evidence_fails_scope_assessors(har, QUERY_7B) is True
+    kept = filter_evidence_for_contract([har, good], QUERY_7B)
+    assert not any(e.get("id") == "har" for e in kept)
+    assert any(e.get("id") == "qlora" for e in kept)
+
+
 def test_mandatory_sources_detection():
     c = compile_research_contract(QUERY_7B, {})
     missing = mandatory_sources_present(c, citations=[], evidence=[])

@@ -104,7 +104,58 @@ def audit_memo_integrity(
     body_number_issues = audit_body_numbers(blob, citations=citations, evidence=evidence)
     notes.extend(body_number_issues)
 
+    backbone_note = _low_tier_quantitative_backbone_note(blob, citations)
+    if backbone_note:
+        notes.append(backbone_note)
+
     return notes
+
+
+def _low_tier_quantitative_backbone_note(blob: str, citations: list[dict] | None) -> str:
+    """Flag when the memo's load-bearing numbers trace mostly to Band C
+    (news/vendor/unknown-tier) sources — a "Primary sources 100%" confidence
+    line only reflects host-based role classification (arxiv/github/docs),
+    not the tier of whichever source actually backs each cited figure, so a
+    memo can score full "primary sources" while its Quantitative findings /
+    Key findings numbers are backed almost entirely by an SEO blog or a
+    LinkedIn post the Source quality section itself already tags "unknown".
+    """
+    if not citations:
+        return ""
+    from app.domain.adversarial import quality_band
+
+    tier_by_n: dict[int, str] = {}
+    for c in citations:
+        n = c.get("n") if isinstance(c, dict) else None
+        try:
+            n_int = int(n)
+        except (TypeError, ValueError):
+            continue
+        tier_by_n[n_int] = str(c.get("tier") or "")
+
+    cited: set[int] = set()
+    for heading in ("Quantitative findings", "Key findings"):
+        section = _section(blob, heading)
+        if not section:
+            continue
+        for m in CITE_RE.finditer(section):
+            for part in m.group(1).split(","):
+                digits = re.search(r"\d+", part.strip())
+                if digits:
+                    cited.add(int(digits.group(0)))
+
+    known = [n for n in cited if n in tier_by_n]
+    if len(known) < 2:
+        return ""
+    low_tier = [n for n in known if quality_band(tier_by_n[n]) == "C"]
+    if len(low_tier) / len(known) <= 0.5:
+        return ""
+    return (
+        f"Load-bearing numbers in Quantitative findings / Key findings rely mostly on "
+        f"Band C (unverified/vendor/unknown-tier) sources ({', '.join(f'[{n}]' for n in sorted(low_tier))}) "
+        f"despite a high overall confidence score — treat the specific figures as directional, "
+        f"not authoritative, until corroborated by a primary paper or measured benchmark."
+    )
 
 
 def enforce_report_integrity(

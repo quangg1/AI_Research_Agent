@@ -242,3 +242,38 @@ def test_audit_citation_stacking():
     memo = "Benchmarks include SWE-bench and GAIA [3][12][5][8]."
     notes = audit_memo_integrity(memo)
     assert any("stack" in n.lower() for n in notes)
+
+
+def test_audit_flags_low_tier_quantitative_backbone():
+    """A high confidence score is misleading when the actual cited numbers
+    trace mostly to unknown/vendor-tier sources (real run: VRAM/GLUE figures
+    cited almost entirely to a marketing blog + a LinkedIn post, both tagged
+    'unknown' in Source quality, while the confidence card said "Primary
+    sources 100%")."""
+    memo = (
+        "## Key findings\n\n"
+        "1. Peak VRAM reduction 89% [4].\n"
+        "2. GLUE accuracy 89.5% [5].\n\n"
+        "## Quantitative findings\n\n"
+        "| Metric | Value | Source |\n|---|---|---|\n| VRAM | 89% | [4] |\n"
+    )
+    citations = [
+        {"n": 4, "url": "https://blockchain-council.org/x", "tier": "unknown"},
+        {"n": 5, "url": "https://linkedin.com/x", "tier": ""},
+    ]
+    notes = audit_memo_integrity(memo, citations=citations)
+    assert any("Band C" in n for n in notes)
+
+
+def test_audit_allows_balanced_quantitative_backbone():
+    memo = (
+        "## Key findings\n\n"
+        "1. Peak VRAM reduction 89% [4].\n"
+        "2. GLUE accuracy 89.5% [1].\n"
+    )
+    citations = [
+        {"n": 4, "url": "https://blockchain-council.org/x", "tier": "unknown"},
+        {"n": 1, "url": "https://arxiv.org/abs/2106.09685", "tier": "peer_reviewed"},
+    ]
+    notes = audit_memo_integrity(memo, citations=citations)
+    assert not any("Band C" in n for n in notes)

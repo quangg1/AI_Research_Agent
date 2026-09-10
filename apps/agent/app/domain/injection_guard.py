@@ -31,26 +31,44 @@ _UNTRUSTED_CLOSE = "</untrusted_external_source>"
 _USER_OPEN = "<user_question>"
 _USER_CLOSE = "</user_question>"
 
+# Cyrillic/Greek letters that are visually indistinguishable from Latin ones
+# in most fonts — a classic filter-bypass trick (e.g. Cyrillic "а" U+0430 in
+# "аssistant:"). NFKC does NOT fold these (they're not compatibility-
+# equivalent, just look-alike), so pattern matching needs an explicit map.
+_HOMOGLYPH_FOLD = str.maketrans(
+    "аеорсухАВЕКМНОРСТХ" "αοιρτυ",
+    "aeopcyxABEKMHOPCTX" "aoiptu",
+)
+
 
 def strip_invisible_chars(text: str) -> str:
     return _ZERO_WIDTH.sub(" ", text or "")
 
 
 def normalize_for_injection_scan(text: str) -> str:
-    """NFKC + invisible strip + whitespace collapse for robust pattern matching."""
+    """NFKC + homoglyph fold + invisible strip + whitespace collapse."""
     raw = strip_invisible_chars(text or "")
     raw = unicodedata.normalize("NFKC", raw)
+    raw = raw.translate(_HOMOGLYPH_FOLD)
     return re.sub(r"\s+", " ", raw).strip()
 
 
 def line_has_injection(line: str) -> bool:
-    """True when a single line matches signature or paraphrase control patterns."""
+    """True when text matches signature or paraphrase control patterns.
+
+    Despite the name, callers do pass multi-line text — normalize_for_
+    injection_scan collapses it to one line for the paraphrase checks, but
+    that breaks INJECTION_PATTERNS' line-anchored role-header pattern
+    (^system:/assistant:/...), so also check a homoglyph-folded copy that
+    keeps real newlines.
+    """
     visible = strip_invisible_chars(line)
+    folded = visible.translate(_HOMOGLYPH_FOLD)
     normalized = normalize_for_injection_scan(visible)
     if not normalized:
         return False
     for pattern in INJECTION_PATTERNS:
-        if pattern.search(visible) or pattern.search(normalized):
+        if pattern.search(visible) or pattern.search(normalized) or pattern.search(folded):
             return True
     for pattern in _CONTROL_PHRASE_PATTERNS:
         if pattern.search(normalized):

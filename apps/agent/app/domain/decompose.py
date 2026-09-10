@@ -591,11 +591,16 @@ def rewrite_gap_query(
     use_llm: bool = False,
 ) -> tuple[str, AgentName]:
     """Turn one critic coverage gap into a topic-preserving retrieval query."""
+    from app.domain.injection_guard import sanitize_control_field
+
     goal = user_goal(query) or query or ""
     entities = entity_candidates(goal, limit=5)
     topics = distinctive_terms(goal, limit=8) or content_terms(goal, limit=8)
+    # "followup" can carry critic reasoning derived from untrusted evidence
+    # text — scrub it before it becomes part of a new retrieval query, same
+    # as any other control field crossing into planner/search input.
     gap_text = " ".join(
-        str(gap.get(key) or "").strip()
+        sanitize_control_field(str(gap.get(key) or "").strip())
         for key in ("label", "aspect", "followup")
         if gap.get(key)
     )

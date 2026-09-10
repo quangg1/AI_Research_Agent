@@ -3,11 +3,14 @@ from app.domain.schema import AgentName, Budget, QueryType
 from app.graph.builder import after_critic, after_planner
 
 
-def test_factual_does_not_fan_out_all_three():
+def test_factual_includes_all_three_for_quality():
+    # agents_for() deliberately fans FACTUAL out to docs+search+scholar
+    # (eb3c0a1, "improves memo quality with peer-reviewed sources even for
+    # factual questions") — this used to assert the opposite pre-eb3c0a1.
     q = "What is continuous batching in vLLM and how does it affect time-to-first-token?"
     assert classify_query(q) is QueryType.FACTUAL
     agents = set(agents_for(QueryType.FACTUAL, remaining_calls=12))
-    assert AgentName.SCHOLAR not in agents
+    assert AgentName.SCHOLAR in agents
     assert AgentName.DOCS in agents
 
 

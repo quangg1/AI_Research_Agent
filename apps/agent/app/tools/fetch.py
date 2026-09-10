@@ -20,11 +20,19 @@ from app.observability.logging import logger
 TAG_RE = re.compile(r"<script[\s\S]*?</script>|<style[\s\S]*?</style>|<[^>]+>", re.I)
 SPACE_RE = re.compile(r"\s+")
 TABLE_ROW_RE = re.compile(r"^(\s*\S+(?:\s{2,}|\t|\|)\S+.*){2,}$")
+# Zero-width / invisible characters used to split injection keywords apart
+# (e.g. "Ignore<ZWSP>all<ZWSP>previous...") so literal pattern matching
+# below still catches them. Same set app/domain/injection_guard.py strips.
+_ZERO_WIDTH_RE = re.compile(
+    r"[​-‏‪-‮⁠-⁤﻿­͏؜ᅟᅠ឴឵᠎ㅤﾠ]"
+)
 INJECTION_PATTERNS = (
     re.compile(r"ignore\s+(all\s+)?(previous|prior)\s+instructions", re.I),
     re.compile(r"disregard\s+(the\s+)?(above|system)\s+", re.I),
     re.compile(r"<\s*/?\s*system\s*>", re.I),
-    re.compile(r"^\s*system\s*:\s*", re.I | re.M),
+    # Fake role-header lines (a classic chat-injection vector) — not just
+    # "system:", any of the turn roles a chat prompt template recognizes.
+    re.compile(r"^\s*(?:system|assistant|user|human)\s*:\s*", re.I | re.M),
     re.compile(r"you\s+are\s+now\s+(?:a|an)\s+", re.I),
     re.compile(r"developer\s+message\s*:", re.I),
 )
@@ -85,7 +93,11 @@ def sanitize_fetched_content(text: str) -> str:
         return ""
     cleaned: list[str] = []
     for line in text.splitlines():
-        if any(pattern.search(line) for pattern in INJECTION_PATTERNS):
+        # Zero-width chars can split an injection phrase's words apart
+        # ("Ignore<ZWSP>all<ZWSP>previous...") to dodge literal matching —
+        # scan a stripped copy but keep the original line when it's clean.
+        scan_line = _ZERO_WIDTH_RE.sub(" ", line)
+        if any(pattern.search(scan_line) for pattern in INJECTION_PATTERNS):
             cleaned.append("[filtered untrusted instruction]")
             continue
         cleaned.append(line)

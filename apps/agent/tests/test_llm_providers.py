@@ -332,9 +332,14 @@ def test_retryable_429_tries_every_gemini_key_before_pause(monkeypatch):
     monkeypatch.setattr("app.llm.client.settings.openai_api_key", "")
     monkeypatch.setattr("app.llm.client.settings.xai_api_key", "")
     monkeypatch.setattr("app.llm.client.settings.grok_api_key", "")
-    # A 429/503 that never carries a real credits/dead-key marker gets one
-    # backoff-and-retry pass across the whole pool before CreditsExhaustedError
-    # (see app.llm.client._RETRYABLE_BACKOFF_SECONDS) — don't sleep for real in tests.
+    # A 429/503 that never carries a real credits/dead-key marker gets several
+    # backoff-and-retry passes across the whole pool, waiting longer each
+    # time, before CreditsExhaustedError (see app.llm.client.
+    # _MAX_RETRYABLE_BACKOFF_PASSES / _RETRYABLE_BACKOFF_SECONDS) — a shared
+    # rate-limit bucket clearing takes longer than one 20s pass, and
+    # escalating too early parks the whole graph on an interrupt() nothing
+    # is watching, making an unattended run look hung. Don't sleep for real
+    # in tests.
     slept: list[float] = []
     monkeypatch.setattr("app.llm.client.time.sleep", lambda s: slept.append(s))
     seen: list[str] = []
@@ -357,18 +362,13 @@ def test_retryable_429_tries_every_gemini_key_before_pause(monkeypatch):
     )
     with pytest.raises(CreditsExhaustedError):
         client.generate("hello")
-    # One full pass, a backoff, then a second full pass (still all-retryable) before giving
-    # up. The retry after backoff resumes from wherever the pool rotation left off (the
+    # 1 initial pass + 4 backoff-and-retry passes (still all-retryable) = 5
+    # full passes across the 3-key pool before giving up. Each retry after a
+    # backoff resumes from wherever the pool rotation left off (the
     # last-tried slot), not a restart at the first key.
-    assert seen == [
-        "AIza-first-xxxxxxxx",
-        "AIza-second-yyyyyyyy",
-        "AIza-third-zzzzzzzz",
-        "AIza-third-zzzzzzzz",
-        "AIza-first-xxxxxxxx",
-        "AIza-second-yyyyyyyy",
-    ]
-    assert slept == [20]
+    assert len(seen) == 15
+    assert seen[:3] == ["AIza-first-xxxxxxxx", "AIza-second-yyyyyyyy", "AIza-third-zzzzzzzz"]
+    assert slept == [20, 40, 60, 80]
     client.close()
 
 

@@ -29,6 +29,14 @@ JSON_RE = re.compile(r"\{[\s\S]*\}|\[[\s\S]*\]")
 _GENERATE_TIMEOUT = httpx.Timeout(180.0, connect=15.0)
 _GEMINI_ENV = ("GOOGLE_API_KEY", "GEMINI_API_KEY")
 _RETRYABLE_BACKOFF_SECONDS = 20
+# How many times to back off and retry the whole pool when every slot fails
+# with a purely transient error (429/503), before treating it as real
+# credit exhaustion and pausing the graph for a human to paste a new key.
+# One pass (20s) wasn't enough grace for a shared-project RPM window to
+# reset — a transient "everyone's rate-limited right now" got escalated
+# into an indefinite interrupt() wait that nothing was watching, making an
+# unattended run look hung for 5-20+ minutes instead of self-recovering.
+_MAX_RETRYABLE_BACKOFF_PASSES = 4
 _bound: ContextVar[LLMClient | None] = ContextVar("kiln_llm_client", default=None)
 # Set by app.llm.roles.use_role_model so _log_call_ok can tag which graph
 # node/purpose (briefing, planner, critic, report, rerank...) issued a call —
@@ -321,7 +329,7 @@ class LLMClient:
         self.last_call_ok = False
         saw_credits = False
         saw_only_retryable = True
-        backoff_passes_left = 1
+        backoff_passes_left = _MAX_RETRYABLE_BACKOFF_PASSES
         tried: set[int] = set()
         # Skip keys that already failed permanently earlier in this run.
         while self._slot_index in self._dead or not self.available:
@@ -368,16 +376,21 @@ class LLMClient:
                 # (RPM throttle or momentary model overload). Failing over
                 # doesn't help there (the whole pool can share one rate-limit
                 # bucket, e.g. keys minted under the same Google Cloud
-                # project), so give the pool one backoff-and-retry pass
-                # before surfacing a false "out of credits" prompt.
+                # project), so give the pool a few backoff-and-retry passes,
+                # waiting longer each time, before surfacing a false "out of
+                # credits" prompt.
                 if saw_only_retryable and backoff_passes_left > 0 and self._slots:
+                    pass_num = _MAX_RETRYABLE_BACKOFF_PASSES - backoff_passes_left + 1
+                    wait_seconds = _RETRYABLE_BACKOFF_SECONDS * pass_num
                     backoff_passes_left -= 1
                     logger.warning(
-                        "llm_all_slots_retryable_backoff wait=%ss slots=%s",
-                        _RETRYABLE_BACKOFF_SECONDS,
+                        "llm_all_slots_retryable_backoff wait=%ss slots=%s pass=%s/%s",
+                        wait_seconds,
                         len(self._slots),
+                        pass_num,
+                        _MAX_RETRYABLE_BACKOFF_PASSES,
                     )
-                    time.sleep(_RETRYABLE_BACKOFF_SECONDS)
+                    time.sleep(wait_seconds)
                     tried.clear()
                     continue
                 if self._slots:

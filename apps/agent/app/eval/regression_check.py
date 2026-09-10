@@ -18,9 +18,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -300,84 +302,94 @@ Primary sources: [1], [2]. Secondary sources: [3].
             "error": None
         }
     else:
-        # Live mode - would integrate with actual pipeline
-        # This is left as TODO for integration with existing runtime
-        # IMPORTANT: Pass RegressionTestConfig.get_llm_params() to writer LLM
-        # Example:
-        # llm_params = RegressionTestConfig.get_llm_params()
-        # result = runtime.stream_execution(
-        #     query=test_case["query"],
-        #     llm_override_params=llm_params,  # temperature=0, seed=42
-        #     ...
-        # )
-        raise NotImplementedError("Live pipeline integration not yet implemented")
+        return asyncio.run(_run_live(test_case))
 
 
-def compare_results(baseline: dict, head: dict, test_case: dict) -> dict:
-    """Compare baseline vs HEAD results for a single test case."""
-    regressions = []
-    improvements = []
-    
-    # Structural regressions
-    baseline_struct = baseline.get("structural_check", {})
-    head_struct = head.get("structural_check", {})
-    
-    if not baseline_struct.get("passed") and head_struct.get("passed"):
-        improvements.append("Structural issues fixed")
-    elif baseline_struct.get("passed") and not head_struct.get("passed"):
-        regressions.append(f"NEW structural violations: {head_struct.get('issues', [])}")
-    elif len(head_struct.get("issues", [])) > len(baseline_struct.get("issues", [])):
-        new_issues = set(head_struct.get("issues", [])) - set(baseline_struct.get("issues", []))
-        regressions.append(f"NEW structural issues: {list(new_issues)}")
-    
-    # Quality metric regressions
-    baseline_metrics = baseline.get("metrics", {})
-    head_metrics = head.get("metrics", {})
-    
-    expected_quality = test_case.get("expected_quality", {})
-    
-    # Coverage regression (>5% drop is significant)
-    baseline_cov = baseline_metrics.get("coverage_pct", 0)
-    head_cov = head_metrics.get("coverage_pct", 0)
-    if head_cov < baseline_cov - 5:
-        regressions.append(f"Coverage dropped: {baseline_cov:.1f}% → {head_cov:.1f}%")
-    elif head_cov > baseline_cov + 5:
-        improvements.append(f"Coverage improved: {baseline_cov:.1f}% → {head_cov:.1f}%")
-    
-    # Citation stacking regression
-    baseline_stack = baseline_metrics.get("citation_stacking_count", 0)
-    head_stack = head_metrics.get("citation_stacking_count", 0)
-    if head_stack > baseline_stack + 2:
-        regressions.append(f"Citation stacking increased: {baseline_stack} → {head_stack}")
-    
-    # Threshold violations (always bad if HEAD violates but baseline didn't)
-    if "max_code_ratio" in expected_quality:
-        # Would need actual code ratio from pipeline - stub for now
-        pass
-    
+async def _run_live(test_case: dict) -> dict:
+    """Run one golden-set query through the real graph — search, scholar,
+    critic, report — with HITL disabled (build_test_graph(enable_hitl=False)
+    auto-approves brief/plan/memo the same way production does when no
+    human is attached) and an in-memory checkpointer (no Postgres needed
+    for a one-shot eval run).
+    """
+    from app.graph.builder import build_test_graph
+
+    graph = build_test_graph(enable_hitl=False)
+    started = time.perf_counter()
+    try:
+        final_state = await graph.ainvoke(
+            {"query": test_case["query"]},
+            config={"recursion_limit": 60, "configurable": {"thread_id": f"eval-{test_case['id']}"}},
+        )
+    except Exception as exc:  # noqa: BLE001 - report the failure, don't crash the suite
+        return {
+            "memo_markdown": "",
+            "report": {},
+            "status": "error",
+            "error": f"{type(exc).__name__}: {exc}",
+            "duration_s": round(time.perf_counter() - started, 1),
+        }
+    duration_s = round(time.perf_counter() - started, 1)
+    report = final_state.get("report") or {}
     return {
-        "test_id": test_case["id"],
-        "regressions": regressions,
-        "improvements": improvements,
-        "has_regression": len(regressions) > 0,
-        "baseline_metrics": baseline_metrics,
-        "head_metrics": head_metrics
+        "memo_markdown": report.get("body_markdown") or "",
+        "report": report,
+        "status": final_state.get("status") or "unknown",
+        "error": None,
+        "duration_s": duration_s,
+        "traces": final_state.get("traces") or [],
     }
 
 
-def run_regression_suite(golden_set_path: str | None = None, mode: str = "fast") -> dict:
-    """Run regression suite and return results.
-    
+def _score_against_expected_quality(metrics: dict, expected_quality: dict) -> list[str]:
+    """Check extracted metrics against golden_set.json's expected_quality
+    thresholds. Returns a list of violation strings (empty = passed)."""
+    violations = []
+    if "min_coverage_pct" in expected_quality:
+        got = metrics.get("coverage_pct", 0)
+        want = expected_quality["min_coverage_pct"]
+        if got < want:
+            violations.append(f"coverage_pct {got:.1f}% < required {want}%")
+    if "min_unique_sources" in expected_quality:
+        got = metrics.get("unique_sources", 0)
+        want = expected_quality["min_unique_sources"]
+        if got < want:
+            violations.append(f"unique_sources {got} < required {want}")
+    if "max_citation_stacking_per_1000_words" in expected_quality:
+        got = metrics.get("citation_stacking_per_1000_words", 0)
+        want = expected_quality["max_citation_stacking_per_1000_words"]
+        if got > want:
+            violations.append(f"citation_stacking {got:.1f}/1000w > allowed {want}/1000w")
+    return violations
+
+
+def _percentile(values: list[float], pct: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    idx = min(len(ordered) - 1, max(0, round((pct / 100) * (len(ordered) - 1))))
+    return ordered[idx]
+
+
+def run_regression_suite(golden_set_path: str | None = None, mode: str = "fast", live: bool = False) -> dict:
+    """Run the golden set and report structural + quality results.
+
     Args:
         golden_set_path: Path to golden_set.json
         mode: "fast" (3 cases), "all" (all cases), or "single" (one case)
-    
+        live: False (default) — fast, free structural self-check against a
+            synthetic memo, validates the checker itself, no API cost.
+            True — actually run each query through the real graph (search,
+            scholar, critic, report) and score the real memo against
+            expected_structure/expected_quality. Costs real LLM + search
+            calls and can take minutes per case.
+
     Returns:
-        dict with summary, test_results, overall_pass
+        dict with summary (incl. p50/p95 latency when live), test_results, overall_pass
     """
     golden_set = load_golden_set(golden_set_path)
     test_cases = golden_set["test_cases"]
-    
+
     # Select test cases based on mode
     if mode == "fast":
         # Run quick representat cases
@@ -390,59 +402,94 @@ def run_regression_suite(golden_set_path: str | None = None, mode: str = "fast")
         selected = test_cases[:1]
     else:  # "all"
         selected = test_cases
-    
+
     print(f"\n{'='*60}")
-    print(f"REGRESSION CHECK - Running {len(selected)} test cases ({mode} mode)")
+    print(f"REGRESSION CHECK - Running {len(selected)} test cases ({mode} mode, live={live})")
     print(f"Stability: {explain_stability_strategy()}")
     print(f"{'='*60}\n")
-    
+
     results = []
+    durations: list[float] = []
     for i, test_case in enumerate(selected, 1):
         test_id = test_case["id"]
         print(f"[{i}/{len(selected)}] Running: {test_id}")
-        
-        # For now, we're in "check harness" mode, so we'll just validate structure
-        # In production, this would run the actual pipeline
-        
-        # Mock: assume we have baseline and HEAD results
-        # In reality, these would come from running the pipeline
-        baseline_result = {"structural_check": {"passed": True, "issues": []}, "metrics": {"coverage_pct": 70}}
-        head_result = {
-            "structural_check": check_structural_requirements("# Mock memo\n## Executive summary\nTest", test_case),
-            "metrics": {"coverage_pct": 68}
-        }
-        
-        comparison = compare_results(baseline_result, head_result, test_case)
-        results.append(comparison)
-        
-        if comparison["has_regression"]:
-            print(f"  ❌ REGRESSION DETECTED: {comparison['regressions']}")
-        else:
-            print(f"  ✅ PASSED")
-    
-    # Aggregate results
-    total_regressions = sum(1 for r in results if r["has_regression"])
-    overall_pass = total_regressions == 0
-    
+
+        if not live:
+            # Fast/free: validate the structural checker itself against a
+            # synthetic memo — not a claim about real pipeline quality.
+            struct_check = check_structural_requirements("# Mock memo\n## Executive summary\nTest", test_case)
+            results.append({
+                "test_id": test_id,
+                "live": False,
+                "structural_check": struct_check,
+                "passed": struct_check["passed"],
+                "violations": struct_check["issues"],
+            })
+            print("  ✅ PASSED" if struct_check["passed"] else f"  ❌ FAILED: {struct_check['issues']}")
+            continue
+
+        run = run_test_case(test_case, mode="live")
+        if run["error"]:
+            results.append({
+                "test_id": test_id,
+                "live": True,
+                "passed": False,
+                "violations": [f"run failed: {run['error']}"],
+                "duration_s": run["duration_s"],
+            })
+            print(f"  ❌ ERROR: {run['error']}")
+            continue
+
+        durations.append(run["duration_s"])
+        struct_check = check_structural_requirements(run["memo_markdown"], test_case)
+        metrics = extract_quality_metrics(run["memo_markdown"], run["report"])
+        quality_violations = _score_against_expected_quality(metrics, test_case.get("expected_quality", {}))
+        violations = struct_check["issues"] + quality_violations
+        results.append({
+            "test_id": test_id,
+            "live": True,
+            "structural_check": struct_check,
+            "metrics": metrics,
+            "duration_s": run["duration_s"],
+            "passed": not violations,
+            "violations": violations,
+        })
+        status = "✅ PASSED" if not violations else "❌ FAILED"
+        print(f"  {status} ({run['duration_s']}s) {violations or ''}")
+
+    total_failed = sum(1 for r in results if not r["passed"])
+    overall_pass = total_failed == 0
+
     print(f"\n{'='*60}")
-    print(f"RESULTS: {len(selected) - total_regressions}/{len(selected)} tests passed")
+    print(f"RESULTS: {len(selected) - total_failed}/{len(selected)} tests passed")
+    if durations:
+        print(
+            f"Latency: p50={_percentile(durations, 50):.1f}s "
+            f"p95={_percentile(durations, 95):.1f}s "
+            f"max={max(durations):.1f}s"
+        )
     if not overall_pass:
-        print(f"❌ {total_regressions} REGRESSION(S) DETECTED")
-        print("\nFailing tests:")
+        print(f"❌ {total_failed} FAILURE(S)")
         for r in results:
-            if r["has_regression"]:
-                print(f"  - {r['test_id']}: {r['regressions']}")
+            if not r["passed"]:
+                print(f"  - {r['test_id']}: {r['violations']}")
     else:
         print("✅ ALL TESTS PASSED")
     print(f"{'='*60}\n")
-    
+
+    summary: dict[str, Any] = {
+        "total_tests": len(selected),
+        "passed": len(selected) - total_failed,
+        "failed": total_failed,
+        "overall_pass": overall_pass,
+    }
+    if durations:
+        summary["latency_p50_s"] = _percentile(durations, 50)
+        summary["latency_p95_s"] = _percentile(durations, 95)
+        summary["latency_max_s"] = max(durations)
+
     return {
-        "summary": {
-            "total_tests": len(selected),
-            "passed": len(selected) - total_regressions,
-            "failed": total_regressions,
-            "overall_pass": overall_pass
-        },
+        "summary": summary,
         "test_results": results,
         "overall_pass": overall_pass
     }
@@ -454,11 +501,14 @@ def main():
     parser.add_argument("--all", action="store_true", help="Run all test cases")
     parser.add_argument("--single", action="store_true", help="Run single test case (for debugging)")
     parser.add_argument("--golden-set", type=str, help="Path to golden_set.json")
-    parser.add_argument("--baseline", type=str, help="Baseline git commit (for comparison mode)")
-    parser.add_argument("--head", type=str, help="HEAD git commit (for comparison mode)")
-    
+    parser.add_argument(
+        "--live", action="store_true",
+        help="Run each case through the real graph (real LLM + search calls, costs money and minutes) "
+        "instead of the free structural self-check",
+    )
+
     args = parser.parse_args()
-    
+
     # Determine mode
     if args.fast:
         mode = "fast"
@@ -468,10 +518,10 @@ def main():
         mode = "single"
     else:
         mode = "fast"  # default
-    
+
     try:
-        results = run_regression_suite(args.golden_set, mode=mode)
-        
+        results = run_regression_suite(args.golden_set, mode=mode, live=args.live)
+
         # Exit with non-zero if regressions detected
         sys.exit(0 if results["overall_pass"] else 1)
     

@@ -120,6 +120,7 @@ def format_research_notes(
 ) -> str:
     """Dense, citation-preserving notes for the writer. Heuristic; no LLM."""
     from app.domain.adversarial import extract_quantitative_rows
+    from app.domain.untrusted_content import wrap_untrusted_text
 
     per_dim = items_per_dimension if items_per_dimension is not None else ITEMS_PER_DIMENSION[_depth(depth)]
     qchars = quote_limit if quote_limit is not None else QUOTE_CHARS[_depth(depth)]
@@ -150,7 +151,8 @@ def format_research_notes(
             quote = (ev.get("quote") or ev.get("snippet") or ev.get("full_text") or "")[:qchars]
             title = ev.get("title") or url or "untitled"
             tier = ev.get("tier") or ""
-            blocks.append(f"- [{n}] {title} ({tier}): {quote}")
+            fenced = wrap_untrusted_text(quote, source_url=ev.get("url") or "")
+            blocks.append(f"- [{n}] {title} ({tier}): {fenced or quote}")
     numbers = extract_quantitative_rows(flat, citations)
     blocks.append(
         "## Quantitative fragments (copy into the memo table — outcome metrics only)\n"
@@ -210,9 +212,12 @@ def compress_prompt(notes: str, query: str, *, depth: str = "standard") -> str:
 
 
 def writer_system() -> str:
+    from app.domain.untrusted_content import untrusted_system_rule
+
     return (
         "You are Kiln's research writer for applied AI / LLM systems "
         "(serving, RAG, agents, eval, fine-tune vs retrieval, inference stacks). "
+        f"{untrusted_system_rule()} "
         "Write a modern deep-research memo in the Open Deep Research style: "
         "answer-first, analytical prose, not a literature survey or template dump. "
         "No self-reference, no process narration, no Research plan section, "

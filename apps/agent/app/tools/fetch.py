@@ -35,6 +35,11 @@ INJECTION_PATTERNS = (
     re.compile(r"^\s*(?:system|assistant|user|human)\s*:\s*", re.I | re.M),
     re.compile(r"you\s+are\s+now\s+(?:a|an)\s+", re.I),
     re.compile(r"developer\s+message\s*:", re.I),
+    # Evidence text telling the writer to treat itself / its source as
+    # already-verified or peer-reviewed — a citation-authority injection,
+    # not a role-hijack, but just as much a control instruction to strip.
+    re.compile(r"(?:cite|treat|consider|regard)\s+(?:this|the|that)\b.{0,30}\bas\s+verified", re.I),
+    re.compile(r"mark\s+(?:this|the|that)\b.{0,30}\bas\s+peer[- ]?reviewed", re.I),
 )
 MAX_DOWNLOAD_BYTES = 5 * 1024 * 1024
 MAX_EXTRACTED_CHARS = 40_000

@@ -122,10 +122,14 @@ def pick_quote(ev: dict, limit: int = 280, *, claim_or_dimension: str = "", patt
     elif claim_or_dimension:
         # Use passage-level retrieval to find best chunk for this claim/dimension
         from app.retrieval.passage import best_passage_for_claim
-        full_text = (
-            f"{ev.get('full_text') or ''} "
-            f"{ev.get('quote') or ''} "
-            f"{ev.get('snippet') or ''}"
+        # Join with paragraph breaks, not spaces — quote/snippet are
+        # typically a short (often title-page-y) excerpt of full_text;
+        # space-joining fuses them onto full_text's last paragraph and can
+        # drag a real content passage's title-page classification back to
+        # "true" just because trailing "Abstract:"/"Keywords:" text got
+        # glued onto its end.
+        full_text = "\n\n".join(
+            part for part in (ev.get("full_text") or "", ev.get("quote") or "", ev.get("snippet") or "") if part
         ).strip()
         if full_text:
             best_passage = best_passage_for_claim(

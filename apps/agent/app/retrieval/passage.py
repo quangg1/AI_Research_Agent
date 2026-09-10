@@ -15,25 +15,41 @@ from app.retrieval.embed import cosine, embed_texts
 
 def split_into_passages(text: str, max_len: int = 800, overlap: int = 200) -> list[str]:
     """Split long text into overlapping passages for within-document retrieval."""
-    if not text or len(text) <= max_len:
-        return [text] if text else []
-    
-    # Try to split on paragraph boundaries first
-    paragraphs = re.split(r'\n\n+', text)
+    if not text:
+        return []
+    # A "blank" line often isn't truly empty — trailing spaces on an
+    # indented line (common in triple-quoted docstrings/fixtures) still
+    # read as a paragraph break to a person, but \n\n+ alone requires
+    # back-to-back newlines with nothing between them.
+    paragraphs = [p for p in re.split(r'\n[ \t]*\n+', text) if p.strip()]
+    if len(paragraphs) <= 1:
+        # Nothing to split on — a single short doc without a title-page
+        # preamble mixed in stays as one passage, same as before.
+        return [text] if len(text) <= max_len else []
+
+    # Split on paragraph boundaries first
     passages: list[str] = []
     current = ""
-    
+
     for para in paragraphs:
-        if not para.strip():
-            continue
-        # If adding this paragraph exceeds max_len, save current and start new
-        if current and len(current) + len(para) > max_len:
+        # Split when adding this paragraph would exceed max_len, OR when
+        # title-page-or-not status changes between the accumulated text and
+        # this paragraph (either direction) — otherwise a title/keyword
+        # block glued onto real content (or vice versa) makes the merged
+        # passage read as junk and gets discarded wholesale by
+        # _is_title_page_or_chrome downstream, or drags trailing chrome
+        # into an otherwise-good selected passage.
+        should_split = current and (
+            len(current) + len(para) > max_len
+            or (_is_title_page_or_chrome(current.strip()) != _is_title_page_or_chrome(para.strip()))
+        )
+        if should_split:
             passages.append(current.strip())
             # Keep overlap from end of previous passage
             words = current.split()
             current = " ".join(words[-overlap // 5:]) + " " if len(words) > overlap // 5 else ""
         current += para + "\n\n"
-    
+
     if current.strip():
         passages.append(current.strip())
     

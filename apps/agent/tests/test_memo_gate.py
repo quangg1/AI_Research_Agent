@@ -19,7 +19,10 @@ def test_memo_gate_does_not_skip_when_status_approved_and_draft_exists(monkeypat
             "query": "test-time compute scaling",
             "report": {
                 "title": "Draft memo",
-                "body_markdown": "## Executive summary\n\nSubstantive draft body with enough text.",
+                "body_markdown": (
+                    "## Executive summary\n\nSubstantive draft body with enough text.\n\n"
+                    "## Detailed analysis\n\nEnough analysis text to pass structure validation."
+                ),
                 "executive_summary": "Summary.",
                 "decision_rule": "Rule.",
                 "citations": [{"n": 1, "url": "https://arxiv.org/abs/2401.1", "title": "Paper"}],
@@ -52,7 +55,10 @@ def test_memo_gate_logs_run_token_summary_on_publish(monkeypatch):
             "thread_id": "run-123",
             "brief": {"depth": "deep"},
             "report": {
-                "body_markdown": "## Executive summary\n\nSubstantive draft body with enough text.",
+                "body_markdown": (
+                    "## Executive summary\n\nSubstantive draft body with enough text.\n\n"
+                    "## Detailed analysis\n\nEnough analysis text to pass structure validation."
+                ),
                 "citations": [{"n": 1, "url": "https://arxiv.org/abs/2401.1", "title": "Paper"}],
                 "metrics": {"usd_est": 0.041},
             },
@@ -102,7 +108,10 @@ def test_memo_gate_keeps_prior_when_fresh_augment_scores_lower(monkeypatch):
             "report": {
                 "title": "Thin fresh memo",
                 "executive_summary": "Thin fresh summary.",
-                "body_markdown": "## Executive summary\n\nThin fresh body with weak evidence.",
+                "body_markdown": (
+                    "## Executive summary\n\nThin fresh body with weak evidence.\n\n"
+                    "## Detailed analysis\n\nEnough analysis text to pass structure validation."
+                ),
                 "decision_rule": "Fresh decision rule.",
                 "citations": [{"n": 1, "url": "https://example.com/x", "title": "Weak source"}],
                 "metrics": {"depth_score": 55},
@@ -132,7 +141,10 @@ def test_memo_gate_keeps_fresh_when_augment_beats_prior(monkeypatch):
             "reuse_mode": "augment",
             "prior_knowledge": prior,
             "report": {
-                "body_markdown": "## Executive summary\n\nBetter, richer fresh body with more evidence.",
+                "body_markdown": (
+                    "## Executive summary\n\nBetter, richer fresh body with more evidence.\n\n"
+                    "## Detailed analysis\n\nEnough analysis text to pass structure validation."
+                ),
                 "citations": [{"n": 1, "url": "https://arxiv.org/abs/2401.1", "title": "New paper"}],
                 "metrics": {"depth_score": 80},
             },

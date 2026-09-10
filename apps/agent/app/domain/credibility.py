@@ -35,6 +35,14 @@ def tier_for(url: str, fallback: SourceTier | None = None) -> SourceTier:
         return SourceTier.SPECIALIST_RESEARCH
     if is_secondary_host(host) or host in SECONDARY_HOSTS:
         return SourceTier.NEWS_ANALYSIS
+    if host == "doi.org" and fallback is not None:
+        # HOST_TIER's doi.org entry ("DOI host != peer venue") is a "we
+        # don't actually know" placeholder for when nothing better is
+        # available — unlike arxiv.org, which is a confident non-peer-review
+        # classification. When a caller has real venue/type metadata (e.g.
+        # OpenAlex's publisher record behind the DOI redirect) to pass as
+        # fallback, trust that over the generic placeholder.
+        return fallback
     if host in HOST_TIER:
         return HOST_TIER[host]
     parts = host.split(".")

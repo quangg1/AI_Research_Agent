@@ -362,13 +362,13 @@ def test_retryable_429_tries_every_gemini_key_before_pause(monkeypatch):
     )
     with pytest.raises(CreditsExhaustedError):
         client.generate("hello")
-    # 1 initial pass + 4 backoff-and-retry passes (still all-retryable) = 5
+    # 1 initial pass + 2 backoff-and-retry passes (still all-retryable) = 3
     # full passes across the 3-key pool before giving up. Each retry after a
     # backoff resumes from wherever the pool rotation left off (the
     # last-tried slot), not a restart at the first key.
-    assert len(seen) == 15
+    assert len(seen) == 9
     assert seen[:3] == ["AIza-first-xxxxxxxx", "AIza-second-yyyyyyyy", "AIza-third-zzzzzzzz"]
-    assert slept == [20, 40, 60, 80]
+    assert slept == [20, 40]
     client.close()
 
 

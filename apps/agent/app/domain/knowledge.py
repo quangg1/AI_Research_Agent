@@ -263,6 +263,7 @@ def save_answer(
     *,
     org_id: str | None = None,
     user_id: str | None = None,
+    thread_id: str | None = None,
 ) -> dict[str, Any] | None:
     if not settings.knowledge_enabled:
         return None
@@ -305,7 +306,7 @@ def save_answer(
                     """,
                     (prior_id,),
                 )
-            _insert(conn, record, org_id=org_id, user_id=user_id)
+            _insert(conn, record, org_id=org_id, user_id=user_id, thread_id=thread_id)
             return record
     except Exception:
         if settings.persistence_required:
@@ -337,6 +338,7 @@ def _insert(
     *,
     org_id: str | None = None,
     user_id: str | None = None,
+    thread_id: str | None = None,
 ) -> None:
     answer = {
         key: value
@@ -365,10 +367,10 @@ def _insert(
         INSERT INTO knowledge_records
             (id, goal, answer, citations, embedding, embedding_model, fingerprint,
              queries, depth_score, reuse_count, status, version, active,
-             last_reused_at, created_at, updated_at, org_id, created_by)
+             last_reused_at, created_at, updated_at, org_id, created_by, source_thread_id)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE,
                 CASE WHEN %s > 0 THEN to_timestamp(%s) ELSE NULL END,
-                to_timestamp(%s), to_timestamp(%s), %s, %s)
+                to_timestamp(%s), to_timestamp(%s), %s, %s, %s)
         """,
         (
             record["id"],
@@ -389,6 +391,7 @@ def _insert(
             record.get("updated_at") or time.time(),
             org_id or record.get("org_id"),
             user_id or record.get("created_by"),
+            thread_id,
         ),
     )
 

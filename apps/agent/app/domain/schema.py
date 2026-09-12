@@ -151,6 +151,10 @@ class SubQuery(BaseModel):
     agent: AgentName
     question: str
     rationale: str = ""
+    # Which coverage gap this followup targets (critical_gap/slot id, or a
+    # synthetic "entity:<name>"/"primary_sources" id) -- lets the critic loop
+    # tell whether a gap it already tried to fill is being retried verbatim.
+    gap_id: str = ""
 
 
 class Plan(BaseModel):

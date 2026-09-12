@@ -5,11 +5,18 @@ from __future__ import annotations
 import re
 from difflib import SequenceMatcher
 
+from app.domain.metric_grounding import split_sentences
 from app.domain.report_audit import _section
 from app.domain.research_intent import user_goal
 from app.domain.schema import AgentName, SubQuery
-# Sections where citation lists should remain intact (not be stripped/decluttered)
-PROTECTED_SECTIONS = ("Source quality", "References")
+# Sections where citation lists should remain intact (not be stripped/decluttered),
+# and where the memo's OWN diagnostic prose lives -- Limitations bullets quote
+# citation numbers and figures as descriptive text about a problem (e.g.
+# "Citation marker(s) [6], [7] referenced a source..."), not as new claims to
+# verify. Scanning it as ordinary prose let one pass's folded finding get
+# re-discovered as new "evidence" by the next pass's audit, compounding
+# across report-regeneration retries into garbled, ever-growing bullets.
+PROTECTED_SECTIONS = ("Source quality", "References", "Limitations")
 
 UNRESOLVED_CITE_RE = re.compile(r"\[\?\]")
 _CITE_ONE = r"\d+(?:\s+[A-Za-z]+)?"
@@ -79,6 +86,10 @@ def audit_memo_integrity(
             f"(e.g. [{stacks[0]}]). Prefer 1–2 citations per claim with a supporting quote."
         )
 
+    concentration = _load_bearing_source_concentration(blob, citations, executive_summary, at_a_glance)
+    if concentration:
+        notes.append(concentration)
+
     exec_clean = _normalize_prose(executive_summary)
     glance_clean = _normalize_prose(at_a_glance)
     if exec_clean and glance_clean:
@@ -100,8 +111,12 @@ def audit_memo_integrity(
         notes.append(tone)
     
     # NEW: Verify all numbers in body, not just Quantitative table
-    # Catches misattributions in prose, Comparison, Worked example
-    body_number_issues = audit_body_numbers(blob, citations=citations, evidence=evidence)
+    # Catches misattributions in prose, Comparison, Worked example.
+    # Exclude Limitations: it's this same audit's own output on a report-
+    # regeneration retry, not new prose to fact-check (see PROTECTED_SECTIONS).
+    body_number_issues = audit_body_numbers(
+        _strip_protected_sections(blob), citations=citations, evidence=evidence
+    )
     notes.extend(body_number_issues)
 
     backbone_note = _low_tier_quantitative_backbone_note(blob, citations)
@@ -182,7 +197,31 @@ def enforce_report_integrity(
             "Some citation markers could not be resolved and were removed before publish."
         )
 
-    body = _strip_misplaced_threshold_disclaimer(body)
+    # A real numeric marker (not the literal "[?]" placeholder above) can
+    # still point at nothing: the writer cites a source it planned to use
+    # (e.g. a mandatory primary that was never actually fetched into the
+    # ledger) as "[6]"/"[7]", and bind_markdown_to_ledger only rebuilds
+    # References from `citations` -- it never scrubs a bare prose marker
+    # with no matching entry. Real run: [6]/[7] cited 4 times in the body,
+    # absent from References entirely, with no way for the reader to look
+    # them up.
+    if citations:
+        valid_ns = {n for c in citations if (n := _as_cite_n(c)) is not None}
+        cited_ns_in_prose: set[int] = set()
+        for group in CITE_RE.findall(_strip_protected_sections(body)):
+            for piece in group.split(","):
+                m = re.match(r"\s*(\d+)", piece)
+                if m:
+                    cited_ns_in_prose.add(int(m.group(1)))
+        dangling = sorted(cited_ns_in_prose - valid_ns)
+        if dangling:
+            body = _strip_cite_markers_outside_protected(body, dangling)
+            flags.append("stripped_dangling_citation_numbers")
+            marker_list = ", ".join(f"[{n}]" for n in dangling)
+            limitations.append(
+                f"Citation marker(s) {marker_list} referenced a source that was never added "
+                "to the reference ledger and were removed before publish."
+            )
 
     quant = _section(body, "Quantitative findings")
     quant_absent = _quantitative_data_absent(quant)
@@ -342,6 +381,15 @@ def enforce_report_integrity(
         at_a_glance=at_a_glance,
     )
     limitations.extend(audit_notes)
+    # The entity gate's own finding lives in critic.reasons and stopped there:
+    # a framework the question named explicitly can be missing from the memo
+    # with nothing telling the reader (real run: the question named five agent
+    # frameworks, the memo compared four, and the gap showed up only in
+    # metrics_json).
+    for reason in (critic or {}).get("reasons") or []:
+        text = str(reason).strip()
+        if _NAMED_SUBJECT_GAP_RE.match(text) and text not in limitations:
+            limitations.append(text)
 
     if not (at_a_glance or "").strip():
         at_a_glance = _derive_at_a_glance(executive_summary, decision_rule, critic)
@@ -368,6 +416,21 @@ def enforce_report_integrity(
         hardened_rule = _section(body, "Decision rule")
         if hardened_rule:
             decision_rule = hardened_rule
+
+    # Must run after every step above that can touch "## Decision rule"
+    # (_rewrite_decision_rule_section x2, harden_unverified_numeric_claims) --
+    # several of them can leave a "no evidence-backed threshold" disclaimer
+    # sentence stranded outside ### Empirical cutoffs, or leave that
+    # subsection's own "Act on these" announcement with nothing under it.
+    body = _fix_empty_empirical_cutoffs(body)
+    # report.py re-stitches "## Decision rule" from the returned `decision_rule`
+    # string right after this, independent of body_markdown -- leaving it
+    # stale here would silently undo the fix just applied to body.
+    fixed_rule = _section(body, "Decision rule")
+    if fixed_rule:
+        decision_rule = fixed_rule
+
+    body = _fold_verification_failures_into_body(body, limitations)
 
     confidence_breakdown = {
         "score": _corrected_score(depth, quant_pct),
@@ -461,9 +524,31 @@ def _uncited_load_bearing_numbers(text: str) -> set[str]:
     return out
 
 
+def _strip_protected_sections(text: str) -> str:
+    """Drop ## Source quality / ## References content.
+
+    Both sections deliberately merge every citation for a band/entry into
+    one bracket group (RACE criteria: "merge all cites for that band into
+    one bracket group") -- scanning them for citation-stacking or source-
+    concentration would flag the memo's own correctly-designed summary
+    sections as if they were a prose problem.
+    """
+    sections = re.split(r"(^##\s+.+$)", text or "", flags=re.M)
+    out_parts: list[str] = []
+    in_protected = False
+    for part in sections:
+        if re.match(r"^##\s+", part):
+            section_name = re.sub(r"^##\s+", "", part).strip()
+            in_protected = any(protected in section_name for protected in PROTECTED_SECTIONS)
+            continue
+        if not in_protected:
+            out_parts.append(part)
+    return "\n".join(out_parts)
+
+
 def _citation_stacks(text: str) -> list[str]:
     stacks: list[str] = []
-    for line in (text or "").splitlines():
+    for line in _strip_protected_sections(text).splitlines():
         cites = CITE_RE.findall(line)
         if not cites:
             continue
@@ -471,6 +556,106 @@ def _citation_stacks(text: str) -> list[str]:
         if total >= 3:
             stacks.append(cites[0])
     return stacks
+
+
+def _as_cite_tier(citation: dict | object) -> str:
+    if isinstance(citation, dict):
+        raw = citation.get("tier")
+    else:
+        raw = getattr(citation, "tier", None)
+    return str(raw or "unknown").lower()
+
+
+def _load_bearing_source_concentration(
+    blob: str,
+    citations: list[dict] | None,
+    executive_summary: str,
+    at_a_glance: str,
+) -> str:
+    """A single low-tier ("unknown") citation carrying the memo's most
+    prominent claims alone, with no independent higher-tier source ever
+    corroborating it, is a real credibility risk the confidence card's
+    "Primary sources" percentage doesn't catch -- that metric only checks
+    whether SOME primary-tier source exists anywhere in the working set, not
+    whether the sources readers actually weight most (the executive summary,
+    at-a-glance line, and key findings) rest on one unverified page.
+
+    Real run: an "UNKNOWN"-tier personal blog was the sole citation for the
+    Executive summary's opening sentence and most of Key findings, while the
+    memo's only peer/primary sources sat unused for the claims that matter.
+    """
+    if not citations:
+        return ""
+    low_tier_ns = {
+        n for c in citations
+        if (n := _as_cite_n(c)) is not None and _as_cite_tier(c) in {"unknown", ""}
+    }
+    if not low_tier_ns:
+        return ""
+
+    exec_section = _section(blob, "Executive summary") or executive_summary or ""
+    # Executive summary / Key findings are prose paragraphs -- several
+    # sentences, each with its own citation, sit on one markdown line with
+    # no line break between them. Counting by markdown line (as
+    # _citation_stacks does) unions every citation on the paragraph into one
+    # set and never finds a "sole" citation; splitting into sentences is
+    # what actually recovers per-claim attribution.
+    lead_sentences = split_sentences(exec_section)
+    lead_sentence = lead_sentences[0].strip() if lead_sentences else ""
+    # Detailed analysis is where most of a memo's actual claims live --
+    # Executive summary/Key findings alone are short enough that a real
+    # concentration problem can still stay under threshold (real run: source
+    # [1] hit 5 sole-cited sentences once Detailed analysis was included,
+    # vs. only 2 across Executive summary + Key findings by themselves).
+    load_bearing_text = "\n".join(
+        s
+        for s in (
+            at_a_glance,
+            exec_section,
+            _section(blob, "Key findings"),
+            _section(blob, "Detailed analysis"),
+        )
+        if s
+    )
+    if not load_bearing_text.strip():
+        return ""
+
+    sole_counts: dict[int, int] = {}
+    lead_n: int | None = None
+    for sentence in split_sentences(load_bearing_text):
+        if not sentence.strip():
+            continue
+        nums: set[int] = set()
+        for group in CITE_RE.findall(sentence):
+            for piece in group.split(","):
+                m = re.match(r"\s*(\d+)", piece)
+                if m:
+                    nums.add(int(m.group(1)))
+        if len(nums) != 1:
+            continue
+        n = next(iter(nums))
+        sole_counts[n] = sole_counts.get(n, 0) + 1
+        if lead_n is None and sentence.strip() == lead_sentence:
+            lead_n = n
+
+    # A single claim resting on one unranked source is unremarkable -- one
+    # citation is how prose normally works. Only flag genuine repetition:
+    # the same low-tier source carrying several load-bearing claims alone.
+    # lead_n only sharpens the message when the concentrated source is also
+    # the one thing backing the memo's very first sentence.
+    candidates = [
+        (n, count) for n, count in sole_counts.items()
+        if n in low_tier_ns and count >= 3
+    ]
+    if not candidates:
+        return ""
+    n, count = max(candidates, key=lambda item: item[1])
+    lead_note = " (including the Executive summary's opening claim)" if n == lead_n else ""
+    return (
+        f"Source concentration: [{n}] is an unranked/unverified source, yet it is the sole "
+        f"citation for {count} statement(s) across Executive summary, Key findings, and "
+        f"Detailed analysis{lead_note} — no higher-tier source corroborates it independently."
+    )
 
 
 def _normalize_prose(text: str) -> str:
@@ -501,15 +686,137 @@ _THRESHOLD_DISCLAIMER_RE = re.compile(
 )
 
 
-def _strip_misplaced_threshold_disclaimer(body: str) -> str:
-    """Strip a "no evidence-backed threshold" disclaimer sentence that
-    landed outside ### Empirical cutoffs, or that showed up even though
-    Empirical cutoffs already has real, cited thresholds — the writer
-    prompt hands the model a quotable fallback line for when nothing was
-    measured, and it sometimes adds it as a reflexive disclaimer even when
-    real cutoffs are already listed (real run: 2 real cited thresholds
-    under Empirical cutoffs, then this disclaimer tacked on after
-    Engineering heuristics — pure noise at that point).
+_UNVERIFIED_NUM_RE = re.compile(
+    r"^(.+?)\s+cited to\s+(\[[^\n]*?\])\s+but not found in those sources\.?$", re.I
+)
+_WEAK_DIMENSION_RE = re.compile(r"remain weak or unverified|could not be verified", re.I)
+_NAMED_SUBJECT_GAP_RE = re.compile(
+    r"^Named subjects with no dedicated evidence:\s*(.+?)\.?$", re.I
+)
+_CITATION_STACKING_RE = re.compile(
+    r"^Citation stacking:\s*(\d+)\s+sentence\(s\)\s+attach 3\+ sources at once\s+\(e\.g\.\s+\[([^\]]+)\]\)", re.I
+)
+_INFO_DENSITY_RE = re.compile(r"^Information density:", re.I)
+_SOURCE_CONCENTRATION_RE = re.compile(r"^Source concentration:", re.I)
+
+
+def _reader_facing_limitations(limitations: list[str]) -> list[str]:
+    """The subset of computed limitations the memo's reader must actually see.
+
+    Most entries are process boilerplate (host counts, snippet-retrieval
+    caveats) that the writer's own Limitations prose already implies. The
+    families below are different in kind: the system reporting that
+    something it just printed does not hold up — a figure attributed to a
+    source that does not contain it, a critical dimension that never got
+    covered, several claims bundled behind one citation stack, the same
+    theme padded across sections, or the memo's central claims resting on
+    one unranked source with nothing else to check it against. These were
+    being computed, stored in metrics, and shown to nobody (real run: "100x
+    cited to [1] but not found in those sources" while the memo printed "up
+    to 100x ... [1]" four times, unhedged).
+    """
+    grouped: dict[str, list[str]] = {}
+    out: list[str] = []
+    # audit_memo_integrity() runs at several pipeline stages on progressively
+    # edited bodies, so citation-stacking gets measured more than once --
+    # real run showed three near-identical "N statement(s) cite 3+ sources"
+    # bullets (15, 9, 8) back to back. Keep only the latest measurement
+    # (the one closest to the body actually published), not all of them.
+    best_stack: tuple[int, str] | None = None
+    for item in limitations:
+        text = (item or "").strip()
+        match = _UNVERIFIED_NUM_RE.match(text)
+        if match:
+            grouped.setdefault(match.group(2), []).append(match.group(1).strip())
+            continue
+        gap = _NAMED_SUBJECT_GAP_RE.match(text)
+        if gap:
+            out.append(
+                f"Asked about but never covered by its own evidence: {gap.group(1)}. "
+                "Statements about it are inferred from the other sources, not sourced directly."
+            )
+            continue
+        stack = _CITATION_STACKING_RE.match(text)
+        if stack:
+            best_stack = (int(stack.group(1)), stack.group(2))
+            continue
+        if _INFO_DENSITY_RE.match(text):
+            # The underlying check's message hardcodes unrelated placeholder
+            # examples ("sandbox filtering, model collapse") that have
+            # nothing to do with this specific memo -- forward the finding,
+            # not its fake specifics.
+            out.append(
+                "Some themes repeat across multiple sections without adding new facts — "
+                "later mentions may restate an earlier claim rather than extend it."
+            )
+            continue
+        if _SOURCE_CONCENTRATION_RE.match(text):
+            out.append(text)
+            continue
+        if _WEAK_DIMENSION_RE.search(text):
+            out.append(text)
+    if best_stack is not None:
+        count, example = best_stack
+        out.append(
+            f"{count} statement(s) in this memo cite 3 or more sources at once "
+            f"(e.g. [{example}]) — treat these as one bundled claim; the sources were not "
+            "checked individually against it."
+        )
+    # Different lines (e.g. a paragraph and a comparison table restating the
+    # same figure) can flag the identical set of numbers under different --
+    # sometimes overlapping -- citation groups. Merge by number-set so the
+    # reader sees one bullet per distinct unverified figure, not the same
+    # "8x, 16x, 0.95" claim twice with slightly different citations attached.
+    merged: dict[tuple[str, ...], list[str]] = {}
+    for cites, nums in grouped.items():
+        key = tuple(dict.fromkeys(nums))
+        bucket = merged.setdefault(key, [])
+        for token in re.findall(r"\[[^\]]+\]", cites):
+            if token not in bucket:
+                bucket.append(token)
+    for nums_key, cite_tokens in merged.items():
+        joined = ", ".join(nums_key)
+        out.append(
+            f"Unverified attribution: {joined} cited to {', '.join(cite_tokens)}, but the cited "
+            "source text does not contain the figure — treat as unsourced until re-checked."
+        )
+    return out
+
+
+def _fold_verification_failures_into_body(body: str, limitations: list[str]) -> str:
+    """Put reader-facing verification failures under ## Limitations.
+
+    The writer composes its own Limitations prose from the notes it was
+    given and never sees the post-write audit, so without this the audit's
+    findings only reach metrics_json.
+    """
+    notes = [n for n in _reader_facing_limitations(limitations) if n not in (body or "")]
+    if not notes:
+        return body
+    block = "\n".join(f"- {n}" for n in notes[:6])
+    heading = re.search(r"^##\s+Limitations\s*$", body or "", re.I | re.M)
+    if not heading:
+        return f"{(body or '').rstrip()}\n\n## Limitations\n\n{block}\n"
+    return body[: heading.end()] + f"\n\n{block}" + body[heading.end() :]
+
+
+_ACT_ON_THESE_STUB_RE = re.compile(r"^\**Act on these[^\n]*\**\s*\n+", re.I | re.M)
+
+
+def _fix_empty_empirical_cutoffs(body: str) -> str:
+    """Guarantee ### Empirical cutoffs never reads as a promise with nothing
+    under it, and that a "no evidence-backed threshold" disclaimer — when one
+    is needed — sits inside that subsection instead of wherever the writer or
+    an upstream sanitizer happened to drop it.
+
+    Multiple steps can strip Empirical cutoffs' bullets after the section's
+    own "Act on these" announcement was already chosen (each per-source
+    threshold turned out to be uncited, or unverifiable, and got dropped one
+    at a time), leaving that announcement orphaned. And the disclaimer
+    sentence itself has shown up appended to the very end of Decision rule —
+    after Engineering heuristics — where "use Engineering heuristics below"
+    points at nothing (real run: literal last line of the section). This
+    dedupes every occurrence and puts exactly one back in the right place.
     """
     match = re.search(r"^##\s+Decision rule\s*$", body, re.I | re.M)
     if not match:
@@ -520,18 +827,29 @@ def _strip_misplaced_threshold_disclaimer(body: str) -> str:
     end = start + (nxt.start() if nxt else len(rest))
     section = body[start:end]
 
-    empirical = re.search(r"^###\s+Empirical cutoffs[^\n]*\n(.*?)(?=^###\s+|\Z)", section, re.I | re.M | re.S)
-    empirical_has_real_cutoff = bool(empirical and re.search(r"\[\s*\d", empirical.group(1)))
-    empirical_span = empirical.span() if empirical else (0, 0)
+    empirical = re.search(r"^###\s+Empirical cutoffs[^\n]*\n", section, re.I | re.M)
+    if not empirical:
+        return body
+    next_heading = re.search(r"^###\s+", section[empirical.end():], re.M)
+    empirical_body_end = empirical.end() + (next_heading.start() if next_heading else len(section) - empirical.end())
+    empirical_body = section[empirical.end():empirical_body_end]
 
-    def _maybe_strip(m: re.Match) -> str:
-        # Leave it alone if it's inside ### Empirical cutoffs AND that
-        # subsection has no other real cited threshold to speak for itself.
-        if empirical_span[0] <= m.start() < empirical_span[1] and not empirical_has_real_cutoff:
-            return m.group(0)
-        return ""
+    has_real_cutoff = bool(re.search(r"\[\s*\d", empirical_body))
+    has_bullet = bool(re.search(r"^\s*[-*]\s+\S", _THRESHOLD_DISCLAIMER_RE.sub("", empirical_body), re.M))
 
-    new_section = _THRESHOLD_DISCLAIMER_RE.sub(_maybe_strip, section)
+    new_section = _THRESHOLD_DISCLAIMER_RE.sub("", section)
+    if has_real_cutoff or has_bullet:
+        # Real content speaks for itself; any disclaimer elsewhere was noise.
+        pass
+    else:
+        empirical2 = re.search(r"^###\s+Empirical cutoffs[^\n]*\n", new_section, re.I | re.M)
+        insert_at = empirical2.end()
+        after = _ACT_ON_THESE_STUB_RE.sub("", new_section[insert_at:], count=1)
+        new_section = (
+            new_section[:insert_at]
+            + "\n*Evidence-backed threshold: none in collected sources.*\n\n"
+            + after
+        )
     if new_section == section:
         return body
     return body[:start] + new_section + body[end:]
@@ -858,15 +1176,12 @@ def _sanitize_decision_rule_numbers(rule: str, *, quant_absent: bool) -> str:
         if in_empirical and re.search(r"\d+(?:\.\d+)?\s*%", line) and not CITE_RE.search(line):
             continue
         lines.append(line)
-    out = "\n".join(lines).strip()
-    if in_empirical or "empirical cutoff" in (rule or "").lower():
-        if not re.search(r"\d+(?:\.\d+)?\s*%", out) and "none" not in out.lower():
-            out = (
-                out.rstrip()
-                + "\n\n**Evidence-backed threshold:** none in collected sources — "
-                "use Engineering heuristics below for design guidance only."
-            )
-    return out
+    # An empty (or now-empty) Empirical cutoffs subsection gets its
+    # disclaimer filled in centrally by _fix_empty_empirical_cutoffs, which
+    # runs after every Decision-rule-touching step -- inserting one here too
+    # risked leaving a stale copy stranded once a later step (e.g.
+    # harden_unverified_numeric_claims) rewrote the section again.
+    return "\n".join(lines).strip()
 
 
 def _rewrite_decision_rule_section(body: str, decision_rule: str) -> str:
@@ -1169,8 +1484,11 @@ def audit_body_numbers(
                     break
             
             if not found_in_any and cite_ns:
-                # Number present, citations present, but number not in any cited source
-                cite_str = ", ".join(f"[{n}]" for n in cite_ns[:3])
+                # Number present, citations present, but number not in any cited source.
+                # cite_ns can repeat the same source across multiple bracket groups on
+                # one line (e.g. "[2] ... [4] ... [2]") -- dedupe before joining so the
+                # reader-facing message never reads "cited to [2], [4], [2]".
+                cite_str = ", ".join(f"[{n}]" for n in dict.fromkeys(cite_ns[:3]))
                 issues.append(f"{num} cited to {cite_str} but not found in those sources")
     
     return issues

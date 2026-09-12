@@ -36,7 +36,13 @@ _RETRYABLE_BACKOFF_SECONDS = 20
 # reset — a transient "everyone's rate-limited right now" got escalated
 # into an indefinite interrupt() wait that nothing was watching, making an
 # unattended run look hung for 5-20+ minutes instead of self-recovering.
-_MAX_RETRYABLE_BACKOFF_PASSES = 4
+# 4 passes (20/40/60/80s, ~3.3min total) fixed that but over-corrected —
+# it made the very first LLM call (briefing, previously near-instant) take
+# minutes whenever the pool was even briefly rate-limited. 2 passes
+# (20s + 40s = 60s total) still gives real transient limits meaningfully
+# more room than the original single pass, without turning every run into
+# a multi-minute wait before the user sees anything.
+_MAX_RETRYABLE_BACKOFF_PASSES = 2
 _bound: ContextVar[LLMClient | None] = ContextVar("kiln_llm_client", default=None)
 # Set by app.llm.roles.use_role_model so _log_call_ok can tag which graph
 # node/purpose (briefing, planner, critic, report, rerank...) issued a call —

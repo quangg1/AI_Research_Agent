@@ -64,15 +64,13 @@ def after_critic(state: ResearchState, hitl_target: str = "hitl") -> str:
         must_pct = (critic.get("depth_score") or {}).get("must_answer", {}).get("pct") or 0
         current_sources = coverage.get("unique_sources") or 0
         iteration = budget.iterations
-        
-        # Track quality history for smart stopping
+
+        # critic_node already appended this iteration's entry to _quality_history
+        # before returning — appending again here double-counted every iteration,
+        # so two back-to-back (identical-value) entries from the SAME iteration
+        # looked like a real 3-iteration stagnant window after only 2 actual
+        # loop iterations, cutting research short well before max_iterations.
         quality_history = state.get("_quality_history") or []
-        quality_history.append({
-            "iteration": iteration,
-            "unique_sources": current_sources,
-            "must_pct": must_pct,
-            "depth_score": depth_score,
-        })
         
         # EARLY STOP 1: Quality already excellent (save budget)
         if must_pct >= CoverageThresholds.MUST_COVERAGE_EXCELLENT and depth_score >= CoverageThresholds.DEPTH_SCORE_EXCELLENT:

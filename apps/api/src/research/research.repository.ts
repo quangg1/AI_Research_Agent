@@ -158,13 +158,31 @@ export class ResearchRepository {
   }
 
   async softDeleteRun(runId: string, orgId: string) {
-    const result = await this.pool.query(
-      `UPDATE research_runs
-       SET deleted_at=NOW(), archived=TRUE, updated_at=NOW()
-       WHERE id=$1 AND org_id=$2 AND deleted_at IS NULL`,
-      [runId, orgId],
-    );
-    return Boolean(result.rowCount);
+    return this.transaction(async (client) => {
+      const result = await client.query(
+        `UPDATE research_runs
+         SET deleted_at=NOW(), archived=TRUE, updated_at=NOW()
+         WHERE id=$1 AND org_id=$2 AND deleted_at IS NULL
+         RETURNING thread_id`,
+        [runId, orgId],
+      );
+      if (!result.rowCount) return false;
+      // knowledge_records is a separate reuse cache with no foreign key back
+      // to research_runs -- deleting the run here never touched it, so a
+      // "deleted" memo's cached answer kept getting served instantly to any
+      // new, similar-enough query (deleted != "never reuse this content again"
+      // is the wrong default for a delete button in the UI).
+      const threadId = result.rows[0]?.thread_id as string | undefined;
+      if (threadId) {
+        await client.query(
+          `UPDATE knowledge_records
+           SET active=FALSE, status='superseded', updated_at=NOW()
+           WHERE source_thread_id=$1 AND active=TRUE`,
+          [threadId],
+        );
+      }
+      return true;
+    });
   }
 
   async cancelRun(runId: string, orgId: string) {

@@ -1,4 +1,4 @@
-from app.domain.citations import bind_markdown_to_ledger, build_ledger, is_citable_url, pick_quote
+from app.domain.citations import bind_markdown_to_ledger, build_ledger, cited_only, is_citable_url, pick_quote
 from app.domain.schema import SourceTier
 from app.graph.nodes.scholar import _on_topic, _openalex_query
 from app.report.compose import compose_report
@@ -69,6 +69,26 @@ def test_bind_drops_ranked_but_never_cited_sources():
     out = bind_markdown_to_ledger(md, citations)
     assert "2401.00001" in out
     assert "2401.00002" not in out
+
+
+def test_cited_only_drops_ranked_but_never_cited_sources():
+    """Regression: report.citations (the Sources panel / "N cited sources"
+    count) was built from the full pre-write ledger, so a source ranked into
+    the pool but never referenced with [n] in the body still counted toward
+    the total -- a real memo said "rests on 8 cited sources" and showed 8 in
+    the Sources panel while ## References only ever listed 7."""
+    citations = [
+        {"n": 1, "evidence_id": "a", "title": "Used paper", "url": "https://arxiv.org/abs/2401.00001"},
+        {"n": 2, "evidence_id": "b", "title": "Never cited paper", "url": "https://arxiv.org/abs/2401.00002"},
+    ]
+    md = "## Findings\nCore claim here [1].\n"
+    out = cited_only(md, citations)
+    assert [c["n"] for c in out] == [1]
+
+
+def test_cited_only_keeps_everything_when_nothing_is_cited_yet():
+    citations = [{"n": 1, "evidence_id": "a", "title": "x", "url": "https://arxiv.org/abs/1"}]
+    assert cited_only("## Findings\nNo markers here.\n", citations) == citations
 
 
 def test_healthcare_scholar_dropped_unless_asked():

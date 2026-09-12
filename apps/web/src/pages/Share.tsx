@@ -20,6 +20,13 @@ export function SharedMemoView({ run }: { run: any }) {
   const citations = report?.citations || run?.agent?.values?.citations || [];
   const claims = report?.claims || [];
   const metrics = report?.metrics || {};
+  // See Research.tsx: confidence_breakdown.score is depth_score corrected
+  // for what actually survived into the printed memo -- prefer it so the
+  // headline number can't read 100 while the breakdown under it shows 0%
+  // measured evidence.
+  const confidenceScore =
+    (metrics.confidence_breakdown as { score?: number } | undefined)?.score ??
+    (metrics.depth_score != null ? Number(metrics.depth_score) : null);
   const title = run?.title || report?.title || run?.query || "Shared memo";
   const [citeOpen, setCiteOpen] = useState<number | null>(null);
 
@@ -60,7 +67,7 @@ export function SharedMemoView({ run }: { run: any }) {
           report?.executive_summary ||
           (bodyMd.match(/^##\s+Executive summary\s*\n+([\s\S]*?)(?=\n##\s|\n#\s|$)/i)?.[1] || "")
         }
-        confidence={metrics.depth_score != null ? Number(metrics.depth_score) : null}
+        confidence={confidenceScore}
         confidenceLabel={metrics.depth_label ? String(metrics.depth_label) : undefined}
         confidenceBreakdown={metrics.confidence_breakdown}
       />

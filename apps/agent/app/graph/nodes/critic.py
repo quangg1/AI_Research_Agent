@@ -85,11 +85,37 @@ def critic_node(state: ResearchState) -> dict:
     }
     verdict.depth_score = coverage.get("depth_score") or {}
 
+    # A gap can survive several loop rounds unresolved -- followups_for_gaps()
+    # is a pure function of the current coverage, so an unchanged gap gets the
+    # same followup query verbatim every time, with no signal that it already
+    # ran and produced nothing. Detect "last round's attempted gaps didn't
+    # move unique_sources/must_pct/depth_score at all" and stop re-issuing
+    # those specific searches -- real run: iterations 3-4-5 came back with
+    # identical coverage all three times, each one silently re-trying the
+    # same unresolved gap instead of accepting it's not answerable from
+    # what's retrievable and freeing that round for something else (or ending).
+    current_snapshot = {
+        "unique_sources": coverage.get("unique_sources") or 0,
+        "must_pct": (coverage.get("depth_score") or {}).get("must_answer", {}).get("pct") or 0,
+        "depth_score": (coverage.get("depth_score") or {}).get("score") or 0,
+    }
+    prev_history = state.get("_quality_history") or []
+    unproductive_gap_ids = set(state.get("_unproductive_gap_ids") or [])
+    last_followup_gap_ids = state.get("_last_followup_gap_ids") or []
+    if prev_history and last_followup_gap_ids:
+        prev = prev_history[-1]
+        if all(prev.get(k) == v for k, v in current_snapshot.items()):
+            unproductive_gap_ids.update(last_followup_gap_ids)
+
     can_loop = budget.remaining_iterations > 0 and budget.remaining_calls > 0
+    attempted_gap_ids: list[str] = []
     if not ok:
         verdict.status = "insufficient" if verdict.status != "contradicted" else verdict.status
         if can_loop:
-            verdict.followup_queries = followups_for_gaps(query, coverage, limit=gap_limit)
+            verdict.followup_queries = followups_for_gaps(
+                query, coverage, limit=gap_limit, evidence=retrieved, exclude_gap_ids=unproductive_gap_ids
+            )
+            attempted_gap_ids = [q.gap_id for q in verdict.followup_queries if q.gap_id]
     elif verdict.status == "sufficient" and not can_loop:
         pass
     elif ok and verdict.status != "contradicted":
@@ -98,7 +124,13 @@ def critic_node(state: ResearchState) -> dict:
 
     if not can_loop:
         # Budget exhausted: preserve follow-up intent for terminal synthesis
-        pending = verdict.followup_queries or (followups_for_gaps(query, coverage, limit=gap_limit) if not ok else [])
+        pending = verdict.followup_queries or (
+            followups_for_gaps(
+                query, coverage, limit=gap_limit, evidence=retrieved, exclude_gap_ids=unproductive_gap_ids
+            )
+            if not ok
+            else []
+        )
         stored_followups = [dump(q) for q in pending]
         verdict.followup_queries = []
         if not ok and verdict.status == "sufficient":
@@ -119,12 +151,7 @@ def critic_node(state: ResearchState) -> dict:
     
     # Track quality history for smart stopping
     quality_history = list(state.get("_quality_history") or [])
-    quality_history.append({
-        "iteration": budget.iterations,
-        "unique_sources": coverage.get("unique_sources") or 0,
-        "must_pct": (coverage.get("depth_score") or {}).get("must_answer", {}).get("pct") or 0,
-        "depth_score": (coverage.get("depth_score") or {}).get("score") or 0,
-    })
+    quality_history.append({"iteration": budget.iterations, **current_snapshot})
 
     event(
         "critic",
@@ -133,13 +160,18 @@ def critic_node(state: ResearchState) -> dict:
         followups=len(verdict.followup_queries),
         iteration=budget.iterations,
         coverage=coverage.get("ratio"),
+        must_pct=(coverage.get("depth_score") or {}).get("must_answer", {}).get("pct"),
         depth=(coverage.get("depth_score") or {}).get("score"),
         unique_sources=coverage.get("unique_sources"),
+        gap_reasons=gap_reasons,
+        unproductive_gaps=sorted(unproductive_gap_ids) or None,
     )
     return {
         "critic": dump(verdict),
         "followups": [dump(q) for q in verdict.followup_queries],
         "terminal_followups": _merge_terminal_followups(state.get("terminal_followups") or [], stored_followups),
+        "_unproductive_gap_ids": sorted(unproductive_gap_ids),
+        "_last_followup_gap_ids": attempted_gap_ids,
         "claims": claims,
         "brief": {**brief, "must_answer": coverage.get("slots") or slots},
         "budget": dump(budget),
@@ -179,7 +211,7 @@ def _heuristic_critic(state: ResearchState, evidence: list[dict], coverage: dict
         return CriticVerdict(
             status="insufficient",
             reasons=["No evidence collected."],
-            followup_queries=followups_for_gaps(query, coverage),
+            followup_queries=followups_for_gaps(query, coverage, evidence=evidence),
             confidence_floor=0.2,
             coverage={},
             depth_score=coverage.get("depth_score") or {},
@@ -196,7 +228,7 @@ def _heuristic_critic(state: ResearchState, evidence: list[dict], coverage: dict
         return CriticVerdict(
             status="contradicted",
             reasons=reasons,
-            followup_queries=followups_for_gaps(query, coverage) if can_loop else [],
+            followup_queries=followups_for_gaps(query, coverage, evidence=evidence) if can_loop else [],
             confidence_floor=0.62,
         )
     if ok:
@@ -208,7 +240,7 @@ def _heuristic_critic(state: ResearchState, evidence: list[dict], coverage: dict
     return CriticVerdict(
         status="insufficient",
         reasons=reasons or ["Must-answer coverage incomplete."],
-        followup_queries=followups_for_gaps(query, coverage) if can_loop else [],
+        followup_queries=followups_for_gaps(query, coverage, evidence=evidence) if can_loop else [],
         confidence_floor=0.45,
     )
 

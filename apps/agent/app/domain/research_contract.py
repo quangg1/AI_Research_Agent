@@ -128,18 +128,29 @@ def compile_research_contract(query: str, brief: dict[str, Any] | None = None) -
     mandatory: list[dict[str, str]] = []
     authority = dict(AUTHORITY_POLICY_DEFAULT)
 
+    is_lora_qlora_query = LORA_QLORA_RE.search(q) is not None
     memory_q = is_memory_footprint_query(q) or (
-        LORA_QLORA_RE.search(q) is not None
+        is_lora_qlora_query
         and re.search(r"\b(?:VRAM|memory|footprint|GB)\b", q, re.I) is not None
     )
-    if memory_q or LORA_QLORA_RE.search(q):
+    if memory_q or is_lora_qlora_query:
         excluded = list(DEFAULT_EXCLUDED_FOR_MEMORY)
-        # Always require Hu / Dettmers for LoRA/QLoRA VRAM or FT tradeoff comparisons.
-        if memory_q or re.search(r"\b(?:LoRA|QLoRA).{0,40}(?:QLoRA|LoRA)\b", q, re.I) or re.search(
-            r"\b(?:full[\s-]?(?:FT|fine)|fine[\s-]?tun).{0,80}\b(?:LoRA|QLoRA)\b|"
-            r"\b(?:LoRA|QLoRA).{0,80}\b(?:full[\s-]?(?:FT|fine)|fine[\s-]?tun|accuracy|OOD|trade-?off)\b",
-            q,
-            re.I,
+        # Always require Hu / Dettmers for LoRA/QLoRA VRAM or FT tradeoff comparisons --
+        # but only when the query is actually about LoRA/QLoRA. `memory_q` alone must
+        # never satisfy this: is_memory_footprint_query()/MEMORY_QUERY_RE matches the
+        # bare phrase "memory footprint" (also "VRAM", "GPU memory", "memory usage")
+        # with no topic check at all, so a vector-index query ("HNSW/IVF/ScaNN ...
+        # memory footprint") hit this and got hard-blocked from auto-publish forever
+        # for never citing an LLM fine-tuning paper it had no reason to cite.
+        if is_lora_qlora_query and (
+            memory_q
+            or re.search(r"\b(?:LoRA|QLoRA).{0,40}(?:QLoRA|LoRA)\b", q, re.I)
+            or re.search(
+                r"\b(?:full[\s-]?(?:FT|fine)|fine[\s-]?tun).{0,80}\b(?:LoRA|QLoRA)\b|"
+                r"\b(?:LoRA|QLoRA).{0,80}\b(?:full[\s-]?(?:FT|fine)|fine[\s-]?tun|accuracy|OOD|trade-?off)\b",
+                q,
+                re.I,
+            )
         ):
             mandatory = [dict(x) for x in MANDATORY_LORA_QLORA_SOURCES]
         if scale_bounds:
@@ -150,7 +161,7 @@ def compile_research_contract(query: str, brief: dict[str, Any] | None = None) -
             "Exclude preference (DPO/ORPO/KTO), clinical, and email-QA/abstention papers "
             "as drivers of VRAM/memory findings"
         )
-        if "2106.09685" not in " ".join(raw_constraints):
+        if is_lora_qlora_query and "2106.09685" not in " ".join(raw_constraints):
             raw_constraints.append(
                 "Mandatory primaries when claiming LoRA/QLoRA VRAM: Hu 2106.09685, Dettmers 2305.14314"
             )

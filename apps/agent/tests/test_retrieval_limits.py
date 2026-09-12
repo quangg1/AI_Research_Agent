@@ -44,7 +44,7 @@ def test_enrich_fetchable_allows_blog_urls():
 
 def test_deep_budget_and_reserve():
     assert DEEP_MAX_TOOL_CALLS >= 48
-    assert DEEP_RESERVE_CALLS == 10
+    assert DEEP_RESERVE_CALLS == 16
     assert DEEP_MAX_TOOL_CALLS == RETRIEVAL_POOL["deep"] + ENRICH_POOL["deep"]
     assert API_RESULTS_PER_QUERY == 15
     assert ENRICH_FETCH_CAP["deep"] == (18, 24)

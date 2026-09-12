@@ -499,6 +499,7 @@ def _persist_knowledge(state: ResearchState, report_override: dict | None = None
         prior_id=state.get("prior_knowledge_id"),
         org_id=state.get("org_id") or None,
         user_id=state.get("user_id") or None,
+        thread_id=state.get("thread_id") or None,
     )
     if stored and state.get("prior_knowledge_id"):
         mark_reused(str(state["prior_knowledge_id"]))

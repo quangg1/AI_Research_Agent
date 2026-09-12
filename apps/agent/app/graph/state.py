@@ -102,6 +102,8 @@ class ResearchState(TypedDict, total=False):
     quality_regeneration_count: int
     quality_gate_issues: list[str]
     _quality_history: list[dict]
+    _unproductive_gap_ids: list[str]
+    _last_followup_gap_ids: list[str]
     mandatory_retrieval_retries: int
     research_contract: dict[str, Any]
 

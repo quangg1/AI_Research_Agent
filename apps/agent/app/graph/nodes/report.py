@@ -4,7 +4,7 @@ import re
 
 import asyncio
 
-from app.domain.citations import annotate_inline_citation_tiers, bind_markdown_to_ledger, build_ledger
+from app.domain.citations import annotate_inline_citation_tiers, bind_markdown_to_ledger, build_ledger, cited_only
 from app.domain.coverage import build_evidence_dossier
 from app.domain.coverage_gate import gate_from_critic
 from app.domain.grounding import verify_claims
@@ -117,7 +117,9 @@ def _report_sync(state: ResearchState) -> dict:
 
     fact = verify_memo_citations(report.body_markdown or "", citations, retrieved)
     report.metrics["fact_lite"] = fact
-    report.decision_rule = _sanitize_decision_rule(state.get("query") or "", report.decision_rule or "", citations, critic)
+    report.decision_rule = _sanitize_decision_rule(
+        state.get("query") or "", report.decision_rule or "", citations, critic, body=report.body_markdown or ""
+    )
     integrity = _apply_integrity(report, citations, critic, retrieved, query=state.get("query") or "")
     report.body_markdown = integrity["body_markdown"]
     report.decision_rule = integrity["decision_rule"]
@@ -248,6 +250,26 @@ def _report_sync(state: ResearchState) -> dict:
             ],
         }
 
+    # report.citations was set from the full pre-write ledger at the top of
+    # this function; everything since (integrity stripping, constraint audit,
+    # number-provenance rewrites) can drop a citation's last [n] marker from
+    # the body without ever updating that list, so the Sources panel and "N
+    # cited sources" text end up advertising a source the printed memo never
+    # actually references. Re-derive it from what's really left in the body.
+    report.citations = [
+        c if isinstance(c, CitationRef) else CitationRef.model_validate(c)
+        for c in cited_only(report.body_markdown or "", citations)
+    ]
+    # decision_rule_for() wrote "This rests on N cited sources" against
+    # whatever the ledger looked like when Decision rule was built, well
+    # before the later stripping passes above ran -- resync it to the count
+    # that actually survived (real run: text said 7, References/Sources
+    # panel only ever showed 6 after off-topic/misattributed citations were
+    # dropped).
+    n_final = len(report.citations)
+    rests_on_re = re.compile(r"This rests on \d+ cited sources\.")
+    report.body_markdown = rests_on_re.sub(f"This rests on {n_final} cited sources.", report.body_markdown or "")
+    report.decision_rule = rests_on_re.sub(f"This rests on {n_final} cited sources.", report.decision_rule or "")
     event(
         "report",
         claims=len(report.claims),
@@ -893,19 +915,22 @@ def _format_dossier_for_prompt(dossier: list[dict], citations: list[dict]) -> st
     return format_research_notes(dossier, citations, depth="standard")
 
 
-def _sanitize_decision_rule(query: str, rule: str, citations: list[dict], critic: dict) -> str:
+def _sanitize_decision_rule(query: str, rule: str, citations: list[dict], critic: dict, body: str = "") -> str:
     """Reject a rule that drifted off the asked subject, whatever that subject is.
 
     Always strip coverage-slot label leaks (preference-based / class-rebalanced /
     "from the N cited sources") so re-injecting decision_rule into body_markdown
     cannot undo consolidate_memo_structure's sanitize pass.
     """
-    from app.domain.citations import Citation
+    from app.domain.citations import Citation, cited_only
     from app.domain.research_intent import decision_rule_for
     from app.report.memo_structure import _drop_slot_label_decision_bullets
 
+    # decision_rule_for()'s "N cited sources" line should count sources the
+    # memo actually cites, not every source ranked into the pool (real run:
+    # ledger had 8, only 7 ever appeared as [n] in the body).
     ledger = []
-    for c in citations:
+    for c in cited_only(body, citations) if body else citations:
         try:
             ledger.append(Citation.model_validate(c))
         except Exception:

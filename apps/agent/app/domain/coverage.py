@@ -609,9 +609,11 @@ def followups_for_gaps(
     limit: int = 2,
     *,
     use_llm: bool = False,
+    evidence: list[dict] | None = None,
+    exclude_gap_ids: set[str] | None = None,
 ) -> list[SubQuery]:
     """Generate targeted followup queries for coverage gaps.
-    
+
     Enhanced to create specific queries using:
     - Dimension patterns for context
     - Entity names for targeted search
@@ -623,7 +625,35 @@ def followups_for_gaps(
         if slot.get("status") in {"open", "weak"} and slot.get("id") not in known:
             ordered.append(slot)
             known.add(slot.get("id"))
-    
+
+    # critic_should_pass() can fail the hard gate for reasons a critical_gap or
+    # an open/weak slot never carries — a named subject with no dedicated
+    # evidence, or no primary paper/repo in the working set. These used to be
+    # added only when `ordered` was completely empty, so a single unrelated
+    # weak slot (e.g. "direct_answer") permanently crowded out ever searching
+    # for a missing named subject at all — real run: "Claude-based" stayed
+    # unaddressed for all 5 iterations because `ordered` already had one slot
+    # in it every single time.
+    if evidence is not None:
+        missing_entities = [
+            e for e in named_systems(query) if e not in entities_with_evidence(query, evidence, limit=99)
+        ]
+        for entity in missing_entities:
+            gap_id = f"entity:{entity}".lower()
+            if gap_id not in known:
+                ordered.append({"id": gap_id, "label": entity, "followup": f"{entity} dedicated evidence"})
+                known.add(gap_id)
+    if not coverage.get("primary_sources") and "primary_sources" not in known:
+        ordered.append({
+            "id": "primary_sources",
+            "label": "primary source",
+            "followup": f"{user_goal(query)} primary paper or official source repository",
+        })
+        known.add("primary_sources")
+
+    if exclude_gap_ids:
+        ordered = [g for g in ordered if str(g.get("id") or "").lower() not in exclude_gap_ids]
+
     out: list[SubQuery] = []
     
     # Extract entities for targeted queries
@@ -679,6 +709,7 @@ def followups_for_gaps(
                 agent=agent,
                 question=question,
                 rationale=f"Fill must-answer gap: {gap_label}",
+                gap_id=gap_id,
             )
         )
     

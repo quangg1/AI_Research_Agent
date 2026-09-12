@@ -353,6 +353,14 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
   const citations: any[] = done ? report.citations || [] : [];
   const bodyMd = done ? report.body_markdown || "" : "";
   const metrics = done ? report.metrics || {} : {};
+  // confidence_breakdown.score is depth_score corrected for what actually
+  // survived into the printed memo (e.g. a Quantitative findings section
+  // that ended up empty) -- depth_score alone is the pre-write estimate and
+  // can read 100 while the breakdown right under it shows 0% measured
+  // evidence. Prefer the corrected score wherever a headline number is shown.
+  const confidenceScore =
+    (metrics.confidence_breakdown as { score?: number } | undefined)?.score ??
+    (metrics.depth_score != null ? Number(metrics.depth_score) : null);
   const evidenceGraph = (run as Run | null)?.evidence_graph || metrics.evidence_graph;
   const diagnosticsMd = done ? (metrics.diagnostics_markdown as string) || "" : "";
   type CoverageSlot = { id?: string; label?: string; status?: string };
@@ -1208,7 +1216,7 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                       report?.executive_summary ||
                       (bodyMd.match(/^##\s+Executive summary\s*\n+([\s\S]*?)(?=\n##\s|\n#\s|$)/i)?.[1] || synthesized)
                     }
-                    confidence={metrics.depth_score != null ? Number(metrics.depth_score) : null}
+                    confidence={confidenceScore}
                     confidenceLabel={metrics.depth_label ? String(metrics.depth_label) : undefined}
                     confidenceBreakdown={metrics.confidence_breakdown}
                   />
@@ -1331,7 +1339,7 @@ export function ResearchPage({ go, initialQuery = "" }: { go: (to: string) => vo
                     <div className="metrics memo-metrics">
                       {metrics.synthesis_status ? `${metrics.synthesis_status} · ` : ""}
                       {metrics.version ? `${metrics.version} · ` : ""}
-                      {metrics.depth_score != null ? `confidence ${metrics.depth_score}/100 (${metrics.depth_label || "n/a"}) · ` : ""}
+                      {confidenceScore != null ? `confidence ${confidenceScore}/100 (${metrics.depth_label || "n/a"}) · ` : ""}
                       {metrics.must_answer_fraction || metrics.coverage_ratio != null
                         ? `must-answer ${metrics.must_answer_fraction || `${Math.round(Number(metrics.coverage_ratio) * 100)}%`} · `
                         : ""}

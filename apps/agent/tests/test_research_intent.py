@@ -146,6 +146,64 @@ def test_decision_rule_no_orphaned_act_on_these_header():
     assert "Evidence-backed threshold: none" in rule
 
 
+def test_named_systems_drops_capitalized_verbs_from_brief_metadata():
+    """goal_with_named_subjects reorders the query (Must cover / Constraints
+    content first), which moved the goal's own first word out of sentence-
+    initial position and let plain capitalized verbs through as "named
+    subjects" — a real run flagged "Named subjects with no dedicated
+    evidence: Anthropic, Assess, Isolate" and sent the followup loop hunting
+    for evidence about "Assess"."""
+    query = (
+        "Conduct a systematic evaluation comparing single-agent and multi-agent architectures.\n"
+        "Must cover: OpenAI Agents; Anthropic Claude-based agents; LangGraph; AutoGen; CrewAI\n"
+        "Constraints: Assess reliability. Isolate architecture from compute scaling."
+    )
+    found = named_systems(query)
+    assert "Anthropic" in found
+    assert {"LangGraph", "AutoGen", "CrewAI"} <= set(found)
+    assert "Assess" not in found
+    assert "Isolate" not in found
+    assert "Conduct" not in found
+
+
+def test_named_systems_keeps_a_name_that_opens_the_question():
+    """The filter must not punish a name for starting the sentence when the
+    name carries its own signal (inner caps / acronym)."""
+    assert {"LangGraph", "AutoGen"} <= set(
+        named_systems("LangGraph vs AutoGen: which handles long-horizon state better?")
+    )
+    assert {"GDPR", "CCPA"} <= set(named_systems(POLICY_Q))
+
+
+def test_decision_rule_no_orphaned_verify_header():
+    """Same bug as the "Act on these" header, for the weak/partial branch:
+    a slot can be "weak" while its label is filtered out entirely by
+    _is_slot_label_leak, leaving "Verify before acting — evidence is
+    indirect or single-sourced:" printed with no bullets under it (real
+    memo output)."""
+    critic = {
+        "coverage": {
+            "slots": [
+                {"id": "constraints_and_limitations", "label": "constraints_and_limitations", "status": "weak"},
+            ]
+        }
+    }
+    rule = decision_rule_for(POLICY_Q, [{"n": 1}], critic)
+    assert "Verify before acting" not in rule
+
+
+def test_decision_rule_no_orphaned_do_not_assume_header():
+    critic = {
+        "coverage": {
+            "slots": [
+                {"id": "constraints_and_limitations", "label": "constraints_and_limitations", "status": "open"},
+            ]
+        }
+    }
+    rule = decision_rule_for(POLICY_Q, [{"n": 1}], critic)
+    assert "Do not assume" not in rule
+
+
 def test_flip_condition_truncates_at_a_word_boundary():
     long_goal = "Compare full-parameter fine-tuning, LoRA, and QLoRA across performance metrics, computational cost, memory footprint, and domain generalization"
     text = flip_condition_for(long_goal, {})

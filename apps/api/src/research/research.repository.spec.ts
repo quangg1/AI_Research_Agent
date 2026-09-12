@@ -115,4 +115,59 @@ describe("ResearchRepository", () => {
     expect(stored.interrupt).toBeUndefined();
     expect(updateArgs[0][6]).toBeNull();
   });
+
+  test("soft-deleting a run also deactivates its cached knowledge_records answer", async () => {
+    const client = {
+      query: jest.fn().mockImplementation(async (sql: string) => {
+        const text = String(sql);
+        if (text.startsWith("BEGIN") || text.startsWith("COMMIT")) {
+          return { rowCount: 1, rows: [] };
+        }
+        if (text.includes("UPDATE research_runs")) {
+          return { rowCount: 1, rows: [{ thread_id: "thread-123" }] };
+        }
+        if (text.includes("UPDATE knowledge_records")) {
+          return { rowCount: 1, rows: [] };
+        }
+        return { rowCount: 1, rows: [] };
+      }),
+      release: jest.fn(),
+    };
+    const pool = { connect: jest.fn().mockResolvedValue(client) } as unknown as Pool;
+    const repository = new ResearchRepository(pool);
+
+    await expect(repository.softDeleteRun("run-1", "org_default")).resolves.toBe(true);
+
+    const knowledgeCall = client.query.mock.calls.find(([sql]) =>
+      String(sql).includes("UPDATE knowledge_records"),
+    );
+    expect(knowledgeCall).toBeDefined();
+    expect(knowledgeCall?.[1]).toEqual(["thread-123"]);
+    expect(String(knowledgeCall?.[0])).toContain("active=FALSE");
+  });
+
+  test("soft-delete on a run that doesn't exist never touches knowledge_records", async () => {
+    const client = {
+      query: jest.fn().mockImplementation(async (sql: string) => {
+        const text = String(sql);
+        if (text.startsWith("BEGIN") || text.startsWith("COMMIT")) {
+          return { rowCount: 1, rows: [] };
+        }
+        if (text.includes("UPDATE research_runs")) {
+          return { rowCount: 0, rows: [] };
+        }
+        return { rowCount: 1, rows: [] };
+      }),
+      release: jest.fn(),
+    };
+    const pool = { connect: jest.fn().mockResolvedValue(client) } as unknown as Pool;
+    const repository = new ResearchRepository(pool);
+
+    await expect(repository.softDeleteRun("missing", "org_default")).resolves.toBe(false);
+
+    const knowledgeCall = client.query.mock.calls.find(([sql]) =>
+      String(sql).includes("knowledge_records"),
+    );
+    expect(knowledgeCall).toBeUndefined();
+  });
 });

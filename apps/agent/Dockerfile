@@ -20,6 +20,7 @@ COPY infra/postgres/migrations/003_tenancy.sql /app/migrations/003_tenancy.sql
 COPY infra/postgres/migrations/004_evidence_graph.sql /app/migrations/004_evidence_graph.sql
 COPY infra/postgres/migrations/005_parent_run.sql /app/migrations/005_parent_run.sql
 COPY infra/postgres/migrations/006_corpus_tenancy.sql /app/migrations/006_corpus_tenancy.sql
+COPY infra/postgres/migrations/007_knowledge_source_run.sql /app/migrations/007_knowledge_source_run.sql
 
 COPY apps/agent/scripts/render-start.sh /app/render-start.sh
 RUN sed -i 's/\r$//' /app/render-start.sh && chmod +x /app/render-start.sh

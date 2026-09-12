@@ -123,7 +123,31 @@ def named_systems(query: str) -> list[str]:
     that briefing paraphrasing may have removed from the goal line.
     """
     from app.domain.textutil import goal_with_named_subjects
-    return entity_candidates(goal_with_named_subjects(query), limit=8)
+
+    candidates = entity_candidates(goal_with_named_subjects(query), limit=8)
+    # entity_candidates drops sentence-initial plain capitalized words (a
+    # capitalized verb is not a named subject), but it runs on the *reordered*
+    # goal_with_named_subjects blob, where the goal's own first word is no
+    # longer sentence-initial. That let plain verbs through as "named
+    # subjects" — real run flagged "Named subjects with no dedicated evidence:
+    # Anthropic, Assess, Isolate", sending the followup loop hunting for
+    # evidence about "Assess". Re-apply the same rule against the original
+    # text. Names carrying their own signal (inner caps, acronyms) are never
+    # dropped, so a query that opens with "LangGraph vs AutoGen" is unaffected.
+    return [e for e in candidates if _reads_as_named_subject(e, query)]
+
+
+def _reads_as_named_subject(entity: str, query: str) -> bool:
+    term = (entity or "").strip()
+    if not term:
+        return False
+    if any(c.isupper() for c in term[1:]) or (term.isupper() and len(term) >= 2):
+        return True
+    for match in re.finditer(re.escape(term), query or ""):
+        before = (query or "")[: match.start()].rstrip()
+        if before and not re.search(r"[.!?]$", before):
+            return True
+    return False
 
 
 def host_of(url: str) -> str:
@@ -317,25 +341,38 @@ def decision_rule_for(query: str, ledger: list, critic: dict) -> str:
             "",
         ]
     )
-    if partial:
+    # Same fix as above, applied here: decide each header AFTER filtering,
+    # not from the raw partial/missing lists — a slot can be "weak"/"open"
+    # and still get filtered out entirely by _is_slot_label_leak, which left
+    # "Verify before acting..."/"Do not assume..." printed with nothing
+    # under them (real run: header present, zero bullets, straight into the
+    # next paragraph).
+    verify_bullets: list[str] = []
+    for s in partial[:6]:
+        label = str(s.get("label") or s.get("id") or "")
+        if _is_slot_label_leak(label):
+            continue
+        verify_bullets.append(
+            f"- Verify: {label} — weak/single-sourced; confirm with one independent primary source."
+        )
+    if verify_bullets:
         lines.append("**Verify before acting — evidence is indirect or single-sourced:**")
         lines.append("")
-        for s in partial[:6]:
-            label = str(s.get("label") or s.get("id") or "")
-            if _is_slot_label_leak(label):
-                continue
-            lines.append(
-                f"- Verify: {label} — weak/single-sourced; confirm with one independent primary source."
-            )
+        lines.extend(verify_bullets)
         lines.append("")
-    if missing:
+
+    assume_bullets: list[str] = []
+    for s in missing[:6]:
+        label = str(s.get("label") or s.get("id") or "")
+        if _is_slot_label_leak(label):
+            continue
+        assume_bullets.append(f"- Do not assume: {label}.")
+    if assume_bullets:
         lines.append("**Do not assume — not established by cited sources:**")
         lines.append("")
-        for s in missing[:6]:
-            label = s.get("label") or s.get("id")
-            lines.append(f"- Do not assume: {label}.")
+        lines.extend(assume_bullets)
         lines.append("")
-    if not partial and not missing and not bullets:
+    if not verify_bullets and not assume_bullets and not bullets:
         lines.append(
             f"For “{_truncate_at_word(goal, 140)}”, act only on statements a cited primary source supports."
         )

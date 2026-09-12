@@ -55,6 +55,30 @@ def test_critic_loops_when_insufficient_and_budget_left():
     assert after_critic(state) == "planner"
 
 
+def test_after_critic_does_not_double_append_quality_history():
+    # critic_node already appends this iteration's entry to _quality_history
+    # before after_critic runs. after_critic must only read it, not append
+    # again -- a second append per iteration made 2 real loop iterations look
+    # like a 3-iteration stagnant window (two identical-value entries from
+    # the same iteration back to back), stopping research a full iteration
+    # early every time.
+    state = {
+        "budget": Budget(max_iterations=5, iterations=1, max_tool_calls=40, used_tool_calls=5).model_dump(),
+        "critic": {
+            "status": "insufficient",
+            "followup_queries": [{"agent": "search", "question": "x"}],
+            "coverage": {"unique_sources": 10},
+            "depth_score": {"score": 60, "must_answer": {"pct": 70}},
+        },
+        "followups": [{"agent": "search", "question": "x"}],
+        "_quality_history": [{"iteration": 1, "unique_sources": 10, "must_pct": 70, "depth_score": 60}],
+    }
+    after_critic(state)
+    assert state["_quality_history"] == [
+        {"iteration": 1, "unique_sources": 10, "must_pct": 70, "depth_score": 60}
+    ]
+
+
 def test_critic_stops_when_budget_exhausted():
     state = {
         "budget": Budget(max_iterations=2, iterations=2, max_tool_calls=4, used_tool_calls=4).model_dump(),

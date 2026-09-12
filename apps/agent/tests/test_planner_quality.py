@@ -24,7 +24,7 @@ def test_iter1_merges_slot_queries_with_falsification():
 
 
 def test_deep_first_pass_reserves_budget_for_critic_loop():
-    assert _reserve_calls("deep", 1) == 10
+    assert _reserve_calls("deep", 1) == 16
 
 
 def test_deep_followup_rounds_still_reserve_for_later_rounds():

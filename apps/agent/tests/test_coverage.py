@@ -4,6 +4,7 @@ from app.domain.coverage import (
     critic_should_pass,
     dedupe_evidence,
     entities_with_evidence,
+    followups_for_gaps,
     is_official_implementation,
     score_must_answer,
     tag_evidence_roles,
@@ -184,6 +185,71 @@ def test_shared_topic_words_are_not_treated_as_compared_subjects():
     assert {"Punica", "S-LoRA", "vLLM"} <= set(entities)
 
 
+def test_followups_for_gaps_covers_missing_primary_source_even_with_no_open_slots():
+    # All slots covered, no critical_gaps -> the old code returned zero followups
+    # here even when critic_should_pass() would still fail on missing primary_sources.
+    coverage = {
+        "critical_gaps": [],
+        "slots": [{"id": "s1", "label": "x", "status": "covered"}],
+        "primary_sources": False,
+    }
+    out = followups_for_gaps(Q, coverage, limit=2)
+    assert out, "missing primary_sources must still produce a followup query"
+
+
+def test_followups_for_gaps_covers_missing_named_entity_even_with_no_open_slots():
+    query = "Compare Punica, S-LoRA, and vLLM for serving LoRA adapters"
+    evidence = [
+        {"id": "a", "title": "Punica", "snippet": "Punica batches LoRA adapters", "url": "https://a.dev/1"},
+    ]
+    coverage = {
+        "critical_gaps": [],
+        "slots": [{"id": "s1", "label": "x", "status": "covered"}],
+        "primary_sources": True,
+    }
+    out = followups_for_gaps(query, coverage, limit=2, evidence=evidence)
+    assert out, "a named subject (S-LoRA/vLLM) with no dedicated evidence must still produce a followup"
+    joined = " ".join((sq.question or "").lower() for sq in out)
+    assert "s-lora" in joined or "vllm" in joined
+
+
+def test_followups_for_gaps_covers_missing_entity_even_with_an_unrelated_open_slot():
+    """Regression: the entity/primary_sources fallback used to run only when
+    `ordered` was completely empty -- one unrelated weak slot (e.g.
+    "direct_answer") permanently crowded it out, so a named subject the
+    question explicitly asked about (real run: "Claude-based") never got a
+    followup query across 5 loop iterations, even though gap_limit left
+    room for more than one followup per round."""
+    query = "Compare Punica, S-LoRA, and vLLM for serving LoRA adapters"
+    evidence = [
+        {"id": "a", "title": "Punica", "snippet": "Punica batches LoRA adapters", "url": "https://a.dev/1"},
+    ]
+    coverage = {
+        "critical_gaps": [],
+        "slots": [{"id": "direct_answer", "label": "Direct answer to the question as asked", "status": "weak"}],
+        "primary_sources": True,
+    }
+    out = followups_for_gaps(query, coverage, limit=3, evidence=evidence)
+    gap_ids = {sq.gap_id for sq in out}
+    assert "direct_answer" in gap_ids
+    assert any(g.startswith("entity:") for g in gap_ids), gap_ids
+
+
+def test_followups_for_gaps_excludes_gaps_already_proven_unproductive():
+    coverage = {
+        "critical_gaps": [
+            {"id": "gap_a", "label": "Gap A"},
+            {"id": "gap_b", "label": "Gap B"},
+        ],
+        "slots": [],
+        "primary_sources": True,
+    }
+    out = followups_for_gaps(Q, coverage, limit=3, exclude_gap_ids={"gap_a"})
+    gap_ids = {sq.gap_id for sq in out}
+    assert "gap_a" not in gap_ids
+    assert "gap_b" in gap_ids
+
+
 def test_critic_node_loops_on_gaps():
     state = {
         "query": Q,
@@ -207,3 +273,47 @@ def test_critic_node_loops_on_gaps():
     assert out["critic"]["depth_score"]["score"] <= 80
     fr = out["critic"]["coverage"].get("must_answer_fraction")
     assert fr and "/" in fr
+
+
+def test_critic_node_stops_retrying_a_gap_that_produced_no_progress():
+    """Regression: followups_for_gaps() is a pure function of coverage, so an
+    unresolved gap gets the identical followup query every iteration with no
+    signal it already ran and changed nothing -- real run: 3 straight
+    iterations came back with byte-identical unique_sources/must_pct/
+    depth_score, each one silently re-issuing the same search. The second
+    critic_node call here simulates "last round's followups retrieved
+    nothing new" and must stop asking for the same gap again."""
+    base_state = {
+        "query": Q,
+        "retrieved": [
+            {
+                "id": "p1",
+                "title": "Punica",
+                "url": "https://arxiv.org/abs/2310.18547",
+                "snippet": "SGMV shared base weight adapter batching",
+                "quote": "SGMV shared base weight adapter batching",
+                "tier": "peer_reviewed",
+                "credibility": 0.84,
+            }
+        ],
+        "brief": {"must_answer": SLOTS, "depth": "deep"},
+        "budget": Budget(max_iterations=5, iterations=1, max_tool_calls=40, used_tool_calls=3).model_dump(),
+    }
+    first = critic_node(base_state)
+    assert first["followups"], "first round must attempt at least one gap"
+    tried_ids = {f["gap_id"] for f in first["followups"] if f.get("gap_id")}
+    assert tried_ids
+
+    # Same evidence -> same coverage -> the followup round changed nothing,
+    # matching a real stagnant iteration.
+    second_state = {
+        **base_state,
+        "budget": Budget(max_iterations=5, iterations=2, max_tool_calls=40, used_tool_calls=5).model_dump(),
+        "_quality_history": first["_quality_history"],
+        "_last_followup_gap_ids": first["_last_followup_gap_ids"],
+        "_unproductive_gap_ids": first["_unproductive_gap_ids"],
+    }
+    second = critic_node(second_state)
+    second_ids = {f["gap_id"] for f in second["followups"] if f.get("gap_id")}
+    assert not (tried_ids & second_ids), (tried_ids, second_ids)
+    assert set(second["_unproductive_gap_ids"]) >= tried_ids

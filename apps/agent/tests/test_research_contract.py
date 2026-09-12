@@ -37,6 +37,23 @@ def test_compile_memory_contract_has_excludes_scales_mandatory():
     assert d["raw_constraints"]
 
 
+def test_compile_contract_does_not_require_lora_sources_for_unrelated_memory_query():
+    """Regression: MEMORY_QUERY_RE / is_memory_footprint_query() matches the
+    bare phrase "memory footprint" (also "VRAM", "GPU memory", "memory
+    usage") with no topic check at all. A vector-index query mentioning
+    "memory footprint" hit the LoRA/QLoRA mandatory-source gate and got
+    permanently blocked from auto-publish for never citing Hu 2106.09685 /
+    Dettmers 2305.14314 -- papers with nothing to do with vector indexes."""
+    query = (
+        "Compare HNSW, IVF, and ScaNN vector index algorithms for large-scale RAG "
+        "retrieval: recall, latency, and memory footprint trade-offs."
+    )
+    c = compile_research_contract(query, {})
+    d = c.to_dict()
+    assert d["mandatory_sources"] == []
+    assert "2106.09685" not in " ".join(d["raw_constraints"])
+
+
 def test_topic_relevance_ranks_on_topic_above_off_topic():
     q = "LoRA vs QLoRA peak VRAM on 7B models"
     on = {

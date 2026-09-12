@@ -478,6 +478,23 @@ def _cited_numbers(md: str) -> set[int]:
     return nums
 
 
+def cited_only(md: str, citations: list) -> list:
+    """The subset of `citations` actually referenced as an [n] marker in `md`.
+
+    Same filter bind_markdown_to_ledger uses to build References / Source
+    quality, exposed so callers who report a structured citation/source list
+    (report.citations, source-count text) don't advertise a source that was
+    ranked into the pool but never made it into the printed memo (real run:
+    8 sources in the panel and "rests on 8 cited sources", but References
+    only listed 7 -- the ledger itself already excluded the unused one,
+    report.citations just wasn't filtered the same way).
+    """
+    cited = _cited_numbers(md or "")
+    if not cited:
+        return list(citations)
+    return [c for c in citations if _as_dict(c).get("n") in cited]
+
+
 def bind_markdown_to_ledger(md: str, citations: list) -> str:
     """Drop invented links and bind exactly one References section."""
     allowed = {( _as_dict(c).get("url") or "").strip() for c in citations}
